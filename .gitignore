@@ -1,0 +1,10 @@
+# secrets / local data
+.env
+data.db
+*.db
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/

@@ -1,5 +1,84 @@
-<img src="assets/icon.svg" width="64" height="64" alt="">
+# hima-bot（MVP）
 
-# atsumaro
+サーバーの友達同士で「今ヒマ」を共有する Discord Bot。
+パネルからヒマ宣言を登録すると、一覧メッセージが常に最新に保たれ、「ノック」でヒマな人をDMで誘えます。
 
-Created in DeepAI Code.
+> Botの表示名はDiscord Developer Portal側で設定されるため、コード内に製品名はハードコードしていません。
+> パネル見出し等の表示名は `.env` の `BOT_DISPLAY_NAME`（未設定時は「今ヒマ！」）から読み込みます。
+
+## 構成
+
+| ファイル | 役割 |
+| --- | --- |
+| `bot.py` | 起動・スラッシュコマンド定義・30秒間隔の期限切れクリーンアップ |
+| `storage.py` | SQLite（標準ライブラリ `sqlite3`）でのデータ操作 |
+| `views.py` | パネルの永続View・登録画面・ノック画面・DM返答ボタン・Modal |
+| `requirements.txt` | 依存パッケージ |
+| `.env.example` | 環境変数のテンプレート |
+
+- Python 3.11以上 / discord.py 2.x / python-dotenv
+- Privileged Intent（Presence / Server Members / Message Content）は**すべてOFFで動作**します
+- 外部DB・Web管理画面・Dockerは不要。DBはローカルの `data.db` のみ
+
+## セットアップ
+
+1. [Discord Developer Portal](https://discord.com/developers/applications) でアプリケーションを作成し、Botタブでトークンを取得する
+   - **Privileged Intent はすべてOFFのままでOK**
+2. OAuth2 > URL Generator で `bot` + `applications.commands` スコープを付け、サーバーに招待する
+3. リポジトリ直下で依存をインストールする
+
+   ```bash
+   python -m pip install -r requirements.txt
+   ```
+
+4. `.env.example` をコピーして `.env` を作り、トークンを書く
+
+   ```bash
+   cp .env.example .env
+   # .env を編集して DISCORD_TOKEN を設定
+   ```
+
+   | 変数 | 必須 | 説明 |
+   | --- | --- | --- |
+   | `DISCORD_TOKEN` | ✅ | Botトークン |
+   | `DEV_GUILD_ID` | 任意 | 設定するとそのギルドへスラッシュコマンドを即時同期。未設定はグローバル同期（反映に最大1時間） |
+   | `BOT_DISPLAY_NAME` | 任意 | パネル見出し等の表示名。未設定は「今ヒマ！」 |
+
+5. 起動する
+
+   ```bash
+   python bot.py
+   ```
+
+   トークン未設定で起動すると、Tracebackではなく `DISCORD_TOKENが未設定です` と表示して終了します。
+
+## 使い方
+
+1. サーバー管理権限のある人が `/panel_setup` を実行 → 実行したチャンネルに「パネル」と「一覧」の2つのメッセージが投稿され、IDが保存される
+2. パネルの **「今ヒマ！」**（または `/hima`）を押す → 自分だけに見える操作画面で
+   - 時間：5分／15分／30分／1時間／3時間
+   - 温度感：🔥今すぐ遊びたい／🙂誘われたら行く／🌙ひっそり暇
+   - やりたいこと：🎮ゲーム／💬雑談・通話／💻作業通話／🚶外出／✨なんでもOK
+   - 任意の「ひとこと追加」（50文字まで。ゲーム名などの用途）→ Modal
+
+   を選び **「決定」** で登録。登録済みの人が再登録すると上書き（延長）される
+3. 一覧メッセージはBotが編集して常に最新に保つ（表示名／温度感／やりたいこと／ひとこと／あと◯分。0人なら「今ヒマな人はいません」）
+4. 期限が来るとバックグラウンドループ（30秒間隔）が登録を削除して一覧を更新する
+5. **「やめる」** ボタンまたは `/hima_off` で自分の登録を解除。`/hima_list` で一覧をephemeral表示
+6. パネルの **「ノックする」** を押す → ephemeral画面で
+   - 今ヒマな相手（自分以外、最大25人）
+   - 誘い文テンプレ（ゲームしない？／ちょっと話さない？／作業通話しない？）
+
+   を選んで送信 → 相手へDMでノックが届き、DMには返答ボタン **「いいよ！／あとで／今回はパス」** が付く。押すとノックした人へDMで結果が通知され、`knock_log` の status も更新される
+   - 同一ペアのノックは5分に1回まで（連打防止）
+   - 相手のDMが閉じられている場合は送った人にその旨を通知
+
+## データベーススキーマ（SQLite: `data.db`）
+
+- `guild_config(guild_id PRIMARY KEY, channel_id, panel_message_id, list_message_id)`
+- `hima_status(guild_id, user_id, display_name, started_at, expires_at, mood, activity, note, PRIMARY KEY(guild_id, user_id))`
+- `knock_log(id INTEGER PRIMARY KEY AUTOINCREMENT, guild_id, from_user_id, to_user_id, template, status, created_at)`
+
+## MVPでやらないこと
+
+こっそりマッチング、同じゲーム同士の自動マッチング、人数募集、プレイ中ゲーム連携、よく暇になる時間帯の登録、複数サーバーをまたいだ友達リスト、課金・有料機能。
