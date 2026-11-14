@@ -175,48 +175,53 @@ class HimaCog(commands.Cog):
 
     @app_commands.command(
         name="panel_setup",
-        description="ヒマパネルと一覧をこのチャンネルに設置する（サーバー管理権限が必要）",
+        description="ヒマパネルと一覧をこのチャンネルに設置する（サーバーのメンバーなら誰でも実行できます）",
     )
     @app_commands.guild_only()
-    @app_commands.default_permissions(manage_guild=True)
     async def panel_setup(self, interaction: discord.Interaction) -> None:
-        has_manage_guild = bool(getattr(interaction.permissions, "manage_guild", False))
-        is_owner = False
-        if interaction.guild is not None and interaction.user.id == interaction.guild.owner_id:
-            is_owner = True
-        if not (has_manage_guild or is_owner):
-            await interaction.response.send_message(
-                "このコマンドはサーバー管理権限のある人だけが使えるよ。", ephemeral=True
-            )
-            return
         # サーバー単位のロック：実行中に再度呼ばれたら何もしない
         assert interaction.guild_id is not None
         lock = self.bot.panel_setup_locks.setdefault(interaction.guild_id, asyncio.Lock())
-        if not lock.acquire(blocking=False):
+        if lock.locked():
             await interaction.response.send_message("設置処理中です。少し待ってからもう一度試してね。", ephemeral=True)
             return
-        try:
+        async with lock:
             channel = interaction.channel
             assert channel is not None and hasattr(channel, "send")
-            # 1) チャンネル履歴（直近200件）から旧パネル/旧一覧を掃除する
+            # 1) チャンネル履歴（直近200件）から旧パネル/旧一覧を掃除する（件数を計測）
+            scanned = 0
+            swept_panels = 0
+            swept_lists = 0
+            sweep_failures = 0
             async for message in channel.history(limit=200):
                 if message.author.id != self.bot.user.id:
                     continue
-                is_panel = any(
+                scanned += 1
+                matched_panel = any(
                     getattr(child, "custom_id", None) in PANEL_CUSTOM_IDS
                     for row in message.components
                     for child in row.children
                 )
-                is_list = any(
+                matched_list = any(
                     embed.title is not None and ("掲示板" in embed.title or "メンバー一覧" in embed.title)
                     for embed in message.embeds
                 )
-                if not (is_panel or is_list):
+                if not (matched_panel or matched_list):
                     continue
                 try:
                     await message.delete()
                 except Exception as exc:  # noqa: BLE001 - cleanup must not break setup
+                    sweep_failures += 1
                     print(f"[hima-bot] 旧パネル/一覧の削除に失敗しました（無視します）: {exc}")
+                else:
+                    swept_panels += int(matched_panel)
+                    swept_lists += int(matched_list)
+            print(
+                f"[hima-bot][sweep] scanned={scanned} panel={swept_panels} list={swept_lists} "
+                f"deleted_ok={swept_panels + swept_lists} deleted_fail={sweep_failures}"
+            )
+            if swept_panels == 0 or swept_lists == 0:
+                await self._log_panel_structure_diagnostics(channel, interaction.guild_id)
             # 2) 保険：保存済みIDの削除（履歴200件より古い分。重複削除は無視）
             old_cfg = storage.get_guild_config(interaction.guild_id)
             if old_cfg is not None:
@@ -238,10 +243,56 @@ class HimaCog(commands.Cog):
                 interaction.guild_id, channel.id, panel_message.id, list_message.id
             )
             await interaction.response.send_message(
-                "パネルと一覧を設置したよ！ここに「今ヒマ！」の人が表示される🚀", ephemeral=True
+                f"パネルと一覧を設置したよ！ここに「今ヒマ！」の人が表示される🚀\n"
+                f"掃除：パネル{swept_panels}件・一覧{swept_lists}件を削除しました（スキャン{scanned}件"
+                + (f"・削除失敗{sweep_failures}件" if sweep_failures else "") + "）",
+                ephemeral=True,
             )
-        finally:
-            lock.release()
+
+    async def _log_panel_structure_diagnostics(self, channel: discord.abc.Messageable, guild_id: int) -> None:
+        """該当0件のとき、実物のメッセージ構造をログに出して判定条件との食い違いを特定する。"""
+        try:
+            candidates = []
+            old_cfg = storage.get_guild_config(guild_id)
+            if old_cfg is not None:
+                try:
+                    old_channel = self.bot.get_channel(old_cfg["channel_id"])
+                    if old_channel is None:
+                        old_channel = await self.bot.fetch_channel(old_cfg["channel_id"])
+                    for message_id in (old_cfg["panel_message_id"], old_cfg["list_message_id"]):
+                        try:
+                            candidates.append(await old_channel.fetch_message(message_id))
+                        except Exception as exc:  # noqa: BLE001 - diagnostics only
+                            print(f"[hima-bot][sweep-diag] 保存ID {message_id} の取得に失敗: {exc}")
+                except Exception as exc:  # noqa: BLE001 - diagnostics only
+                    print(f"[hima-bot][sweep-diag] 保存チャンネルの取得に失敗: {exc}")
+            if not candidates:
+                async for message in channel.history(limit=200):
+                    if message.author.id == self.bot.user.id and message.components:
+                        candidates.append(message)
+                        break
+            if not candidates:
+                print("[hima-bot][sweep-diag] 構造を確認できるBotメッセージが見つかりませんでした")
+                return
+            for probe in candidates:
+                rows = [
+                    [
+                        {
+                            "type": type(child).__name__,
+                            "custom_id": getattr(child, "custom_id", None),
+                            "label": getattr(child, "label", None),
+                        }
+                        for child in row.children
+                    ]
+                    for row in probe.components
+                ]
+                titles = [embed.title for embed in probe.embeds]
+                print(
+                    f"[hima-bot][sweep-diag] message_id={probe.id} author={probe.author.id} "
+                    f"components={rows} embed_titles={titles}"
+                )
+        except Exception as exc:  # noqa: BLE001 - diagnostics must never break setup
+            print(f"[hima-bot][sweep-diag] 診断自体が失敗: {exc}")
 
     # ------------------------------------------------------------------ /hima
 
