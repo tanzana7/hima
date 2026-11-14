@@ -35,6 +35,12 @@ ACTIVITY_SHORT: Dict[str, str] = {
     "any": "なんでもOK",
 }
 
+ANNOUNCE_OPTIONS = [
+    ("silent", "🔕 静かに登録（何も流さない）"),
+    ("message", "💬 メッセージで流す"),
+    ("mention", "📣 メンション付きで流す"),
+]
+
 KNOCK_TEMPLATES = ["ゲームしない？", "ちょっと話さない？", "作業通話しない？"]
 
 REPLY_LABELS = {"ok": "いいよ！", "later": "あとで", "pass": "今回はパス"}
@@ -128,6 +134,7 @@ class HimaJoinView(ui.View):
         self.duration_min: int | None = None
         self.mood: str | None = None
         self.activity: str | None = None
+        self.announce = "silent"
         self.note = ""
 
     @ui.select(
@@ -157,7 +164,19 @@ class HimaJoinView(ui.View):
         self.activity = select.values[0]
         await interaction.response.defer()
 
-    @ui.button(label="ひとことを追加（任意）", style=discord.ButtonStyle.secondary, row=3, emoji="✏️")
+    @ui.select(
+        placeholder="みんなへのお知らせ",
+        options=[
+            discord.SelectOption(label=label, value=value, default=(value == "silent"))
+            for value, label in ANNOUNCE_OPTIONS
+        ],
+        row=3,
+    )
+    async def announce_select(self, interaction: discord.Interaction, select: ui.Select) -> None:
+        self.announce = select.values[0]
+        await interaction.response.defer()
+
+    @ui.button(label="ひとことを追加（任意）", style=discord.ButtonStyle.secondary, row=4, emoji="✏️")
     async def note_button(self, interaction: discord.Interaction, _: ui.Button) -> None:
         await interaction.response.send_modal(NoteModal(self))
 
@@ -182,6 +201,17 @@ class HimaJoinView(ui.View):
             note=self.note,
         )
         await self.bot.refresh_guild_list(guild_id)
+        mood_label = dict(MOODS)[self.mood]
+        activity_label = ACTIVITY_SHORT[self.activity]
+        await self.bot.announce_hima(
+            guild_id=guild_id,
+            display_name=interaction.user.display_name,
+            minutes=self.duration_min,
+            mood_label=mood_label,
+            activity=activity_label,
+            note=self.note,
+            method=self.announce,
+        )
         suffix = f"（ひとこと：{self.note}）" if self.note else ""
         await interaction.response.send_message(
             f"登録したよ！あと{self.duration_min}分ヒマ宣言中🚀{suffix}", ephemeral=True

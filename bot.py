@@ -87,6 +87,41 @@ class HimaBot(commands.Bot):
         for guild_id in changed:
             await self.refresh_guild_list(guild_id)
 
+    async def announce_hima(
+        self,
+        guild_id: int,
+        display_name: str,
+        minutes: int,
+        mood_label: str,
+        activity: str,
+        note: str,
+        method: str,
+    ) -> None:
+        """Announce a registration to the panel channel per the chosen method.
+
+        silent: nothing. message: plain text. mention: @here with everyone=True.
+        Failures are only logged and never break the registration flow.
+        """
+        try:
+            if method not in ("message", "mention"):
+                return
+            cfg = storage.get_guild_config(guild_id)
+            if cfg is None:
+                return
+            channel = self.get_channel(cfg["channel_id"])
+            if channel is None:
+                channel = await self.fetch_channel(cfg["channel_id"])
+            text = f"🙋 {display_name} さんがヒマ宣言したよ！ あと{minutes}分 ｜ {mood_label} ｜ {activity}"
+            if note:
+                text += f"（ひとこと：{note}）"
+            if method == "mention":
+                text = "@here " + text
+                await channel.send(text, allowed_mentions=discord.AllowedMentions(everyone=True))
+            else:
+                await channel.send(text)
+        except Exception as exc:  # noqa: BLE001 - announcement failure must not break registration
+            print(f"[hima-bot] 告知の送信に失敗しました（登録は完了済み）: {exc}")
+
 
 class HimaCog(commands.Cog):
     def __init__(self, bot: HimaBot) -> None:
