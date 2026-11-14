@@ -2,6 +2,7 @@
 .env
 data.db
 *.db
+*.db.bak
 
 # python
 __pycache__/

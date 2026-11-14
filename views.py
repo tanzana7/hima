@@ -106,11 +106,14 @@ class HimaPanelView(ui.View):
     async def leave(self, interaction: discord.Interaction, _: ui.Button) -> None:
         guild_id = interaction.guild_id
         assert guild_id is not None
-        if storage.delete_hima(guild_id, interaction.user.id):
-            await self.bot.refresh_guild_list(guild_id)
-            await interaction.response.send_message("登録をやめたよ！また誘ってね。", ephemeral=True)
-        else:
+        row = storage.get_hima(guild_id, interaction.user.id)
+        if row is None:
             await interaction.response.send_message("今はヒマ登録されていないよ。", ephemeral=True)
+            return
+        storage.delete_hima(guild_id, interaction.user.id)
+        await self.bot.delete_stored_message(guild_id, row["announce_message_id"])
+        await self.bot.refresh_guild_list(guild_id)
+        await interaction.response.send_message("登録をやめたよ！また誘ってね。", ephemeral=True)
 
     @ui.button(label="ノックする", style=discord.ButtonStyle.primary, custom_id="hima:knock", emoji="🚪")
     async def knock(self, interaction: discord.Interaction, _: ui.Button) -> None:
@@ -203,6 +206,10 @@ class HimaJoinView(ui.View):
         guild_id = interaction.guild_id
         assert guild_id is not None
         now = int(time.time())
+        # 再登録のときは前回の告知メッセージを先に下ろす
+        old = storage.get_hima(guild_id, interaction.user.id)
+        if old is not None and old["announce_message_id"]:
+            await self.bot.delete_stored_message(guild_id, old["announce_message_id"])
         storage.upsert_hima(
             guild_id=guild_id,
             user_id=interaction.user.id,
@@ -216,7 +223,7 @@ class HimaJoinView(ui.View):
         await self.bot.refresh_guild_list(guild_id)
         mood_label = dict(MOODS)[self.mood]
         activity_label = ACTIVITY_SHORT[self.activity]
-        await self.bot.announce_hima(
+        announce_id = await self.bot.announce_hima(
             guild_id=guild_id,
             display_name=interaction.user.display_name,
             minutes=self.duration_min,
@@ -225,6 +232,8 @@ class HimaJoinView(ui.View):
             note=self.note,
             method=self.announce,
         )
+        if announce_id is not None:
+            storage.set_announce_message_id(guild_id, interaction.user.id, announce_id)
         suffix = f"（{self.note}）" if self.note else ""
         await interaction.response.send_message(
             f"掲示板に載せたよ！ あと{self.duration_min}分ヒマ宣言中{suffix}", ephemeral=True
@@ -317,7 +326,8 @@ class KnockView(ui.View):
                     description=f"**{sender.display_name}** さんが「{self.template}」って誘ってきた！",
                     color=discord.Color.gold(),
                 )
-                await dm.send(embed=embed, view=KnockReplyView(knock_id))
+                message = await dm.send(embed=embed, view=KnockReplyView(knock_id))
+                storage.update_knock_dm(knock_id, message.id)
                 sent.append(target.display_name)
             except discord.Forbidden:
                 storage.update_knock_status(knock_id, "dm_closed")
@@ -379,6 +389,12 @@ class KnockReplyButton(ui.DynamicItem, template=r"hima:knockreply:(?P<knock_id>\
             await dm.send(embed=embed)
         except discord.HTTPException:
             pass
+        # ノックDM自体は役目を終えたので削除（失敗しても無視）
+        try:
+            if interaction.message is not None:
+                await interaction.message.delete()
+        except Exception as exc:  # noqa: BLE001 - cleanup must not break the flow
+            print(f"[hima-bot] ノックDMの削除に失敗しました（無視します）: {exc}")
         await interaction.response.send_message(f"「{label}」を返したよ！", ephemeral=True)
 
 

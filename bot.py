@@ -82,10 +82,47 @@ class HimaBot(commands.Bot):
 
     @tasks.loop(seconds=30)
     async def cleanup_loop(self) -> None:
-        """Purge expired registrations every 30 seconds and refresh the lists."""
-        changed = storage.purge_expired(now=int(time.time()))
-        for guild_id in changed:
+        """Purge expired registrations, remove their announcements and stale knock DMs."""
+        now = int(time.time())
+        expired_rows = storage.purge_expired(now)
+        for row in expired_rows:
+            await self.delete_stored_message(row["guild_id"], row["announce_message_id"])
+        for knock in storage.list_unanswered_knocks():
+            from_alive = storage.get_hima(knock["guild_id"], knock["from_user_id"]) is not None
+            to_alive = storage.get_hima(knock["guild_id"], knock["to_user_id"]) is not None
+            if from_alive and to_alive:
+                continue
+            await self.delete_knock_dm(knock["to_user_id"], knock["dm_message_id"])
+            storage.update_knock_status(knock["id"], "expired")
+        changed_guilds = {row["guild_id"] for row in expired_rows}
+        for guild_id in changed_guilds:
             await self.refresh_guild_list(guild_id)
+
+    async def delete_stored_message(self, guild_id: int, message_id: Optional[int]) -> None:
+        """Delete a bot-posted message in the configured panel channel. Failures are logged only."""
+        if message_id is None:
+            return
+        try:
+            cfg = storage.get_guild_config(guild_id)
+            if cfg is None:
+                return
+            channel = self.get_channel(cfg["channel_id"])
+            if channel is None:
+                channel = await self.fetch_channel(cfg["channel_id"])
+            await channel.delete_message(discord.Object(id=message_id))
+        except Exception as exc:  # noqa: BLE001 - cleanup must not break the flow
+            print(f"[hima-bot] メッセージの削除に失敗しました（無視します）: {exc}")
+
+    async def delete_knock_dm(self, to_user_id: int, message_id: Optional[int]) -> None:
+        """Delete a previously sent knock DM. Failures are logged only."""
+        if message_id is None:
+            return
+        try:
+            user = await self.fetch_user(to_user_id)
+            dm = await user.create_dm()
+            await dm.delete_message(discord.Object(id=message_id))
+        except Exception as exc:  # noqa: BLE001 - cleanup must not break the flow
+            print(f"[hima-bot] ノックDMの削除に失敗しました（無視します）: {exc}")
 
     async def announce_hima(
         self,
@@ -100,14 +137,15 @@ class HimaBot(commands.Bot):
         """Announce a registration to the panel channel per the chosen method.
 
         silent: nothing. message: plain text. mention: @here with everyone=True.
+        Returns the posted message id (None when silent/failed).
         Failures are only logged and never break the registration flow.
         """
         try:
             if method not in ("message", "mention"):
-                return
+                return None
             cfg = storage.get_guild_config(guild_id)
             if cfg is None:
-                return
+                return None
             channel = self.get_channel(cfg["channel_id"])
             if channel is None:
                 channel = await self.fetch_channel(cfg["channel_id"])
@@ -116,11 +154,13 @@ class HimaBot(commands.Bot):
                 text += f"（ひとこと：{note}）"
             if method == "mention":
                 text = "@here " + text
-                await channel.send(text, allowed_mentions=discord.AllowedMentions(everyone=True))
+                message = await channel.send(text, allowed_mentions=discord.AllowedMentions(everyone=True))
             else:
-                await channel.send(text)
+                message = await channel.send(text)
+            return message.id
         except Exception as exc:  # noqa: BLE001 - announcement failure must not break registration
             print(f"[hima-bot] 告知の送信に失敗しました（登録は完了済み）: {exc}")
+            return None
 
 
 class HimaCog(commands.Cog):
@@ -148,6 +188,18 @@ class HimaCog(commands.Cog):
         assert interaction.guild_id is not None
         channel = interaction.channel
         assert channel is not None and hasattr(channel, "send")
+        # 冪等: 前回のパネル/一覧があれば先に削除してから張り直す（失敗は無視）
+        old_cfg = storage.get_guild_config(interaction.guild_id)
+        if old_cfg is not None:
+            for message_id in (old_cfg["panel_message_id"], old_cfg["list_message_id"]):
+                try:
+                    old_channel = self.bot.get_channel(old_cfg["channel_id"])
+                    if old_channel is None:
+                        old_channel = await self.bot.fetch_channel(old_cfg["channel_id"])
+                    old_message = await old_channel.fetch_message(message_id)
+                    await old_message.delete()
+                except Exception as exc:  # noqa: BLE001 - cleanup must not break setup
+                    print(f"[hima-bot] 旧パネル/一覧の削除に失敗しました（無視します）: {exc}")
         panel_message = await channel.send(
             embed=build_panel_embed(self.bot.display_name), view=HimaPanelView(self.bot)
         )
@@ -172,11 +224,14 @@ class HimaCog(commands.Cog):
     @app_commands.guild_only()
     async def hima_off(self, interaction: discord.Interaction) -> None:
         assert interaction.guild_id is not None
-        if storage.delete_hima(interaction.guild_id, interaction.user.id):
-            await self.bot.refresh_guild_list(interaction.guild_id)
-            await interaction.response.send_message("登録をやめたよ！また誘ってね。", ephemeral=True)
-        else:
+        row = storage.get_hima(interaction.guild_id, interaction.user.id)
+        if row is None:
             await interaction.response.send_message("今はヒマ登録されていないよ。", ephemeral=True)
+            return
+        storage.delete_hima(interaction.guild_id, interaction.user.id)
+        await self.bot.delete_stored_message(interaction.guild_id, row["announce_message_id"])
+        await self.bot.refresh_guild_list(interaction.guild_id)
+        await interaction.response.send_message("登録をやめたよ！また誘ってね。", ephemeral=True)
 
     # ------------------------------------------------------------------ /hima_list
 
