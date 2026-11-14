@@ -28,8 +28,9 @@ DEFAULT_DISPLAY_NAME = "今ヒマ！"
 
 class HimaBot(commands.Bot):
     def __init__(self) -> None:
-        # No privileged intents (presence / server members / message content are all off).
-        super().__init__(command_prefix="!", intents=discord.Intents.none())
+        # Non-privileged standard intents only (presence / server members / message
+        # content all stay off, so no privileged intents are enabled).
+        super().__init__(command_prefix="!", intents=discord.Intents.default())
         self.display_name = os.getenv("BOT_DISPLAY_NAME") or DEFAULT_DISPLAY_NAME
 
     async def setup_hook(self) -> None:
@@ -100,8 +101,11 @@ class HimaCog(commands.Cog):
     @app_commands.guild_only()
     @app_commands.default_permissions(manage_guild=True)
     async def panel_setup(self, interaction: discord.Interaction) -> None:
-        perms = getattr(interaction.user, "guild_permissions", None)
-        if perms is None or not (perms.manage_guild or perms.administrator):
+        has_manage_guild = bool(getattr(interaction.permissions, "manage_guild", False))
+        is_owner = False
+        if interaction.guild is not None and interaction.user.id == interaction.guild.owner_id:
+            is_owner = True
+        if not (has_manage_guild or is_owner):
             await interaction.response.send_message(
                 "このコマンドはサーバー管理権限のある人だけが使えるよ。", ephemeral=True
             )
