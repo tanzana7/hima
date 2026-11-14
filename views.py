@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List
 
 import discord
@@ -56,10 +57,11 @@ def build_panel_embed(display_name: str) -> discord.Embed:
     embed = discord.Embed(
         title=display_name,
         description=(
-            "今ヒマな人がすぐわかるパネルだよ。\n\n"
-            "・**今ヒマ！** … ヒマ宣言を登録する\n"
-            "・**やめる** … 登録を解除する\n"
-            "・**ノックする** … 今ヒマな人をDMで誘う"
+            "ヒマをそっと置いておく掲示板だよ。\n"
+            "暇だなと思ったときに見に来て、誰かいたら気が向いたほうから声をかけてね。\n\n"
+            "・**今ヒマ！** … 自分のヒマを掲示板に置く\n"
+            "・**やめる** … 置いたものを下ろす\n"
+            "・**ノックする** … 掲示板の人にDMで声をかける"
         ),
         color=discord.Color.green(),
     )
@@ -68,18 +70,20 @@ def build_panel_embed(display_name: str) -> discord.Embed:
 
 def build_list_embed(rows: List[Any], display_name: str) -> discord.Embed:
     now = int(time.time())
+    title = f"📜 {display_name} 掲示板（いま{len(rows)}人）"
     if not rows:
         description = "今ヒマな人はいません"
     else:
         lines = []
         for row in rows:
+            end_time = datetime.fromtimestamp(row["expires_at"]).strftime("%H:%M")
             line = f"**{row['display_name']}**｜{row['mood']}｜{row['activity']}"
             if row["note"]:
                 line += f"｜{row['note']}"
-            line += f"｜{remaining_text(row['expires_at'], now)}"
+            line += f"｜{remaining_text(row['expires_at'], now)}（{end_time}まで）"
             lines.append(line)
         description = "\n".join(lines)
-    embed = discord.Embed(title=f"📜 {display_name} メンバー一覧", description=description)
+    embed = discord.Embed(title=title, description=description)
     embed.color = discord.Color.green() if rows else discord.Color.dark_grey()
     return embed
 
@@ -221,9 +225,9 @@ class HimaJoinView(ui.View):
             note=self.note,
             method=self.announce,
         )
-        suffix = f"（ひとこと：{self.note}）" if self.note else ""
+        suffix = f"（{self.note}）" if self.note else ""
         await interaction.response.send_message(
-            f"登録したよ！あと{self.duration_min}分ヒマ宣言中🚀{suffix}", ephemeral=True
+            f"掲示板に載せたよ！ あと{self.duration_min}分ヒマ宣言中{suffix}", ephemeral=True
         )
 
 
