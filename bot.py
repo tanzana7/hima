@@ -1,6 +1,7 @@
 """hima-bot entry point: startup, slash commands, background cleanup loop."""
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 import time
@@ -13,6 +14,7 @@ from dotenv import load_dotenv
 
 import storage
 from views import (
+    PANEL_CUSTOM_IDS,
     HimaJoinView,
     HimaPanelView,
     KnockReplyButton,
@@ -32,6 +34,8 @@ class HimaBot(commands.Bot):
         # content all stay off, so no privileged intents are enabled).
         super().__init__(command_prefix="!", intents=discord.Intents.default())
         self.display_name = os.getenv("BOT_DISPLAY_NAME") or DEFAULT_DISPLAY_NAME
+        # /panel_setup のサーバー単位ロック（同時実行防止）
+        self.panel_setup_locks: dict[int, asyncio.Lock] = {}
 
     async def setup_hook(self) -> None:
         storage.init()
@@ -185,31 +189,59 @@ class HimaCog(commands.Cog):
                 "このコマンドはサーバー管理権限のある人だけが使えるよ。", ephemeral=True
             )
             return
+        # サーバー単位のロック：実行中に再度呼ばれたら何もしない
         assert interaction.guild_id is not None
-        channel = interaction.channel
-        assert channel is not None and hasattr(channel, "send")
-        # 冪等: 前回のパネル/一覧があれば先に削除してから張り直す（失敗は無視）
-        old_cfg = storage.get_guild_config(interaction.guild_id)
-        if old_cfg is not None:
-            for message_id in (old_cfg["panel_message_id"], old_cfg["list_message_id"]):
+        lock = self.bot.panel_setup_locks.setdefault(interaction.guild_id, asyncio.Lock())
+        if not lock.acquire(blocking=False):
+            await interaction.response.send_message("設置処理中です。少し待ってからもう一度試してね。", ephemeral=True)
+            return
+        try:
+            channel = interaction.channel
+            assert channel is not None and hasattr(channel, "send")
+            # 1) チャンネル履歴（直近200件）から旧パネル/旧一覧を掃除する
+            async for message in channel.history(limit=200):
+                if message.author.id != self.bot.user.id:
+                    continue
+                is_panel = any(
+                    getattr(child, "custom_id", None) in PANEL_CUSTOM_IDS
+                    for row in message.components
+                    for child in row.children
+                )
+                is_list = any(
+                    embed.title is not None and ("掲示板" in embed.title or "メンバー一覧" in embed.title)
+                    for embed in message.embeds
+                )
+                if not (is_panel or is_list):
+                    continue
                 try:
-                    old_channel = self.bot.get_channel(old_cfg["channel_id"])
-                    if old_channel is None:
-                        old_channel = await self.bot.fetch_channel(old_cfg["channel_id"])
-                    old_message = await old_channel.fetch_message(message_id)
-                    await old_message.delete()
+                    await message.delete()
                 except Exception as exc:  # noqa: BLE001 - cleanup must not break setup
                     print(f"[hima-bot] 旧パネル/一覧の削除に失敗しました（無視します）: {exc}")
-        panel_message = await channel.send(
-            embed=build_panel_embed(self.bot.display_name), view=HimaPanelView(self.bot)
-        )
-        list_message = await channel.send(embed=build_list_embed([], self.bot.display_name))
-        storage.set_guild_config(
-            interaction.guild_id, channel.id, panel_message.id, list_message.id
-        )
-        await interaction.response.send_message(
-            "パネルと一覧を設置したよ！ここに「今ヒマ！」の人が表示される🚀", ephemeral=True
-        )
+            # 2) 保険：保存済みIDの削除（履歴200件より古い分。重複削除は無視）
+            old_cfg = storage.get_guild_config(interaction.guild_id)
+            if old_cfg is not None:
+                for message_id in (old_cfg["panel_message_id"], old_cfg["list_message_id"]):
+                    try:
+                        old_channel = self.bot.get_channel(old_cfg["channel_id"])
+                        if old_channel is None:
+                            old_channel = await self.bot.fetch_channel(old_cfg["channel_id"])
+                        old_message = await old_channel.fetch_message(message_id)
+                        await old_message.delete()
+                    except Exception as exc:  # noqa: BLE001 - cleanup must not break setup
+                        print(f"[hima-bot] 旧パネル/一覧の削除に失敗しました（無視します）: {exc}")
+            # 3) 新しいパネルと一覧を投稿して guild_config を更新
+            panel_message = await channel.send(
+                embed=build_panel_embed(self.bot.display_name), view=HimaPanelView(self.bot)
+            )
+            list_message = await channel.send(embed=build_list_embed([], self.bot.display_name))
+            storage.set_guild_config(
+                interaction.guild_id, channel.id, panel_message.id, list_message.id
+            )
+            await interaction.response.send_message(
+                "パネルと一覧を設置したよ！ここに「今ヒマ！」の人が表示される🚀", ephemeral=True
+            )
+        finally:
+            lock.release()
 
     # ------------------------------------------------------------------ /hima
 

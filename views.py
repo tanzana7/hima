@@ -47,6 +47,8 @@ KNOCK_TEMPLATES = ["ゲームしない？", "ちょっと話さない？", "作�
 REPLY_LABELS = {"ok": "いいよ！", "later": "あとで", "pass": "今回はパス"}
 REPLY_STATUS = {"ok": "accepted", "later": "later", "pass": "passed"}
 
+PANEL_CUSTOM_IDS = {"hima:join", "hima:leave", "hima:knock"}
+
 
 def remaining_text(expires_at: int, now: int) -> str:
     minutes = max(1, (expires_at - now) // 60)
@@ -98,11 +100,11 @@ class HimaPanelView(ui.View):
         super().__init__(timeout=None)
         self.bot = bot
 
-    @ui.button(label="今ヒマ！", style=discord.ButtonStyle.success, custom_id="hima:join", emoji="🙋")
+    @ui.button(label="今ヒマ！", style=discord.ButtonStyle.success, custom_id="hima:join", emoji="🙋")  # custom_id は PANEL_CUSTOM_IDS と一致させること
     async def join(self, interaction: discord.Interaction, _: ui.Button) -> None:
         await interaction.response.send_message(view=HimaJoinView(self.bot), ephemeral=True)
 
-    @ui.button(label="やめる", style=discord.ButtonStyle.secondary, custom_id="hima:leave")
+    @ui.button(label="やめる", style=discord.ButtonStyle.secondary, custom_id="hima:leave")  # custom_id は PANEL_CUSTOM_IDS と一致させること
     async def leave(self, interaction: discord.Interaction, _: ui.Button) -> None:
         guild_id = interaction.guild_id
         assert guild_id is not None
@@ -115,7 +117,7 @@ class HimaPanelView(ui.View):
         await self.bot.refresh_guild_list(guild_id)
         await interaction.response.send_message("登録をやめたよ！また誘ってね。", ephemeral=True)
 
-    @ui.button(label="ノックする", style=discord.ButtonStyle.primary, custom_id="hima:knock", emoji="🚪")
+    @ui.button(label="ノックする", style=discord.ButtonStyle.primary, custom_id="hima:knock", emoji="🚪")  # custom_id は PANEL_CUSTOM_IDS と一致させること
     async def knock(self, interaction: discord.Interaction, _: ui.Button) -> None:
         guild_id = interaction.guild_id
         assert guild_id is not None
