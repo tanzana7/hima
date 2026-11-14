@@ -132,8 +132,8 @@ class HimaJoinView(ui.View):
         super().__init__(timeout=300)
         self.bot = bot
         self.duration_min: int | None = None
-        self.mood: str | None = None
-        self.activity: str | None = None
+        self.mood = "ok"
+        self.activity = "any"
         self.announce = "silent"
         self.note = ""
 
@@ -148,7 +148,10 @@ class HimaJoinView(ui.View):
 
     @ui.select(
         placeholder="温度感は？",
-        options=[discord.SelectOption(label=label, value=value) for value, label in MOODS],
+        options=[
+            discord.SelectOption(label=label, value=value, default=(value == "ok"))
+            for value, label in MOODS
+        ],
         row=1,
     )
     async def mood(self, interaction: discord.Interaction, select: ui.Select) -> None:
@@ -157,7 +160,10 @@ class HimaJoinView(ui.View):
 
     @ui.select(
         placeholder="やりたいことは？",
-        options=[discord.SelectOption(label=label, value=value) for value, label in ACTIVITIES],
+        options=[
+            discord.SelectOption(label=label, value=value, default=(value == "any"))
+            for value, label in ACTIVITIES
+        ],
         row=2,
     )
     async def activity(self, interaction: discord.Interaction, select: ui.Select) -> None:
