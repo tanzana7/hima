@@ -46,6 +46,7 @@ KNOCK_TEMPLATES = ["ゲームしない？", "ちょっと話さない？", "作�
 
 REPLY_LABELS = {"ok": "いいよ！", "later": "あとで", "pass": "今回はパス"}
 REPLY_STATUS = {"ok": "accepted", "later": "later", "pass": "passed"}
+RESULT_LABELS = {"accepted": "いいよ！", "later": "あとで", "passed": "今回はパス"}
 
 PANEL_CUSTOM_IDS = {"hima:join", "hima:leave", "hima:knock"}
 
@@ -307,43 +308,18 @@ class KnockView(ui.View):
         now = int(time.time())
         sent: List[str] = []
         cooldown: List[str] = []
-        failed: List[str] = []
-        for value in self.user_select.values:
-            target_id = int(value)
-            target: discord.abc.User | None = interaction.guild.get_member(target_id)  # type: ignore[union-attr]
-            if target is None:
-                try:
-                    target = await self.bot.fetch_user(target_id)
-                except discord.HTTPException:
-                    failed.append(f"ID {target_id}")
-                    continue
-            if storage.recent_knock_exists(guild_id, sender.id, target_id, now, window=300):
+        # DM配送は廃止。受信箱（/board）向けに knock_log へ status='sent' で記録するだけ。
+        for target in self.user_select.values:
+            if storage.recent_knock_exists(guild_id, sender.id, target.id, now, window=300):
                 cooldown.append(target.display_name)
                 continue
-            knock_id = storage.record_knock(guild_id, sender.id, target_id, self.template, "sent", now)
-            try:
-                dm = await target.create_dm()
-                embed = discord.Embed(
-                    title="🚪 ノックが届いたよ！",
-                    description=f"**{sender.display_name}** さんが「{self.template}」って誘ってきた！",
-                    color=discord.Color.gold(),
-                )
-                message = await dm.send(embed=embed, view=KnockReplyView(knock_id))
-                storage.update_knock_dm(knock_id, message.id)
-                sent.append(target.display_name)
-            except discord.Forbidden:
-                storage.update_knock_status(knock_id, "dm_closed")
-                failed.append(target.display_name)
-            except discord.HTTPException:
-                storage.update_knock_status(knock_id, "dm_closed")
-                failed.append(target.display_name)
+            storage.record_knock(guild_id, sender.id, target.id, self.template, "sent", now)
+            sent.append(target.display_name)
         parts = []
         if sent:
-            parts.append("✅ ノックを送ったよ: " + ", ".join(sent))
+            parts.append("✅ ノックを届けたよ！相手は /board の「あなたへのノック」で確認できるよ: " + ", ".join(sent))
         if cooldown:
             parts.append("⏳ 同じ相手には5分に1回まで。ちょっと待ってね: " + ", ".join(cooldown))
-        if failed:
-            parts.append("🔒 DMが閉じられていて届かなかったよ: " + ", ".join(failed))
         await interaction.response.send_message("\n".join(parts), ephemeral=True)
 
 
@@ -351,14 +327,18 @@ class KnockView(ui.View):
 
 
 class KnockReplyButton(ui.DynamicItem, template=r"hima:knockreply:(?P<knock_id>\d+):(?P<action>ok|later|pass)"):
-    """Persistent DM reply button whose custom_id carries the knock_log id."""
+    """Persistent reply button whose custom_id carries the knock_log id.
 
-    def __init__(self, knock_id: int, action: str) -> None:
+    Used on the private board (formerly on knock DMs). Works after restarts.
+    """
+
+    def __init__(self, knock_id: int, action: str, row: int | None = None, label: str | None = None) -> None:
         super().__init__(
             ui.Button(
-                label=REPLY_LABELS[action],
+                label=label or REPLY_LABELS[action],
                 style=discord.ButtonStyle.success if action == "ok" else discord.ButtonStyle.secondary,
                 custom_id=f"hima:knockreply:{knock_id}:{action}",
+                row=row,
             )
         )
         self.knock_id = knock_id
@@ -380,30 +360,115 @@ class KnockReplyButton(ui.DynamicItem, template=r"hima:knockreply:(?P<knock_id>\
             return
         storage.update_knock_status(self.knock_id, REPLY_STATUS[self.action])
         label = REPLY_LABELS[self.action]
-        try:
-            sender = await interaction.client.fetch_user(knock["from_user_id"])  # type: ignore[union-attr]
-            dm = await sender.create_dm()
-            embed = discord.Embed(
-                title="🔔 ノックの返事が届いたよ！",
-                description=f"**{interaction.user.display_name}** さんの返事：「{label}」",
-                color=discord.Color.green(),
-            )
-            await dm.send(embed=embed)
-        except discord.HTTPException:
-            pass
-        # ノックDM自体は役目を終えたので削除（失敗しても無視）
-        try:
-            if interaction.message is not None:
-                await interaction.message.delete()
-        except Exception as exc:  # noqa: BLE001 - cleanup must not break the flow
-            print(f"[hima-bot] ノックDMの削除に失敗しました（無視します）: {exc}")
-        await interaction.response.send_message(f"「{label}」を返したよ！", ephemeral=True)
+        await interaction.response.send_message(
+            f"「{label}」を返したよ！（送り主は /board の「ノックの結果」で確認できるよ）", ephemeral=True
+        )
 
 
-class KnockReplyView(ui.View):
-    """Buttons attached to the knock DM; each button is a DynamicItem (works after restart)."""
+# ------------------------------------------------------- private board (ephemeral)
 
-    def __init__(self, knock_id: int) -> None:
+
+class BoardView(ui.View):
+    """Private board buttons (fixed custom_ids so they survive restarts)."""
+
+    def __init__(self, bot: "HimaBot", incoming_knocks: List[Any] | None = None) -> None:
         super().__init__(timeout=None)
-        for action in ("ok", "later", "pass"):
-            self.add_item(KnockReplyButton(knock_id, action))
+        self.bot = bot
+        # 返答ボタンは1人あたり3つ。5行制限内に収めるため行単位で束ねず順に並べる。
+        flat: List[Any] = []
+        for k in incoming_knocks or []:
+            short_name = str(k["sender_name"])[:8]
+            for action in ("ok", "later", "pass"):
+                flat.append((int(k["id"]), action, f"{REPLY_LABELS[action]}·{short_name}"))
+        for index, (knock_id, action, label) in enumerate(flat[:20]):
+            self.add_item(KnockReplyButton(knock_id, action, row=1 + index // 5, label=label))
+
+    @ui.button(label="今ヒマ！", style=discord.ButtonStyle.success, custom_id="board:join", emoji="🙋", row=0)
+    async def join(self, interaction: discord.Interaction, _: ui.Button) -> None:
+        await interaction.response.send_message(view=HimaJoinView(self.bot), ephemeral=True)
+
+    @ui.button(label="やめる", style=discord.ButtonStyle.secondary, custom_id="board:leave", row=0)
+    async def leave(self, interaction: discord.Interaction, _: ui.Button) -> None:
+        guild_id = interaction.guild_id
+        assert guild_id is not None
+        row = storage.get_hima(guild_id, interaction.user.id)
+        if row is None:
+            await interaction.response.send_message("今はヒマ登録されていないよ。", ephemeral=True)
+            return
+        storage.delete_hima(guild_id, interaction.user.id)
+        await self.bot.delete_stored_message(guild_id, row["announce_message_id"])
+        embeds, view, _ = await build_board_components(self.bot, guild_id, interaction.user.id)
+        await interaction.response.edit_message(embeds=embeds, view=view)
+
+    @ui.button(label="ノックする", style=discord.ButtonStyle.primary, custom_id="board:knock", emoji="🚪", row=0)
+    async def knock(self, interaction: discord.Interaction, _: ui.Button) -> None:
+        guild_id = interaction.guild_id
+        assert guild_id is not None
+        rows = [r for r in storage.list_hima(guild_id, int(time.time())) if r["user_id"] != interaction.user.id]
+        others = rows[:25]
+        if not others:
+            await interaction.response.send_message(
+                "今ヒマな人はいないよ。自分が「今ヒマ！」で登録してみよう！", ephemeral=True
+            )
+            return
+        await interaction.response.send_message(view=KnockView(self.bot, others), ephemeral=True)
+
+    @ui.button(label="更新", style=discord.ButtonStyle.secondary, custom_id="board:refresh", emoji="🔄", row=0)
+    async def refresh(self, interaction: discord.Interaction, _: ui.Button) -> None:
+        guild_id = interaction.guild_id
+        assert guild_id is not None
+        embeds, view, result_ids = await build_board_components(
+            self.bot, guild_id, interaction.user.id
+        )
+        await interaction.response.edit_message(embeds=embeds, view=view)
+        if result_ids:
+            storage.mark_results_seen(result_ids)
+
+
+async def _sender_display_name(bot: "HimaBot", guild_id: int, user_id: int) -> str:
+    row = storage.get_hima(guild_id, user_id)
+    if row is not None:
+        return str(row["display_name"])
+    try:
+        user = await bot.fetch_user(user_id)
+        return user.display_name
+    except discord.HTTPException:
+        return "不明なユーザー"
+
+
+async def build_board_components(bot: "HimaBot", guild_id: int, user_id: int):
+    """個人用掲示板の embed 群と View を組み立てる。
+
+    Returns (embeds, view, result_ids). result_ids は描画後に result_seen=1 にする対象。
+    """
+    rows = storage.list_hima(guild_id, now=int(time.time()))
+    board_embed = build_list_embed(rows, bot.display_name)
+
+    inbox = list(storage.list_knocks_inbox(guild_id, user_id, limit=5))
+    inbox_pairs = []
+    inbox_lines = []
+    for k in inbox:
+        name = await _sender_display_name(bot, guild_id, k["from_user_id"])
+        inbox_pairs.append({"id": int(k["id"]), "sender_name": name})
+        inbox_lines.append(f"・**{name}** さんが「{k['template']}」とノックしてきた！")
+    inbox_embed = discord.Embed(
+        title="📬 あなたへのノック",
+        description="\n".join(inbox_lines) if inbox_lines else "今は届いていないよ",
+        color=discord.Color.gold(),
+    )
+
+    results = list(storage.list_knock_results(guild_id, user_id))
+    result_ids = []
+    result_lines = []
+    for k in results:
+        name = await _sender_display_name(bot, guild_id, k["to_user_id"])
+        result_ids.append(int(k["id"]))
+        label = RESULT_LABELS.get(k["status"], k["status"])
+        result_lines.append(f"・**{name}** さんの返事：「{label}」（{k['template']}）")
+    results_embed = discord.Embed(
+        title="🔔 ノックの結果",
+        description="\n".join(result_lines) if result_lines else "まだ結果はないよ",
+        color=discord.Color.green(),
+    )
+
+    return [board_embed, inbox_embed, results_embed], BoardView(bot, inbox_pairs), result_ids

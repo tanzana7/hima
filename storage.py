@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS knock_log (
     template     TEXT    NOT NULL,
     status       TEXT    NOT NULL,
     created_at   INTEGER NOT NULL,
-    dm_message_id INTEGER
+    dm_message_id INTEGER,
+    result_seen  INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_hima_expires ON hima_status (expires_at);
@@ -54,6 +55,7 @@ def init(db_path: str = DB_PATH) -> None:
     # Migrations: add columns only when missing; existing data is preserved.
     _ensure_column("hima_status", "announce_message_id", "INTEGER")
     _ensure_column("knock_log", "dm_message_id", "INTEGER")
+    _ensure_column("knock_log", "result_seen", "INTEGER NOT NULL DEFAULT 0")
     _conn.commit()
 
 
@@ -92,6 +94,13 @@ def set_guild_config(guild_id: int, channel_id: int, panel_message_id: int, list
         (guild_id, channel_id, panel_message_id, list_message_id),
     )
     _c().commit()
+
+
+def delete_guild_config(guild_id: int) -> bool:
+    """Remove the public panel config for a guild. Returns True when a row was deleted."""
+    cur = _c().execute("DELETE FROM guild_config WHERE guild_id = ?", (guild_id,))
+    _c().commit()
+    return cur.rowcount > 0
 
 
 # ----------------------------------------------------------------- hima_status
@@ -207,11 +216,48 @@ def update_knock_dm(knock_id: int, dm_message_id: int) -> None:
 
 
 def list_unanswered_knocks() -> Iterable[sqlite3.Row]:
-    """Knocks still awaiting a reply that have a deletable DM message."""
+    """Knocks still awaiting a reply (inbox delivery; dm_message_id is unused now)."""
+    cur = _c().execute("SELECT * FROM knock_log WHERE status = 'sent'")
+    return cur.fetchall()
+
+
+def list_knocks_inbox(guild_id: int, user_id: int, limit: int = 5) -> Iterable[sqlite3.Row]:
+    """Unanswered knocks addressed to the user, newest first."""
     cur = _c().execute(
-        "SELECT * FROM knock_log WHERE status = 'sent' AND dm_message_id IS NOT NULL"
+        """
+        SELECT * FROM knock_log
+        WHERE guild_id = ? AND to_user_id = ? AND status = 'sent'
+        ORDER BY created_at DESC
+        LIMIT ?
+        """,
+        (guild_id, user_id, limit),
     )
     return cur.fetchall()
+
+
+def list_knock_results(guild_id: int, user_id: int) -> Iterable[sqlite3.Row]:
+    """Knocks the user sent that got a reply but are not seen yet."""
+    cur = _c().execute(
+        """
+        SELECT * FROM knock_log
+        WHERE guild_id = ? AND from_user_id = ? AND status != 'sent' AND result_seen = 0
+        ORDER BY created_at DESC
+        """,
+        (guild_id, user_id),
+    )
+    return cur.fetchall()
+
+
+def mark_results_seen(knock_ids: Iterable[int]) -> None:
+    """Mark the given knock rows as seen in the results pane."""
+    ids = list(knock_ids)
+    if not ids:
+        return
+    placeholders = ",".join("?" for _ in ids)
+    _c().execute(
+        f"UPDATE knock_log SET result_seen = 1 WHERE id IN ({placeholders})", ids
+    )
+    _c().commit()
 
 
 def get_knock(knock_id: int) -> Optional[sqlite3.Row]:
