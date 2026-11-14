@@ -179,11 +179,13 @@ class HimaCog(commands.Cog):
     )
     @app_commands.guild_only()
     async def panel_setup(self, interaction: discord.Interaction) -> None:
-        # サーバー単位のロック：実行中に再度呼ばれたら何もしない
+        # 3秒制限対策：まず応答を保留しておき、完了後に followup で返す
         assert interaction.guild_id is not None
+        await interaction.response.defer(ephemeral=True)
+        # サーバー単位のロック：実行中に再度呼ばれたら何もしない
         lock = self.bot.panel_setup_locks.setdefault(interaction.guild_id, asyncio.Lock())
         if lock.locked():
-            await interaction.response.send_message("設置処理中です。少し待ってからもう一度試してね。", ephemeral=True)
+            await interaction.followup.send("設置処理中です。少し待ってからもう一度試してね。", ephemeral=True)
             return
         async with lock:
             channel = interaction.channel
@@ -242,7 +244,7 @@ class HimaCog(commands.Cog):
             storage.set_guild_config(
                 interaction.guild_id, channel.id, panel_message.id, list_message.id
             )
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 f"パネルと一覧を設置したよ！ここに「今ヒマ！」の人が表示される🚀\n"
                 f"掃除：パネル{swept_panels}件・一覧{swept_lists}件を削除しました（スキャン{scanned}件"
                 + (f"・削除失敗{sweep_failures}件" if sweep_failures else "") + "）",
