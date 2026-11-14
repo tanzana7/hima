@@ -131,7 +131,7 @@ class HimaJoinView(ui.View):
     def __init__(self, bot: "HimaBot") -> None:
         super().__init__(timeout=300)
         self.bot = bot
-        self.duration_min: int | None = None
+        self.duration_min = 30
         self.mood = "ok"
         self.activity = "any"
         self.announce = "silent"
@@ -139,7 +139,10 @@ class HimaJoinView(ui.View):
 
     @ui.select(
         placeholder="時間：あとどれくらいヒマ？",
-        options=[discord.SelectOption(label=label, value=str(minutes)) for minutes, label in DURATIONS],
+        options=[
+            discord.SelectOption(label=label, value=str(minutes), default=(minutes == 30))
+            for minutes, label in DURATIONS
+        ],
         row=0,
     )
     async def duration(self, interaction: discord.Interaction, select: ui.Select) -> None:
