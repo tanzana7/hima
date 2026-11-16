@@ -18,8 +18,8 @@ ACTIVITIES = {
     "any": "✨ なんでもOK",
 }
 
-# hima_sessions.source: how the session was declared
-HIMA_SOURCES = {"panel", "command", "app", "auto"}
+# hima_sessions.source: how the session was declared (Bot 側の宣言は常に manual)
+HIMA_SOURCES = {"manual", "suggested", "auto"}
 
 # matches.kind: role combination of the paired sessions
 MATCH_KINDS = {"fire_fire", "fire_ok", "ok_ok"}

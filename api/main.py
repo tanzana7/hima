@@ -11,6 +11,7 @@ from sqlalchemy import text
 from . import worker
 from .auth import require_bot_secret
 from .db import engine
+from .routes_bot import router as bot_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -33,7 +34,8 @@ async def lifespan(_: FastAPI):
         _worker_thread.join(timeout=5)
 
 
-app = FastAPI(title="Atsumaro API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Atsumaro API", version="0.2.0", lifespan=lifespan)
+app.include_router(bot_router)
 
 
 @app.get("/health")

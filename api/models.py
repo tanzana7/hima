@@ -132,3 +132,21 @@ class RegularSlot(Base):
     weekday: Mapped[int] = mapped_column(Integer)  # 0-6 (Mon=0)
     start_min: Mapped[int] = mapped_column(Integer)
     end_min: Mapped[int] = mapped_column(Integer)
+
+
+class WatchQueue(Base):
+    __tablename__ = "watch_queue"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)  # BIGSERIAL
+    watcher_id: Mapped[int] = mapped_column(BigInteger)
+    session_id: Mapped[int] = mapped_column(ForeignKey("hima_sessions.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        Index(
+            "ix_watch_queue_unsent",
+            "watcher_id",
+            postgresql_where=text("sent_at IS NULL"),
+        ),
+    )

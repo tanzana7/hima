@@ -1,4 +1,4 @@
-"""In-process background worker skeleton (30s tick, advisory-locked)."""
+"""In-process background worker (30s tick, advisory-locked)."""
 from __future__ import annotations
 
 import logging
@@ -6,6 +6,7 @@ import threading
 
 from sqlalchemy import text
 
+from . import notify
 from .db import SessionLocal, engine
 
 log = logging.getLogger("atsumaro.worker")
@@ -30,6 +31,13 @@ def _close_expired_sessions() -> int:
         return result.rowcount or 0
 
 
+def run_tick(rest=None) -> int:
+    """One unit of periodic work: close expired sessions then refresh counters."""
+    closed = _close_expired_sessions()
+    notify.refresh_all_counters(rest=rest)
+    return closed
+
+
 def _run(stop_event: threading.Event) -> None:
     conn = engine.connect()
     try:
@@ -40,11 +48,17 @@ def _run(stop_event: threading.Event) -> None:
             log.info("advisory lock not acquired; another worker is active")
             return
         log.info("worker started (advisory lock acquired)")
+        ticks = 0
         while not stop_event.wait(TICK_SECONDS):
             try:
-                closed = _close_expired_sessions()
+                closed = run_tick()
                 if closed:
                     log.info("worker closed %d expired session(s)", closed)
+                ticks += 1
+                if ticks % notify.FLUSH_INTERVAL_TICKS == 0:
+                    notified = notify.flush_watch_queue()
+                    if notified:
+                        log.info("watch flush notified %d watcher(s)", notified)
             except Exception:  # noqa: BLE001 - the worker must survive tick errors
                 log.exception("worker tick failed")
     finally:
@@ -56,7 +70,7 @@ def _run(stop_event: threading.Event) -> None:
 
 
 def start_worker(stop_event: threading.Event) -> threading.Thread | None:
-    """Spawn the worker thread. Returns None when the advisory lock is not acquired."""
+    """Spawn the worker thread. The advisory lock is checked inside the thread."""
     thread = threading.Thread(target=_run, args=(stop_event,), name="atsumaro-worker", daemon=True)
     thread.start()
     return thread
