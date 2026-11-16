@@ -323,7 +323,11 @@ class MockApiClient implements ApiClient {
     required KnockTemplate template,
   }) async {
     final friend = _friends.where((item) => item.user.id == userId).firstOrNull;
-    if (friend == null || _isBlocked(userId) || !_isVisible(userId)) {
+    // API 契約どおり「いまヒマな相手」だけにノックできる。一覧の取得後に期限が切れた相手も拒否する。
+    if (friend == null ||
+        _isBlocked(userId) ||
+        !_isVisible(userId) ||
+        !friend.expiresAt.isAfter(DateTime.now().toUtc())) {
       throw const ApiException(
         statusCode: 404,
         code: 'user_not_available',
