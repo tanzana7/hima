@@ -1,0 +1,62 @@
+"""In-process background worker skeleton (30s tick, advisory-locked)."""
+from __future__ import annotations
+
+import logging
+import threading
+
+from sqlalchemy import text
+
+from .db import SessionLocal, engine
+
+log = logging.getLogger("atsumaro.worker")
+
+TICK_SECONDS = 30
+ADVISORY_LOCK_KEY = 81140501  # arbitrary fixed key for "atsumaro api worker"
+
+
+def _close_expired_sessions() -> int:
+    """Close sessions whose expires_at passed and which are still open."""
+    with SessionLocal() as session:
+        result = session.execute(
+            text(
+                """
+                UPDATE hima_sessions
+                SET ended_at = now()
+                WHERE ended_at IS NULL AND expires_at <= now()
+                """
+            )
+        )
+        session.commit()
+        return result.rowcount or 0
+
+
+def _run(stop_event: threading.Event) -> None:
+    conn = engine.connect()
+    try:
+        acquired = conn.execute(
+            text("SELECT pg_try_advisory_lock(:key)"), {"key": ADVISORY_LOCK_KEY}
+        ).scalar()
+        if not acquired:
+            log.info("advisory lock not acquired; another worker is active")
+            return
+        log.info("worker started (advisory lock acquired)")
+        while not stop_event.wait(TICK_SECONDS):
+            try:
+                closed = _close_expired_sessions()
+                if closed:
+                    log.info("worker closed %d expired session(s)", closed)
+            except Exception:  # noqa: BLE001 - the worker must survive tick errors
+                log.exception("worker tick failed")
+    finally:
+        try:
+            conn.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": ADVISORY_LOCK_KEY})
+        except Exception:  # noqa: BLE001
+            pass
+        conn.close()
+
+
+def start_worker(stop_event: threading.Event) -> threading.Thread | None:
+    """Spawn the worker thread. Returns None when the advisory lock is not acquired."""
+    thread = threading.Thread(target=_run, args=(stop_event,), name="atsumaro-worker", daemon=True)
+    thread.start()
+    return thread

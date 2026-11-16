@@ -1,0 +1,21 @@
+# 本番デプロイ用（今回の検証では使用しない。検証は WSL 内 PostgreSQL を直接使用）
+# WSL 内に postgres:postgres で atsumaro DB を用意してある（pg_hba で WSL サブネット許可済み）
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: atsumaro
+    ports:
+      - "5432:5432"
+    volumes:
+      - atsumaro_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d atsumaro"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  atsumaro_pgdata:
