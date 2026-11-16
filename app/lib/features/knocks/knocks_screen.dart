@@ -119,7 +119,9 @@ class _KnocksScreenState extends State<KnocksScreen> {
     if (_showSent) _markUnseenAfterDisplay(viewModel.sent, viewModel);
     final knocks = _showSent ? viewModel.sent : viewModel.inbox;
     return Scaffold(
-      appBar: AppBar(title: const Text('ノック')),
+      // No title spacing: the title sits right after the back button instead of
+      // leaving the default 16dp gap on top of the 56dp leading slot.
+      appBar: AppBar(titleSpacing: 0, title: const Text('ノック')),
       body: Stack(
         children: [
           ListView(
@@ -276,6 +278,13 @@ class _KnockCard extends StatelessWidget {
         sent &&
         knock.status != KnockStatus.pending &&
         (highlighted || knock.resultSeenAt == null);
+    // 「返事待ち」 would read as if I were waiting on a knock I received, so a
+    // received knock shows when it arrived until I answer it.
+    final statusText = sent
+        ? knock.status.label
+        : knock.status == KnockStatus.pending
+        ? _relativeTime(knock.createdAt, DateTime.now())
+        : _answeredLabel(knock.status);
     return Container(
       padding: const EdgeInsets.all(AppSpacing.s16),
       decoration: BoxDecoration(
@@ -340,7 +349,7 @@ class _KnockCard extends StatelessWidget {
                       ),
                     ),
                   Text(
-                    knock.status.label,
+                    statusText,
                     style: AppTextStyles.caption.copyWith(
                       color: isNew ? AppColors.ink : AppColors.muted,
                       fontWeight: FontWeight.w700,
@@ -356,27 +365,104 @@ class _KnockCard extends StatelessWidget {
           ],
           if (!sent && knock.status == KnockStatus.pending) ...[
             const SizedBox(height: AppSpacing.s12),
-            Wrap(
-              spacing: AppSpacing.s8,
-              runSpacing: AppSpacing.s8,
-              children: [
-                FilledButton(
-                  onPressed: () => onRespond(KnockStatus.accepted),
-                  child: const Text('いいよ！'),
-                ),
-                OutlinedButton(
-                  onPressed: () => onRespond(KnockStatus.later),
-                  child: const Text('あとで'),
-                ),
-                OutlinedButton(
-                  onPressed: () => onRespond(KnockStatus.passed),
-                  child: const Text('今回はパス'),
-                ),
-              ],
-            ),
+            _ReplyButtons(onRespond: onRespond),
           ],
         ],
       ),
     );
+  }
+}
+
+/// Relative arrival time for a received knock that is still waiting for me.
+String _relativeTime(DateTime createdAt, DateTime now) {
+  final elapsed = now.difference(createdAt);
+  if (elapsed.inMinutes < 1) return 'たった今';
+  if (elapsed.inHours < 1) return '${elapsed.inMinutes}分前';
+  if (elapsed.inDays < 1) return '${elapsed.inHours}時間前';
+  if (elapsed.inDays < 7) return '${elapsed.inDays}日前';
+  final local = createdAt.toLocal();
+  return '${local.month}月${local.day}日';
+}
+
+/// A received knock I already answered reads as what I did, not as the label of
+/// the button I pressed.
+String _answeredLabel(KnockStatus status) => switch (status) {
+  KnockStatus.accepted => 'いいよ！した',
+  KnockStatus.later => 'あとで返した',
+  KnockStatus.passed => 'パスした',
+  KnockStatus.pending => KnockStatus.pending.label,
+};
+
+/// The three replies share one row of equal widths. They stack full width when
+/// the card is too narrow for the widest label at the current text size, so no
+/// label ever wraps into an uneven second row or gets clipped.
+class _ReplyButtons extends StatelessWidget {
+  const _ReplyButtons({required this.onRespond});
+
+  final ValueChanged<KnockStatus> onRespond;
+
+  /// 「今回はパス」 is the widest label: 5 full-width glyphs at [_labelSize].
+  static const double _labelSize = 15;
+  static const int _widestLabelGlyphs = 5;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final textScale =
+          MediaQuery.textScalerOf(context).scale(_labelSize) / _labelSize;
+      final labelWidth = _widestLabelGlyphs * _labelSize * textScale;
+      final buttonWidth = labelWidth + AppSpacing.s8 * 2;
+      final stacked =
+          constraints.maxWidth < buttonWidth * 3 + AppSpacing.s8 * 2;
+      final buttons = [
+        _button(KnockStatus.accepted, 'いいよ！', filled: true),
+        _button(KnockStatus.later, 'あとで'),
+        _button(KnockStatus.passed, '今回はパス'),
+      ];
+      if (stacked) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (var index = 0; index < buttons.length; index++) ...[
+              if (index > 0) const SizedBox(height: AppSpacing.s8),
+              buttons[index],
+            ],
+          ],
+        );
+      }
+      return Row(
+        children: [
+          for (var index = 0; index < buttons.length; index++) ...[
+            if (index > 0) const SizedBox(width: AppSpacing.s8),
+            Expanded(child: buttons[index]),
+          ],
+        ],
+      );
+    },
+  );
+
+  Widget _button(KnockStatus status, String label, {bool filled = false}) {
+    // Equal thirds of a card are narrow, so the theme's wide button padding and
+    // larger label are trimmed back for these three.
+    final style = ButtonStyle(
+      padding: const WidgetStatePropertyAll(
+        EdgeInsets.symmetric(horizontal: AppSpacing.s8),
+      ),
+      textStyle: WidgetStatePropertyAll(
+        AppTextStyles.button.copyWith(fontSize: _labelSize),
+      ),
+    );
+    void respond() => onRespond(status);
+    return filled
+        ? FilledButton(
+            onPressed: respond,
+            style: style,
+            child: Text(label, maxLines: 1),
+          )
+        : OutlinedButton(
+            onPressed: respond,
+            style: style,
+            child: Text(label, maxLines: 1),
+          );
   }
 }

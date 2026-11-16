@@ -71,7 +71,7 @@ class LoginScreen extends StatelessWidget {
                       foregroundColor: AppColors.ink,
                       minimumSize: const Size.fromHeight(56),
                     ),
-                    child: const Text('はじめる'),
+                    child: const Text('Discordでログイン'),
                   ),
                 ],
               ),
