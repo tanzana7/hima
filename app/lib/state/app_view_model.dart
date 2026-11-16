@@ -14,6 +14,17 @@ class AppViewModel extends ChangeNotifier {
   bool _isBusy = false;
   bool _isRefreshingLive = false;
   bool _liveError = false;
+
+  /// Bumped after every successful mutation and when the session ends. A live
+  /// poll captures this value when it starts and throws its results away if it
+  /// changed meanwhile: a read that began before a mutation must never overwrite
+  /// what the mutation wrote, and a poll started in the session being ended must
+  /// not repopulate the signed-out model.
+  int _stateGeneration = 0;
+
+  /// Set when a refresh is requested while one is already running, so the
+  /// request runs after the in-flight pass instead of being dropped.
+  bool _refreshQueued = false;
   UserProfile? _me;
   HimaSession? _myHima;
   List<HimaSession> _friends = [];
@@ -166,33 +177,64 @@ class AppViewModel extends ChangeNotifier {
     _liveError = false;
   }
 
+  /// Reads the data the home screen shows live.
+  ///
+  /// A poll can be in flight while the user declares, ends or edits hima. The
+  /// generation guard keeps such a stale read from overwriting the state the
+  /// successful mutation just produced; the discarded pass is repeated so the
+  /// screen still converges to the server state. A read that outlives the
+  /// session is dropped and never retried.
   Future<void> refreshLiveData() async {
-    if (!_isAuthenticated || _isRefreshingLive) return;
+    if (!_isAuthenticated) return;
+    if (_isRefreshingLive) {
+      // The running poll may have started before the mutation, so queue a pass
+      // that reads the committed state instead of dropping this request.
+      _refreshQueued = true;
+      return;
+    }
     _isRefreshingLive = true;
     try {
-      final results = await Future.wait<Object?>([
-        _api.getHima(),
-        _api.getMyHima(),
-        _api.getFriends(),
-        _api.getMatches(),
-        _api.getKnockInbox(),
-        _api.getKnockSent(),
-      ]);
-      _friends = results[0] as List<HimaSession>;
-      _myHima = results[1] as HimaSession?;
-      _friendServers = results[2] as List<FriendServer>;
-      _matches = results[3] as List<MatchRecord>;
-      _inbox = results[4] as List<Knock>;
-      _sent = results[5] as List<Knock>;
-      _liveError = false;
-    } catch (_) {
-      // Keep the last good data and let the UI offer a retry instead of
-      // pretending the refresh succeeded.
-      _liveError = true;
+      do {
+        _refreshQueued = false;
+        final generation = _stateGeneration;
+        try {
+          final results = await Future.wait<Object?>([
+            _api.getHima(),
+            _api.getMyHima(),
+            _api.getFriends(),
+            _api.getMatches(),
+            _api.getKnockInbox(),
+            _api.getKnockSent(),
+          ]);
+          if (generation != _stateGeneration || !_isAuthenticated) {
+            // A mutation committed while this read was in flight, or the session
+            // ended: these results are older than the state held here, so drop
+            // them. Only a still signed-in model is worth reading again.
+            _refreshQueued = _isAuthenticated;
+            continue;
+          }
+          _friends = results[0] as List<HimaSession>;
+          _myHima = results[1] as HimaSession?;
+          _friendServers = results[2] as List<FriendServer>;
+          _matches = results[3] as List<MatchRecord>;
+          _inbox = results[4] as List<Knock>;
+          _sent = results[5] as List<Knock>;
+          _liveError = false;
+        } catch (_) {
+          // Keep the last good data and let the UI offer a retry instead of
+          // pretending the refresh succeeded.
+          _liveError = true;
+        }
+      } while (_refreshQueued);
     } finally {
       _isRefreshingLive = false;
       notifyListeners();
     }
+  }
+
+  /// Records that the state held here is newer than any read already in flight.
+  void _invalidateLiveReads() {
+    _stateGeneration++;
   }
 
   void startPolling() {
@@ -227,6 +269,7 @@ class AppViewModel extends ChangeNotifier {
         source: DeclarationSource.manual,
       ),
     );
+    _invalidateLiveReads();
     _applySession(session);
     await refreshLiveData();
     return session;
@@ -249,6 +292,7 @@ class AppViewModel extends ChangeNotifier {
         source: current.source ?? DeclarationSource.manual,
       ),
     );
+    _invalidateLiveReads();
     _applySession(session);
     await refreshLiveData();
   }
@@ -271,6 +315,7 @@ class AppViewModel extends ChangeNotifier {
         source: current.source ?? DeclarationSource.manual,
       ),
     );
+    _invalidateLiveReads();
     _applySession(session);
     await refreshLiveData();
   }
@@ -291,6 +336,7 @@ class AppViewModel extends ChangeNotifier {
         source: current.source ?? DeclarationSource.manual,
       ),
     );
+    _invalidateLiveReads();
     _applySession(session);
     await refreshLiveData();
   }
@@ -305,6 +351,7 @@ class AppViewModel extends ChangeNotifier {
 
   Future<void> endHima() async {
     await _api.deleteMyHima();
+    _invalidateLiveReads();
     _myHima = null;
     notifyListeners();
     await refreshLiveData();
@@ -314,6 +361,7 @@ class AppViewModel extends ChangeNotifier {
     // The knock is committed by this call. A failing follow-up read must not be
     // reported as a failed send, or a retry would send a duplicate.
     final knock = await _api.createKnock(userId: userId, template: template);
+    _invalidateLiveReads();
     await _refreshKnocksQuietly();
     // Mock replies arrive after three seconds; a short refresh makes them
     // visible without waiting for the 30 second poll.
@@ -345,12 +393,14 @@ class AppViewModel extends ChangeNotifier {
 
   Future<void> respondToKnock(String knockId, KnockStatus response) async {
     await _api.respondToKnock(knockId, response);
+    _invalidateLiveReads();
     await _refreshKnocksQuietly();
   }
 
   Future<void> markKnockResultSeen(String knockId) async {
     final seenAt =
         await _api.markKnockResultSeen(knockId) ?? DateTime.now().toUtc();
+    _invalidateLiveReads();
     _sent = _sent.map((knock) {
       if (knock.id != knockId) return knock;
       return Knock(
@@ -385,6 +435,7 @@ class AppViewModel extends ChangeNotifier {
         notifyOnHima: notifyOnHima ?? current.notifyOnHima,
       ),
     );
+    _invalidateLiveReads();
     _me = UserProfile(
       id: profile.id,
       displayName: profile.displayName,
@@ -396,6 +447,7 @@ class AppViewModel extends ChangeNotifier {
 
   Future<void> updateGuildVisibility(String guildId, bool visible) async {
     final updated = await _api.updateGuildVisibility(guildId, visible);
+    _invalidateLiveReads();
     _guilds = _guilds
         .map((guild) => guild.id == guildId ? updated : guild)
         .toList();
@@ -404,23 +456,29 @@ class AppViewModel extends ChangeNotifier {
 
   Future<void> addBlock(String userId) async {
     await _api.createBlock(userId);
+    _invalidateLiveReads();
     _blocks = await _api.getBlocks();
     await refreshLiveData();
   }
 
   Future<void> removeBlock(String userId) async {
     await _api.deleteBlock(userId);
+    _invalidateLiveReads();
     _blocks = await _api.getBlocks();
     await refreshLiveData();
   }
 
   Future<void> saveRegularSlots(List<RegularSlot> slots) async {
     _regularSlots = await _api.putRegularSlots(slots);
+    _invalidateLiveReads();
     notifyListeners();
   }
 
   Future<void> logout() async {
     stopPolling();
+    // A live refresh still in flight belongs to the session being ended: drop
+    // its results instead of letting it repopulate the signed-out model.
+    _invalidateLiveReads();
     await _api.logout();
     _isAuthenticated = false;
     _me = null;
