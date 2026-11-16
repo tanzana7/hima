@@ -3,11 +3,26 @@ import 'dart:async';
 import 'api_client.dart';
 import 'models/models.dart';
 
+/// In-memory stand-in for the shared API server.
+///
+/// The data is shaped so the demo flow works end to end: the default mood is
+/// `ok`, so a one-tap declare matches けんた (ok × ok), and a knock to him is
+/// answered with 「いいよ！」 a few seconds later without a push service.
 class MockApiClient implements ApiClient {
   MockApiClient() {
     final now = DateTime.now().toUtc();
+    _guilds = [
+      const Guild(
+        id: '222222222222222201',
+        name: 'いつものメンバー',
+        visible: true,
+      ),
+      const Guild(id: '222222222222222202', name: 'ゲーム仲間', visible: true),
+      // Visibility off: members are still listed, but their hima is not shared.
+      const Guild(id: '222222222222222203', name: '大学の友達', visible: false),
+    ];
     _friends = [
-      _friend(
+      _freeFriend(
         '111111111111111101',
         'さな',
         Mood.fire,
@@ -16,7 +31,7 @@ class MockApiClient implements ApiClient {
         '222222222222222201',
         now.add(const Duration(minutes: 42)),
       ),
-      _friend(
+      _freeFriend(
         '111111111111111102',
         'けんた',
         Mood.ok,
@@ -25,16 +40,18 @@ class MockApiClient implements ApiClient {
         '222222222222222201',
         now.add(const Duration(minutes: 28)),
       ),
-      _friend(
+      // No activity chosen: the UI must show a plain 「ひま」.
+      _freeFriend(
         '111111111111111103',
         'みお',
         Mood.quiet,
-        Activity.chat,
+        null,
         '聞き専でもよければ',
         '222222222222222201',
         now.add(const Duration(minutes: 19)),
+        durationMin: 30,
       ),
-      _friend(
+      _freeFriend(
         '111111111111111104',
         'りく',
         Mood.fire,
@@ -42,8 +59,9 @@ class MockApiClient implements ApiClient {
         null,
         '222222222222222202',
         now.add(const Duration(minutes: 55)),
+        durationMin: 120,
       ),
-      _friend(
+      _freeFriend(
         '111111111111111105',
         'あき',
         Mood.ok,
@@ -52,7 +70,7 @@ class MockApiClient implements ApiClient {
         '222222222222222202',
         now.add(const Duration(minutes: 36)),
       ),
-      _friend(
+      _freeFriend(
         '111111111111111106',
         'ゆず',
         Mood.fire,
@@ -60,24 +78,36 @@ class MockApiClient implements ApiClient {
         null,
         '222222222222222202',
         now.add(const Duration(minutes: 24)),
+        durationMin: 30,
+      ),
+      _freeFriend(
+        '111111111111111107',
+        'なな',
+        Mood.fire,
+        Activity.work,
+        null,
+        '222222222222222203',
+        now.add(const Duration(minutes: 33)),
       ),
     ];
-    _guilds = [
-      const Guild(id: '222222222222222201', name: 'いつものメンバー', visible: true),
-      const Guild(id: '222222222222222202', name: 'ゲーム仲間', visible: true),
-    ];
+    _addMember('111111111111111108', 'はる', '222222222222222201');
+    _addMember('111111111111111109', 'そら', '222222222222222201');
+    _addMember('111111111111111110', 'かんた', '222222222222222203');
+    // Seeded so the 「マッチングしない人」 list is not empty in the demo.
     _blockedIds.add('111111111111111106');
-    final me = _summary('999999999999999999', 'あなた');
-    final friend = _friends[1].user;
+    final me = _summary(_myId, _myName);
     _inbox = [
       Knock(
         id: 'knock-in-1',
-        sender: friend,
+        sender: _friends[1].user,
         recipient: me,
         template: KnockTemplate.game,
         status: KnockStatus.pending,
         createdAt: now.subtract(const Duration(minutes: 2)),
-        guild: const GuildSummary(id: '222222222222222201', name: 'いつものメンバー'),
+        guild: const GuildSummary(
+          id: '222222222222222201',
+          name: 'いつものメンバー',
+        ),
         message: KnockTemplate.game.text,
       ),
     ];
@@ -90,7 +120,11 @@ class MockApiClient implements ApiClient {
   late List<Guild> _guilds;
   late List<Knock> _inbox;
   final List<Knock> _sent = [];
-  final List<MatchRecord> _matches = [];
+
+  /// First time each session pair was matched, so the same pair is not
+  /// re-notified after a mood or activity change.
+  final Map<String, DateTime> _matchCreatedAt = {};
+  final List<_MockMember> _members = [];
   final Set<String> _blockedIds = {};
   final List<RegularSlot> _regularSlots = [];
   UserSettings _settings = const UserSettings(
@@ -105,19 +139,25 @@ class MockApiClient implements ApiClient {
   static UserSummary _summary(String id, String name) =>
       UserSummary(id: id, displayName: name);
 
-  HimaSession _friend(
+  void _addMember(String id, String name, String guildId) {
+    _members.add(_MockMember(user: _summary(id, name), guildId: guildId));
+  }
+
+  HimaSession _freeFriend(
     String id,
     String name,
     Mood mood,
-    Activity activity,
+    Activity? activity,
     String? note,
     String guildId,
-    DateTime expiresAt,
-  ) {
-    _friendGuilds[id] = guildId;
-    final startedAt = DateTime.now().toUtc().subtract(
-      const Duration(minutes: 8),
-    );
+    DateTime expiresAt, {
+    int durationMin = 60,
+  }) {
+    _addMember(id, name, guildId);
+    // started_at is derived from the allowed duration so the seeded session
+    // still satisfies the 30 / 60 / 120 contract while keeping the remaining
+    // time short enough for the demo.
+    final startedAt = expiresAt.subtract(Duration(minutes: durationMin));
     return HimaSession(
       sessionId: 'session-$id',
       user: _summary(id, name),
@@ -126,15 +166,16 @@ class MockApiClient implements ApiClient {
       note: note,
       startedAt: startedAt,
       expiresAt: expiresAt,
-      durationMin: expiresAt.difference(startedAt).inMinutes,
+      durationMin: durationMin,
       guildIds: [guildId],
     );
   }
 
-  final Map<String, String> _friendGuilds = {};
+  String? _guildOf(String userId) =>
+      _members.where((member) => member.user.id == userId).firstOrNull?.guildId;
 
   bool _isVisible(String userId) {
-    final guildId = _friendGuilds[userId];
+    final guildId = _guildOf(userId);
     if (guildId == null) return false;
     return _guilds.any((guild) => guild.id == guildId && guild.visible);
   }
@@ -196,6 +237,13 @@ class MockApiClient implements ApiClient {
 
   @override
   Future<HimaSession> putMyHima(HimaDeclaration declaration) async {
+    if (!himaDurationChoices.contains(declaration.durationMin)) {
+      throw const ApiException(
+        statusCode: 400,
+        code: 'validation_error',
+        message: '入力内容を確認してください。',
+      );
+    }
     final now = DateTime.now().toUtc();
     final current = _activeHima;
     final isNewSession = current == null;
@@ -212,25 +260,100 @@ class MockApiClient implements ApiClient {
       source: current?.source ?? declaration.source,
     );
     _myHima = session;
-    if (isNewSession) _createMatches(session, now);
+    // Matches are derived from the current moods in getMatches, so a mood
+    // change on the same session takes effect immediately.
     return session;
   }
 
-  void _createMatches(HimaSession mine, DateTime createdAt) {
-    if (mine.mood == Mood.quiet) return;
+  /// fire × fire and ok × ok match both sides, fire × ok only the fire side,
+  /// and quiet never matches.
+  MatchKind? _matchKindFor(Mood mine, Mood other) => switch ((mine, other)) {
+    (Mood.fire, Mood.fire) => MatchKind.fireFire,
+    (Mood.fire, Mood.ok) => MatchKind.fireOk,
+    (Mood.ok, Mood.ok) => MatchKind.okOk,
+    _ => null,
+  };
+
+  @override
+  Future<void> deleteMyHima() async {
+    _myHima = null;
+  }
+
+  @override
+  Future<List<HimaSession>> getHima() async {
+    final now = DateTime.now().toUtc();
+    final visible = _friends
+        .where(
+          (friend) =>
+              !_isBlocked(friend.user.id) &&
+              _isVisible(friend.user.id) &&
+              friend.expiresAt.isAfter(now),
+        )
+        .toList();
+    final mine = _activeHima?.activity;
+    visible.sort((a, b) {
+      final byActivity = activityMatchRank(
+        mine,
+        a.activity,
+      ).compareTo(activityMatchRank(mine, b.activity));
+      return byActivity == 0
+          ? a.user.displayName.compareTo(b.user.displayName)
+          : byActivity;
+    });
+    return List.unmodifiable(visible);
+  }
+
+  @override
+  Future<List<FriendServer>> getFriends() async {
+    final now = DateTime.now().toUtc();
+    return _guilds.map((guild) {
+      final members =
+          _members
+              .where(
+                (member) =>
+                    member.guildId == guild.id &&
+                    !_isBlocked(member.user.id),
+              )
+              .map((member) {
+                final hima = guild.visible
+                    ? _friends
+                          .where(
+                            (friend) =>
+                                friend.user.id == member.user.id &&
+                                friend.expiresAt.isAfter(now),
+                          )
+                          .firstOrNull
+                    : null;
+                return FriendMember(user: member.user, hima: hima);
+              })
+              .toList()
+            ..sort((a, b) {
+              if (a.isFree != b.isFree) return a.isFree ? -1 : 1;
+              return a.user.displayName.compareTo(b.user.displayName);
+            });
+      return FriendServer(guild: guild, members: members);
+    }).toList(growable: false);
+  }
+
+  @override
+  Future<List<MatchRecord>> getMatches({DateTime? since}) async {
+    final mine = _activeHima;
+    if (mine == null) return const [];
+    final now = DateTime.now().toUtc();
+    final matches = <MatchRecord>[];
     for (final friend in _friends) {
       if (_isBlocked(friend.user.id) || !_isVisible(friend.user.id)) continue;
-      if (friend.mood == Mood.quiet || !friend.expiresAt.isAfter(createdAt)) {
-        continue;
-      }
-      final kind = switch ((mine.mood, friend.mood)) {
-        (Mood.fire, Mood.fire) => MatchKind.fireFire,
-        (Mood.fire, Mood.ok) => MatchKind.fireOk,
-        (Mood.ok, Mood.ok) => MatchKind.okOk,
-        _ => null,
-      };
+      if (!friend.expiresAt.isAfter(now)) continue;
+      // Derived from the current moods, so changing the mood of a live session
+      // adds or removes its match cards immediately.
+      final kind = _matchKindFor(mine.mood, friend.mood);
       if (kind == null) continue;
-      _matches.add(
+      final createdAt = _matchCreatedAt.putIfAbsent(
+        '${mine.sessionId}:${friend.sessionId}',
+        () => now,
+      );
+      if (since != null && !createdAt.isAfter(since.toUtc())) continue;
+      matches.add(
         MatchRecord(
           mySessionId: mine.sessionId,
           otherSessionId: friend.sessionId,
@@ -246,75 +369,20 @@ class MockApiClient implements ApiClient {
         ),
       );
     }
-  }
+    matches.sort((a, b) {
+      int rank(MatchRecord match) {
+        final friend = _friends
+            .where((session) => session.sessionId == match.otherSessionId)
+            .firstOrNull;
+        return activityMatchRank(mine.activity, friend?.activity);
+      }
 
-  @override
-  Future<void> deleteMyHima() async {
-    _myHima = null;
-  }
-
-  @override
-  Future<List<HimaSession>> getHima() async {
-    final visible = _friends
-        .where(
-          (friend) =>
-              !_isBlocked(friend.user.id) &&
-              _isVisible(friend.user.id) &&
-              friend.expiresAt.isAfter(DateTime.now().toUtc()),
-        )
-        .toList();
-    final currentActivity = _activeHima?.activity;
-    visible.sort((a, b) {
-      final aSame =
-          currentActivity != null &&
-          (a.activity == currentActivity || a.activity == Activity.any);
-      final bSame =
-          currentActivity != null &&
-          (b.activity == currentActivity || b.activity == Activity.any);
-      if (aSame != bSame) return aSame ? -1 : 1;
-      return a.user.displayName.compareTo(b.user.displayName);
+      final byActivity = rank(a).compareTo(rank(b));
+      return byActivity == 0
+          ? b.createdAt.compareTo(a.createdAt)
+          : byActivity;
     });
-    return List.unmodifiable(visible);
-  }
-
-  @override
-  Future<List<MatchRecord>> getMatches({DateTime? since}) async {
-    final mine = _activeHima;
-    final now = DateTime.now().toUtc();
-    if (mine == null) return const [];
-    final visible =
-        _matches.where((match) {
-          if (match.mySessionId != mine.sessionId) return false;
-          final friend = _friends
-              .where((session) => session.sessionId == match.otherSessionId)
-              .firstOrNull;
-          if (friend == null || !friend.expiresAt.isAfter(now)) return false;
-          if (_isBlocked(match.otherUser.id) ||
-              !_isVisible(match.otherUser.id)) {
-            return false;
-          }
-          return since == null || match.createdAt.isAfter(since.toUtc());
-        }).toList()..sort((a, b) {
-          final activity = _activeHima?.activity;
-          int rank(MatchRecord match) {
-            final friend = _friends
-                .where((session) => session.sessionId == match.otherSessionId)
-                .firstOrNull;
-            return activity != null &&
-                    friend != null &&
-                    (activity == Activity.any ||
-                        friend.activity == activity ||
-                        friend.activity == Activity.any)
-                ? 0
-                : 1;
-          }
-
-          final byActivity = rank(a).compareTo(rank(b));
-          return byActivity == 0
-              ? b.createdAt.compareTo(a.createdAt)
-              : byActivity;
-        });
-    return List.unmodifiable(visible);
+    return List.unmodifiable(matches);
   }
 
   @override
@@ -323,7 +391,8 @@ class MockApiClient implements ApiClient {
     required KnockTemplate template,
   }) async {
     final friend = _friends.where((item) => item.user.id == userId).firstOrNull;
-    // API 契約どおり「いまヒマな相手」だけにノックできる。一覧の取得後に期限が切れた相手も拒否する。
+    // The contract only allows knocking someone who is hima right now; a friend
+    // whose declaration expired after the list was fetched is rejected too.
     if (friend == null ||
         _isBlocked(userId) ||
         !_isVisible(userId) ||
@@ -334,7 +403,7 @@ class MockApiClient implements ApiClient {
         message: 'この人にはノックできません。',
       );
     }
-    final guildId = _friendGuilds[userId];
+    final guildId = _guildOf(userId);
     final guild = _guilds.where((item) => item.id == guildId).firstOrNull;
     if (guild == null) {
       throw const ApiException(
@@ -440,18 +509,22 @@ class MockApiClient implements ApiClient {
 
   @override
   Future<List<BlockedUser>> getBlocks() async => _blockedIds
-      .map((id) => _friends.where((friend) => friend.user.id == id).firstOrNull)
-      .whereType<HimaSession>()
+      .map((id) => _members.where((member) => member.user.id == id).firstOrNull)
+      .whereType<_MockMember>()
       .map(
-        (friend) =>
-            BlockedUser(user: friend.user, createdAt: DateTime.now().toUtc()),
+        (member) => BlockedUser(
+          user: member.user,
+          createdAt: DateTime.now().toUtc(),
+        ),
       )
       .toList(growable: false);
 
   @override
   Future<BlockedUser> createBlock(String userId) async {
-    final friend = _friends.where((item) => item.user.id == userId).firstOrNull;
-    if (friend == null) {
+    final member = _members
+        .where((item) => item.user.id == userId)
+        .firstOrNull;
+    if (member == null) {
       throw const ApiException(
         statusCode: 404,
         code: 'user_not_found',
@@ -467,7 +540,7 @@ class MockApiClient implements ApiClient {
       (knock) =>
           knock.status == KnockStatus.pending && knock.sender?.id == userId,
     );
-    return BlockedUser(user: friend.user, createdAt: DateTime.now().toUtc());
+    return BlockedUser(user: member.user, createdAt: DateTime.now().toUtc());
   }
 
   @override
@@ -495,6 +568,13 @@ class MockApiClient implements ApiClient {
     HimaTimeSuggestion(weekday: 5, hour: 20, likelihood: 0.78),
     HimaTimeSuggestion(weekday: 6, hour: 14, likelihood: 0.64),
   ];
+}
+
+class _MockMember {
+  const _MockMember({required this.user, required this.guildId});
+
+  final UserSummary user;
+  final String guildId;
 }
 
 extension<T> on Iterable<T> {

@@ -117,6 +117,27 @@ extension ActivityPresentation on Activity {
   };
 }
 
+/// Declare durations the app offers. The API accepts exactly these values.
+const List<int> himaDurationChoices = [30, 60, 120];
+const int defaultHimaDurationMin = 60;
+
+String durationLabel(int minutes) => switch (minutes) {
+  30 => '30分',
+  60 => '1時間',
+  120 => '2時間',
+  _ => '$minutes分',
+};
+
+/// How well [other]'s activity fits [mine], used for match ordering.
+/// 0 = same activity, 1 = either side なんでもOK, 2 = no preference.
+/// A null activity means the user did not choose, so a null counterpart ranks
+/// below `any`; `any` is still preferred even when only one side chose it.
+int activityMatchRank(Activity? mine, Activity? other) {
+  if (mine != null && mine == other) return 0;
+  if (mine == Activity.any || other == Activity.any) return 1;
+  return 2;
+}
+
 extension KnockTemplatePresentation on KnockTemplate {
   String get text => switch (this) {
     KnockTemplate.game => 'ゲームしない？',
@@ -140,6 +161,14 @@ Mood moodFromJson(String value) => switch (value) {
   'quiet' => Mood.quiet,
   _ => throw FormatException('Unknown mood: $value'),
 };
+
+/// `activity` is optional in the contract: absent or null means "not chosen",
+/// which the UI shows simply as 「ひま」.
+Activity? activityFromJsonOrNull(Object? value) {
+  if (value == null) return null;
+  if (value is String) return activityFromJson(value);
+  throw const FormatException('Expected "activity" to be a string or null.');
+}
 
 Activity activityFromJson(String value) => switch (value) {
   'game' => Activity.game,
@@ -310,6 +339,40 @@ class GuildSummary {
   JsonMap toJson() => {'id': id, 'name': name};
 }
 
+/// A person the caller shares a Discord server with. `hima` is null when the
+/// person is not currently free (or the server is not visible to the caller).
+class FriendMember {
+  const FriendMember({required this.user, this.hima});
+
+  final UserSummary user;
+  final HimaSession? hima;
+
+  bool get isFree => hima != null;
+
+  factory FriendMember.fromJson(JsonMap json) {
+    final hima = json['hima'];
+    return FriendMember(
+      user: UserSummary.fromJson(readJsonMap(json['user'])),
+      hima: hima == null ? null : HimaSession.fromJson(readJsonMap(hima)),
+    );
+  }
+
+  JsonMap toJson() => {'user': user.toJson(), 'hima': hima?.toJson()};
+}
+
+/// Members of one shared server, used by the 友達 tab.
+class FriendServer {
+  const FriendServer({required this.guild, required this.members});
+
+  final Guild guild;
+  final List<FriendMember> members;
+
+  factory FriendServer.fromJson(JsonMap json) => FriendServer(
+    guild: Guild.fromJson(json),
+    members: readModelList(json['members'], FriendMember.fromJson),
+  );
+}
+
 class HimaDeclaration {
   const HimaDeclaration({
     required this.mood,
@@ -320,14 +383,14 @@ class HimaDeclaration {
   });
 
   final Mood mood;
-  final Activity activity;
+  final Activity? activity;
   final String? note;
   final int durationMin;
   final DeclarationSource source;
 
   JsonMap toJson() => {
     'mood': mood.name,
-    'activity': activity.name,
+    'activity': activity?.name,
     'note': note,
     'duration_min': durationMin,
     'source': source.name,
@@ -351,7 +414,7 @@ class HimaSession {
   final String sessionId;
   final UserSummary user;
   final Mood mood;
-  final Activity activity;
+  final Activity? activity;
   final String? note;
   final DateTime startedAt;
   final DateTime expiresAt;
@@ -385,7 +448,7 @@ class HimaSession {
       sessionId: readString(json, 'session_id'),
       user: user,
       mood: moodFromJson(readString(json, 'mood')),
-      activity: activityFromJson(readString(json, 'activity')),
+      activity: activityFromJsonOrNull(json['activity']),
       note: readOptionalString(json, 'note'),
       startedAt: startedAt,
       expiresAt: expiresAt,
@@ -403,7 +466,7 @@ class HimaSession {
       'session_id': sessionId,
       'user': user.toJson(),
       'mood': mood.name,
-      'activity': activity.name,
+      'activity': activity?.name,
       'note': note,
       'duration_min': durationMin,
       'started_at': startedAt.toUtc().toIso8601String(),
@@ -469,20 +532,20 @@ class MatchedHima {
   });
 
   final Mood mood;
-  final Activity activity;
+  final Activity? activity;
   final String? note;
   final DateTime expiresAt;
 
   factory MatchedHima.fromJson(JsonMap json) => MatchedHima(
     mood: moodFromJson(readString(json, 'mood')),
-    activity: activityFromJson(readString(json, 'activity')),
+    activity: activityFromJsonOrNull(json['activity']),
     note: readOptionalString(json, 'note'),
     expiresAt: readDateTime(json, 'expires_at'),
   );
 
   JsonMap toJson() => {
     'mood': mood.name,
-    'activity': activity.name,
+    'activity': activity?.name,
     'note': note,
     'expires_at': expiresAt.toUtc().toIso8601String(),
   };

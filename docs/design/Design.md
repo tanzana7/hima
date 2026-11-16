@@ -1,9 +1,21 @@
 # hima. — Design Specification
 
-> **Version:** 0.1 (MVP)  
+> **Version:** 0.2 (MVP)  
 > **Platform:** Flutter / iOS・Android  
 > **Last updated:** 2026-11-16  
 > **Status:** デザイン方針。実装前に細部を調整してよい。
+
+## 0. 2026-11-16 の決定事項
+
+初版のあとに決まった内容です。初版と食い違う場合はこちらを優先します。
+
+- プロダクト名は **`hima.`**（ロゴ表記）。Android の `android:label` と iOS の `CFBundleDisplayName` も `hima.`。Dart パッケージ名は `atsumaro` のまま。
+- 温度感（`fire` / `ok` / `quiet`）は維持し、マッチングも温度感で決まる（fire×fire、fire×ok、ok×ok。quiet は自動マッチしない）。
+- やりたいこと（activity）は Bot と同じ `game` / `chat` / `work` / `out` / `any`。**任意項目**で、未選択は null。表示は単に `ひま`。
+- 宣言時間はデフォルト60分、選択肢は **30分 / 1時間 / 2時間** のみ。
+- 友達は「共通の Discord サーバーのメンバー」。友達申請・追加の導線は持たない。
+- `さそう` は OS 共有シートではなく**アプリ内ノック**。受信・送信はヘッダーのベルの先に置く。
+- タブは `ホーム` / `友達` / `プロフィール` の3つ。設定はヘッダーの歯車からも開ける。
 
 ## 1. プロダクトの方向性
 
@@ -61,6 +73,13 @@
 - 「なにする？」は任意。未選択の場合は `なんでもOK` に決めつけず、単に `ひま` と表示する。
 - ネットワークエラー時は成功扱いしない。元の状態を保って再試行できるようにする。
 
+### 温度感の選び方
+
+- **タップ**:「ひまを宣言」は直前まで使っていた温度感で即宣言する（初回は `ok`）。質問を挟まない。
+- **長押し**: ボタンの周りに3つの温度感バブルが弧状に飛び出す。指を重ねたバブルが 1.3 倍に広がり、離すとその温度感で宣言する。外して離すとキャンセル。
+- 宣言中はヒーローに現在の温度感をタップできるバッジとして出し、タップで小さなピッカーを開いて**同じセッション ID のまま**変更する。
+- 初回のホーム表示時だけ「長押しで温度感を選べるよ」をボタンの近くに表示する。
+
 ---
 
 ## 3. デザインシステム
@@ -93,7 +112,7 @@
 ### 3.2 タイポグラフィ
 
 - **本文:** OS標準の日本語サンセリフ（Flutter標準）。
-- **見出し:** 丸みのある日本語ゴシック（候補：`M PLUS Rounded 1c` 等、導入時にライセンスを確認）。
+- **見出し:** 丸みのある日本語ゴシック。**M PLUS Rounded 1c**（SIL OFL 1.1）を `app/assets/fonts/` に同梱して使う（500 / 700 / 800）。`google_fonts` は使わず、実行時にフォントをダウンロードしない。ライセンスは同ディレクトリの `OFL.txt`。
 - **ロゴ `hima.`:** 別途ロゴアセットまたは太めの丸ゴシック。本文と異なる強い個性を許可。
 - 画像の文字を単純なアウトライン画像で再現せず、**アクセシブルなTextウィジェット**を優先。
 
@@ -148,7 +167,9 @@
 ### 4.1 Header
 
 - 左：太くて丸い `hima.` のワードマーク。
-- 右：通知ベル、設定アイコン（必要に応じて設定はプロフィール内に移動可）。
+- 右：通知ベル（未確認のノックや結果があると赤いドット）、設定アイコン。
+- ベルのドットは、受信は一覧を表示した時点で、送信は結果を表示して既読にした時点で消える。
+- ベルはノック画面（受信／送信）を開き、歯車は設定を開く。設定はプロフィールタブにも並ぶ。
 - アイコンボタンのタップ領域は最低 **48×48dp**。
 - ロゴ以外の装飾は少なくして、主役をステータスに譲る。
 
@@ -199,7 +220,8 @@
 
 ### 4.4 「なにする？」チップ
 
-- 候補：`通話` / `ゲーム` / `ごはん` / `作業` / `なんでも`。
+- 候補：`ゲーム` / `雑談・通話` / `作業通話` / `外出` / `なんでもOK`（Bot と同じ値。`game` / `chat` / `work` / `out` / `any`）。
+- 未選択（null）を許す。API でも任意項目で、未選択は `ひま` と表示する。
 - 宣言の**必須条件にはしない**。選ばなくてもすぐに宣言できる。
 - 未宣言でチップを押した場合は、選択内容を保持するだけ。勝手に宣言しない。
 - 宣言中にチップを押した場合は、共有しているカテゴリを更新する（更新成功後に反映）。
@@ -221,39 +243,52 @@
 
 ### 友達
 
-- 友達一覧、名前検索、追加導線。
-- `ひま` の友達を先に表示、未宣言は下にまとめる。
-- 個人カードから `さそう` を実行できる。
+- 友達 = 共通 Discord サーバーのメンバー。友達申請・追加の導線は持たない。
+- サーバーごとにまとめて表示し、各サーバー内で `ひま` の人を先、そうでない人を下に並べる。
+- 名前検索を上部に置く。
+- 公開設定がオフのサーバーには `非表示` と表示する。
+- `さそう` は `ひま` の人にだけ出す。ひまかどうか分からない相手の状態を推測しない。
 
 ### プロフィール
 
-- アバター、表示名、友達に公開するプロフィール情報。
-- 通知設定、ブロック、ログアウトなどへの導線。
-- 暇の公開範囲は**承認済みの友達のみ**をデフォルトにする。
+- アバター、表示名。
+- 設定（自動モードと自動宣言の温度感、通知、サーバーごとの公開、マッチングしない人、よくヒマな時間、X の利用時間から検出の Android プレースホルダー）、ログアウト。
+- ヘッダーの歯車からも同じ設定を開ける。
 
-### 誘う
+### 誘う（アプリ内ノック）
 
 - `さそう` タップ → 小さなボトムシートを表示。
-- 友達の名前と選択中のアクティビティを表示。
-- MVPでは専用チャットを必須にしない。OSの共有シートや外部アプリへつなぐ案を優先。
-- Discord連携や専用招待通知は、機能が決まってから追加する。
+- 友達の名前とやりたいことを表示し、テンプレ（`ゲームしない？` / `ちょっと話さない？` / `作業通話しない？`）を1つ選んで送る。
+- quiet の相手には `スルーしてOK` を添える。
+- 受信・送信はヘッダーのベルの先のノック画面にまとめる。受信は `いいよ！` / `あとで` / `今回はパス` で返す。送信は状態を表示し、未確認の結果は一度だけ強調してから既読にする。
 
 ---
 
 ## 6. モーション・リアクション
 
-| 操作 | 動き | 目安 |
-|---|---|---:|
-| 暇を宣言 | ボタンが縮む→戻る、Heroの色が変化、放射線が短く現れる | 250–450ms |
-| 暇を終了 | Heroの色が静かな色へ戻り、見出しが切り替わる | 200–300ms |
-| チップ選択 | 軽いスケール変化と背景色の切り替え | 120–180ms |
-| 友達の状態変化 | カードをフェード/スライドして再配置 | 180–280ms |
-| `さそう` | ボトムシートを下から表示 | 220–300ms |
+遊び心は「意味のある瞬間に1回だけ」出す。常時動く演出は使わない。
 
-- 宣言時の小さな星・線などは**1回だけ**。常時動くキラキラ演出は使わない。
-- OSの「アニメーションを減らす」設定に追従する。
-- Flutterでは `AnimatedSwitcher`、`AnimatedContainer`、`TweenAnimationBuilder` を優先。重いエフェクトライブラリは原則不要。
-- 触覚フィードバックは軽く1回。常時の振動や音は使わない。
+| 瞬間 | 動き | 触覚 |
+|---|---|---|
+| 「ひまを宣言」を押す | ボタンが 0.92 倍に縮み、オーバーシュートして戻る | — |
+| 宣言成功 | ヒーローがコーラルへ、見出しが「いま、ひま！」へ、放射線と3〜5個の星が1回だけ弾ける（約450ms） | `heavyImpact` 1回 |
+| 長押しで温度感メニュー | 3つのバブルが弧状に、順番をずらして弾みながら出る | `mediumImpact` |
+| 指が別の温度感に重なる | そのバブルが 1.3 倍、他は少し縮む | 変化ごとに `selectionClick` |
+| 温度感の上で離す | 選んだバブルがボタンへ吸い込まれてから宣言演出 | `heavyImpact` |
+| 外して離す／キャンセル | バブルがすぼまって戻る | `lightImpact` |
+| ひまを終了 | 色が静かに戻り、見出しが縦にスライドして切り替わる | `lightImpact` |
+| チップ選択 | 小さなスケールバウンスと色の切り替え（120〜180ms） | `selectionClick` |
+| マッチカード出現 | スプリングでスライドイン。ok_ok は2つのアバターが寄ってぶつかる | `mediumImpact`、120ms 空けて `mediumImpact` |
+| 友達がひまになる／やめる | カードがフェード＋スライドして並び替わる | — |
+| ノック送信 | 紙飛行機がシートの外へ飛んでから閉じる | `lightImpact` |
+| 「いいよ！」が届く | 小さな紙吹雪が1回だけ（1秒未満） | light → 80ms → light → 80ms → heavy |
+| エラー | 対象のコントロールが横に小さく揺れる | 短い `vibrate`（または `heavyImpact` 1回） |
+
+- 触覚は Flutter 標準の `HapticFeedback` を短い `Future.delayed` で組み合わせる。振動パッケージや音は使わない。
+- 効果はすべて1回だけ。常時のキラキラ演出は使わない。
+- OSの「アニメーションを減らす」設定に追従し、バースト・飛翔・バウンスはフェードまたは即時変化に置き換える（触覚は残してよい）。
+- Flutter 標準の `AnimatedSwitcher` / `AnimatedContainer` / `TweenAnimationBuilder` / `AnimationController` / `CustomPainter` を使う。アニメーション用パッケージは追加しない。
+- 60fps を保つため、毎フレームでツリー全体を作り直さず、動く部分だけを切り出す。
 
 ---
 
@@ -264,48 +299,71 @@
 ```text
 lib/
   app/
-    app.dart                  # MaterialApp・テーマ・ルーティング
+    app.dart                  # MaterialApp・テーマ
+    app_root.dart             # ログイン分岐
+    main_shell.dart           # 3タブ・ボトムナビ・ポーリング
+    login_screen.dart
     theme/
       app_colors.dart         # 色トークン
       app_text_styles.dart    # タイポグラフィ
       app_spacing.dart        # 余白・角丸
+      app_theme.dart          # Material 3 にトークンを適用
   features/
     home/
       home_screen.dart
+      hero_state.dart         # ヒーローの単一の正
       widgets/
         home_header.dart
         my_status_hero.dart
+        declare_button.dart   # タップ宣言＋長押しの温度感メニュー
         friend_status_card.dart
-        activity_chip.dart
         friends_section.dart
+        match_card.dart
+        activity_chips.dart
+        pickers.dart
     friends/
       friends_screen.dart
     profile/
       profile_screen.dart
-    availability/
-      availability_model.dart
-      availability_controller.dart
+      settings_view.dart      # 設定本体（プロフィールと歯車で共用）
+      settings_screen.dart
+    knocks/
+      knocks_screen.dart
+      widgets/knock_sheet.dart
   shared/
+    haptics.dart
     widgets/
       app_bottom_navigation.dart
       avatar_view.dart
+      hima_logo.dart
+      knock_pill.dart
+      confetti_burst.dart
+      decorations.dart
+      empty_state.dart
+      shake.dart
+  data/                       # モデル・モック・HTTP クライアント
+  state/app_view_model.dart
 ```
 
 ### 状態モデル（概念）
 
 ```dart
-enum AvailabilityState { inactive, active }
+enum HeroPhase { idle, declared, justExpired }
 
-enum ActivityType { call, game, food, work, anything }
+enum Mood { fire, ok, quiet }
 
-class Availability {
-  final AvailabilityState state;
+enum Activity { game, chat, work, out, any }
+
+class HeroState {
+  final HeroPhase phase;
+  final Mood mood;
+  final Activity? activity; // null = 未選択（表示は「ひま」）
+  final int durationMin;    // 30 / 60 / 120
   final DateTime? expiresAt;
-  final ActivityType? activity; // null = 未選択
 }
 ```
 
-**UIは `Availability.state` を単一の正とする。** 見出し・背景・ボタン・残り時間を別々のフラグで管理しない。宣言の成功/失敗・期限切れを含め、状態遷移を1か所にまとめる。
+**UIは `HeroState.phase` を単一の正とする。** 見出し・背景・ボタン・残り時間を別々のフラグで管理しない。宣言の成功/失敗・期限切れを含め、状態遷移を1か所にまとめる。
 
 ### 実装上の細かい注意
 

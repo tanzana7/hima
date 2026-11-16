@@ -174,6 +174,13 @@ class HttpApiClient implements ApiClient {
       _array(await _request('GET', '/hima'), 'hima', HimaSession.fromJson);
 
   @override
+  Future<List<FriendServer>> getFriends() async => _array(
+    await _request('GET', '/friends'),
+    'servers',
+    FriendServer.fromJson,
+  );
+
+  @override
   Future<List<MatchRecord>> getMatches({DateTime? since}) async {
     final sinceValue = since?.toUtc().toIso8601String();
     final query = sinceValue == null

@@ -11,6 +11,7 @@ abstract interface class ApiClient {
   Future<HimaSession> putMyHima(HimaDeclaration declaration);
   Future<void> deleteMyHima();
   Future<List<HimaSession>> getHima();
+  Future<List<FriendServer>> getFriends();
   Future<List<MatchRecord>> getMatches({DateTime? since});
   Future<Knock> createKnock({
     required String userId,
