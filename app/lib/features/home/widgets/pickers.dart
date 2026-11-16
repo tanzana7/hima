@@ -81,6 +81,10 @@ class _ChoiceTile extends StatelessWidget {
     button: true,
     selected: selected,
     label: label,
+    // `excludeSemantics` drops the InkWell below, including its tap action, so
+    // the node has to carry the action itself or the choice is unreachable for
+    // screen reader users.
+    onTap: onTap,
     excludeSemantics: true,
     child: InkWell(
       onTap: onTap,

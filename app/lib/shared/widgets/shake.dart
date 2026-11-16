@@ -5,7 +5,8 @@ import 'package:flutter/material.dart';
 /// Small horizontal shake for a control whose action failed.
 ///
 /// Callers keep the previous state and shake the control that failed instead of
-/// showing a fake success.
+/// showing a fake success. The movement is decoration, so reduced motion turns
+/// it off; the error haptic still fires.
 class Shake extends StatefulWidget {
   const Shake({super.key, required this.child});
 
@@ -16,15 +17,20 @@ class Shake extends StatefulWidget {
 }
 
 class ShakeState extends State<Shake> with SingleTickerProviderStateMixin {
+  static const _duration = Duration(milliseconds: 300);
+
+  /// Peak sideways travel in logical pixels.
+  static const _amplitude = 6.0;
+
+  /// Sideways swings before the control settles back where it started.
+  static const _swings = 3.0;
+
   late final AnimationController _controller;
 
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 320),
-    );
+    _controller = AnimationController(vsync: this, duration: _duration);
   }
 
   void shake() {
@@ -45,7 +51,7 @@ class ShakeState extends State<Shake> with SingleTickerProviderStateMixin {
     child: widget.child,
     builder: (context, child) {
       final t = _controller.value;
-      final dx = t == 0 ? 0.0 : math.sin(t * math.pi * 6) * 9 * (1 - t);
+      final dx = math.sin(t * math.pi * 2 * _swings) * _amplitude * (1 - t);
       return Transform.translate(offset: Offset(dx, 0), child: child);
     },
   );

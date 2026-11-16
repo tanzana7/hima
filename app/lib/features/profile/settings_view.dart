@@ -5,16 +5,27 @@ import '../../app/theme/app_colors.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_text_styles.dart';
 import '../../data/models/models.dart';
+import '../../shared/haptics.dart';
 import '../../shared/widgets/avatar_view.dart';
+import '../../shared/widgets/shake.dart';
 import '../../state/app_view_model.dart';
 
 /// Settings content shared by the プロフィール tab and the header gear route.
-class SettingsView extends StatelessWidget {
+class SettingsView extends StatefulWidget {
   const SettingsView({super.key, required this.showLogout});
 
   final bool showLogout;
 
-  Future<void> _updateSettings(
+  @override
+  State<SettingsView> createState() => _SettingsViewState();
+}
+
+class _SettingsViewState extends State<SettingsView> {
+  /// Saves a setting and reports whether it was stored.
+  ///
+  /// The error haptic and the message live here so every settings control fails
+  /// the same way; the control that failed shakes itself.
+  Future<bool> _updateSettings(
     BuildContext context, {
     bool? autoMode,
     Mood? autoMood,
@@ -26,13 +37,16 @@ class SettingsView extends StatelessWidget {
         autoMood: autoMood,
         notifyOnHima: notifyOnHima,
       );
+      return true;
     } catch (_) {
-      if (!context.mounted) return;
+      if (!context.mounted) return false;
+      AppHaptics.error();
       _showMessage(context, '保存できなかった。もう一度試してね');
+      return false;
     }
   }
 
-  Future<void> _setGuildVisibility(
+  Future<bool> _setGuildVisibility(
     BuildContext context,
     String guildId,
     bool visible,
@@ -42,9 +56,12 @@ class SettingsView extends StatelessWidget {
         guildId,
         visible,
       );
+      return true;
     } catch (_) {
-      if (!context.mounted) return;
+      if (!context.mounted) return false;
+      AppHaptics.error();
       _showMessage(context, '保存できなかった。もう一度試してね');
+      return false;
     }
   }
 
@@ -122,11 +139,14 @@ class SettingsView extends StatelessWidget {
         if (settings != null) ...[
           _SectionCard(
             children: [
-              SwitchListTile(
-                title: const Text('自動でひま宣言'),
+              _SavingControl<bool>(
                 value: settings.autoMode,
-                onChanged: (value) =>
-                    _updateSettings(context, autoMode: value),
+                onSave: (value) => _updateSettings(context, autoMode: value),
+                builder: (context, value, onChanged) => SwitchListTile(
+                  title: const Text('自動でひま宣言'),
+                  value: value,
+                  onChanged: onChanged,
+                ),
               ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(
@@ -135,29 +155,45 @@ class SettingsView extends StatelessWidget {
                   AppSpacing.s16,
                   AppSpacing.s12,
                 ),
-                child: DropdownButtonFormField<Mood>(
-                  initialValue: settings.autoMood,
-                  isExpanded: true,
-                  decoration: const InputDecoration(labelText: '自動宣言の温度感'),
-                  items: Mood.values
-                      .map(
-                        (mood) => DropdownMenuItem(
-                          value: mood,
-                          child: Text('${mood.emoji} ${mood.label}'),
+                child: _SavingControl<Mood>(
+                  value: settings.autoMood,
+                  onSave: (mood) => _updateSettings(context, autoMood: mood),
+                  builder: (context, value, onChanged) =>
+                      DropdownButtonFormField<Mood>(
+                        // A form field keeps the value it was initialised with,
+                        // so a rejected mood would stay on screen. Keying by the
+                        // shown value rebuilds the field from `initialValue`
+                        // when a failed save reverts it.
+                        key: ValueKey(value),
+                        initialValue: value,
+                        isExpanded: true,
+                        decoration: const InputDecoration(
+                          labelText: '自動宣言の温度感',
                         ),
-                      )
-                      .toList(),
-                  onChanged: (mood) {
-                    if (mood != null) _updateSettings(context, autoMood: mood);
-                  },
+                        items: Mood.values
+                            .map(
+                              (mood) => DropdownMenuItem(
+                                value: mood,
+                                child: Text('${mood.emoji} ${mood.label}'),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (mood) {
+                          if (mood != null) onChanged(mood);
+                        },
+                      ),
                 ),
               ),
               const Divider(height: 1),
-              SwitchListTile(
-                title: const Text('友達のヒマ宣言を通知'),
+              _SavingControl<bool>(
                 value: settings.notifyOnHima,
-                onChanged: (value) =>
+                onSave: (value) =>
                     _updateSettings(context, notifyOnHima: value),
+                builder: (context, value, onChanged) => SwitchListTile(
+                  title: const Text('友達のヒマ宣言を通知'),
+                  value: value,
+                  onChanged: onChanged,
+                ),
               ),
             ],
           ),
@@ -169,13 +205,20 @@ class SettingsView extends StatelessWidget {
             for (var index = 0; index < viewModel.guilds.length; index++) ...[
               if (index > 0)
                 const Divider(height: 1, indent: 16, endIndent: 16),
-              SwitchListTile(
-                title: Text(viewModel.guilds[index].name),
+              _SavingControl<bool>(
+                // Keyed so a guild leaving the list cannot hand its draft to the
+                // row that slides into its place.
+                key: ValueKey(viewModel.guilds[index].id),
                 value: viewModel.guilds[index].visible,
-                onChanged: (visible) => _setGuildVisibility(
+                onSave: (visible) => _setGuildVisibility(
                   context,
                   viewModel.guilds[index].id,
                   visible,
+                ),
+                builder: (context, value, onChanged) => SwitchListTile(
+                  title: Text(viewModel.guilds[index].name),
+                  value: value,
+                  onChanged: onChanged,
                 ),
               ),
             ],
@@ -248,7 +291,7 @@ class SettingsView extends StatelessWidget {
         ),
         const SizedBox(height: AppSpacing.s24),
         _detectionPlaceholder(context),
-        if (showLogout) ...[
+        if (widget.showLogout) ...[
           const SizedBox(height: AppSpacing.s24),
           OutlinedButton.icon(
             onPressed: () => viewModel.logout(),
@@ -451,6 +494,63 @@ class SettingsView extends StatelessWidget {
         ),
       ],
     ),
+  );
+}
+
+/// A settings control that only keeps the value the user picked once it is
+/// stored.
+///
+/// The picked value is shown immediately so the control feels responsive, but it
+/// is dropped again when saving fails: the control falls back to the stored
+/// value and shakes, so a failed save never looks like a success.
+class _SavingControl<T> extends StatefulWidget {
+  const _SavingControl({
+    super.key,
+    required this.value,
+    required this.onSave,
+    required this.builder,
+  });
+
+  final T value;
+
+  /// Returns true when the value reached the server.
+  final Future<bool> Function(T value) onSave;
+
+  final Widget Function(
+    BuildContext context,
+    T value,
+    ValueChanged<T> onChanged,
+  ) builder;
+
+  @override
+  State<_SavingControl<T>> createState() => _SavingControlState<T>();
+}
+
+class _SavingControlState<T> extends State<_SavingControl<T>> {
+  final GlobalKey<ShakeState> _shakeKey = GlobalKey<ShakeState>();
+  late T _shown = widget.value;
+
+  @override
+  void didUpdateWidget(_SavingControl<T> oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Follow the stored value whenever it changes from the outside.
+    if (widget.value != oldWidget.value) _shown = widget.value;
+  }
+
+  Future<void> _handleChanged(T value) async {
+    setState(() => _shown = value);
+    final saved = await widget.onSave(value);
+    if (!mounted) return;
+    if (!saved) {
+      setState(() => _shown = widget.value);
+      _shakeKey.currentState?.shake();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Shake(
+    key: _shakeKey,
+    child: widget.builder(context, _shown, _handleChanged),
   );
 }
 

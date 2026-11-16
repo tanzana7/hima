@@ -1,12 +1,14 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 
 import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_spacing.dart';
 import '../../../app/theme/app_text_styles.dart';
 import '../../../data/models/models.dart';
 import '../../../shared/haptics.dart';
+import 'pickers.dart';
 
 /// The yellow 「ひまを宣言」 pill.
 ///
@@ -134,6 +136,28 @@ class DeclareButtonState extends State<DeclareButton>
     widget.onDeclare(widget.lastMood);
   }
 
+  /// The squash-and-spring is decoration, so reduced motion drops it; the tap
+  /// itself stays because declaring is the primary action of the screen.
+  void _pressIn() {
+    if (_reduceMotion) return;
+    _pressController.forward();
+  }
+
+  void _pressOut() {
+    if (_reduceMotion) return;
+    _pressController.reverse();
+  }
+
+  /// The bubbles only exist while a finger holds the button, which a screen
+  /// reader cannot do, so the same three choices are offered as an explicit
+  /// action that opens an operable picker.
+  Future<void> _pickMood() async {
+    if (widget.busy) return;
+    final mood = await showMoodPicker(context, current: widget.lastMood);
+    if (mood == null || !mounted) return;
+    widget.onDeclare(mood);
+  }
+
   void _handleLongPressStart(LongPressStartDetails details) {
     if (widget.busy) return;
     AppHaptics.openMenu();
@@ -222,15 +246,9 @@ class DeclareButtonState extends State<DeclareButton>
               Positioned.fill(
                 child: GestureDetector(
                   behavior: HitTestBehavior.opaque,
-                  onTapDown: widget.busy
-                      ? null
-                      : (_) => _pressController.forward(),
-                  onTapUp: widget.busy
-                      ? null
-                      : (_) => _pressController.reverse(),
-                  onTapCancel: widget.busy
-                      ? null
-                      : () => _pressController.reverse(),
+                  onTapDown: widget.busy ? null : (_) => _pressIn(),
+                  onTapUp: widget.busy ? null : (_) => _pressOut(),
+                  onTapCancel: widget.busy ? null : _pressOut,
                   onTap: widget.busy ? null : _handleTap,
                   onLongPressStart: _handleLongPressStart,
                   onLongPressMoveUpdate: _handleLongPressMove,
@@ -257,7 +275,11 @@ class DeclareButtonState extends State<DeclareButton>
                     child: Semantics(
                       button: true,
                       label: 'ひまを宣言',
-                      hint: '長押しで温度感を選べます',
+                      hint: '温度感を選んで宣言できます',
+                      customSemanticsActions: {
+                        const CustomSemanticsAction(label: '温度感を選んで宣言'):
+                            _pickMood,
+                      },
                       excludeSemantics: true,
                       child: _buttonVisual(context),
                     ),
@@ -362,10 +384,11 @@ class DeclareButtonState extends State<DeclareButton>
               ? Duration.zero
               : const Duration(milliseconds: 150),
           curve: Curves.easeOutBack,
-          child: Semantics(
-            button: true,
-            label: mood.label,
-            excludeSemantics: true,
+          // Kept out of the accessibility tree: a bubble is a touch affordance
+          // that only exists mid-long-press, so a focusable button here would be
+          // a dead end. The declare button exposes the same choice as a custom
+          // action instead.
+          child: ExcludeSemantics(
             child: Container(
               decoration: BoxDecoration(
                 color: _moodTint(mood),
