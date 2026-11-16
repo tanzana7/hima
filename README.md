@@ -82,3 +82,20 @@
 ## MVPでやらないこと
 
 こっそりマッチング、同じゲーム同士の自動マッチング、人数募集、プレイ中ゲーム連携、よく暇になる時間帯の登録、複数サーバーをまたいだ友達リスト、課金・有料機能。
+
+## Flutterアプリ
+
+`app/` に Android / iOS 向け Flutter アプリがあります。API サーバーが未稼働の間は、6人の友だちを含むモックデータで動作します。
+
+```bash
+cd app
+flutter run
+```
+
+実 API を使う場合は API のベース URL を指定して起動します。
+
+```bash
+flutter run --dart-define=API_BASE_URL=https://api.example.com
+```
+
+API のエンドポイントと JSON 形式は [API 契約案](docs/api-contract.md) を参照してください。
