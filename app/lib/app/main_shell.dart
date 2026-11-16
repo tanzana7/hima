@@ -146,10 +146,8 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
 
   void _openKnocks() {
     _dismissCelebration();
-    // The knocks screen does not accept an initial tab, so this lands on 受信 and
-    // the result is one tap away in 送信.
     Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => const KnocksScreen()),
+      MaterialPageRoute<void>(builder: (_) => const KnocksScreen(showSentFirst: true)),
     );
   }
 

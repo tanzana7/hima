@@ -15,14 +15,17 @@ import '../../state/app_view_model.dart';
 
 /// Knocks inbox and sent list, reached from the header bell.
 class KnocksScreen extends StatefulWidget {
-  const KnocksScreen({super.key});
+  const KnocksScreen({super.key, this.showSentFirst = false});
+
+  /// Opens on the 送信 tab, used when the user taps a reply celebration.
+  final bool showSentFirst;
 
   @override
   State<KnocksScreen> createState() => _KnocksScreenState();
 }
 
 class _KnocksScreenState extends State<KnocksScreen> {
-  bool _showSent = false;
+  late bool _showSent = widget.showSentFirst;
   final Set<String> _markingSeen = {};
   final Set<String> _highlighted = {};
   bool _showConfetti = false;
