@@ -103,13 +103,36 @@ class AppViewModel extends ChangeNotifier {
     if (changed) notifyListeners();
   }
 
-  /// Accepted results already celebrated. Home and the knocks screen share this
+  /// People whose knock from me is still waiting for an answer, so their さそう
+  /// buttons can show 「さそった」 instead of inviting the same person twice.
+  Set<String> get pendingKnockUserIds => {
+    for (final knock in _sent)
+      if (knock.status == KnockStatus.pending && knock.recipient != null)
+        knock.recipient!.id,
+  };
+
+  /// Results already celebrated. The app shell and the knocks screen share this
   /// so a reply is celebrated exactly once, wherever the user sees it first.
   final Set<String> _celebratedResultIds = {};
 
   /// Returns true only the first time this result is celebrated.
   bool claimResultCelebration(String knockId) =>
       _celebratedResultIds.add(knockId);
+
+  /// The next reply to a knock I sent that has not been celebrated yet, or null.
+  ///
+  /// The shell shows it as an overlay because a reply was otherwise invisible
+  /// until the user opened the bell and switched to 送信. The result is claimed
+  /// here so the overlay and the knocks screen never celebrate it twice.
+  Knock? takeUnseenKnockResult() {
+    for (final knock in _sent) {
+      if (knock.status == KnockStatus.pending) continue;
+      if (knock.resultSeenAt != null) continue;
+      if (!_celebratedResultIds.add(knock.id)) continue;
+      return knock;
+    }
+    return null;
+  }
 
   void markMoodHintShown() {
     if (_moodHintShown) return;

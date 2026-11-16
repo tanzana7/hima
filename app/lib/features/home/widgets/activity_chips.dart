@@ -5,9 +5,12 @@ import '../../../app/theme/app_spacing.dart';
 import '../../../app/theme/app_text_styles.dart';
 import '../../../data/models/models.dart';
 import '../../../shared/haptics.dart';
-import '../../../shared/widgets/decorations.dart';
 
 /// 「なにする？」 chips. Optional, single select, and deselectable.
+///
+/// They sit inside the hero, directly under the main button, as one horizontally
+/// scrolling row: choosing an activity used to require scrolling past the whole
+/// friend grid, so the choice was effectively hidden.
 class ActivityChips extends StatelessWidget {
   const ActivityChips({
     super.key,
@@ -19,41 +22,38 @@ class ActivityChips extends StatelessWidget {
   final ValueChanged<Activity?> onSelected;
 
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.stretch,
+  Widget build(BuildContext context) => Row(
     children: [
-      Row(
-        children: [
-          Flexible(
-            child: Text(
-              'なにする？',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: AppTextStyles.sectionTitle,
-            ),
-          ),
-          const SizedBox(width: AppSpacing.s8),
-          const StarAccent(size: 14),
-        ],
+      // Kept as a compact inline label so the chips still read as the optional
+      // 「なにする？」 choice (Design.md 4.4) without adding a second row.
+      Text(
+        'なにする？',
+        maxLines: 1,
+        style: AppTextStyles.caption.copyWith(
+          fontWeight: FontWeight.w700,
+          color: AppColors.ink,
+        ),
       ),
-      const SizedBox(height: AppSpacing.s12),
-      SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
-            for (final activity in Activity.values)
-              Padding(
-                padding: const EdgeInsets.only(right: AppSpacing.s8),
-                child: _ActivityChip(
-                  activity: activity,
-                  selected: selected == activity,
-                  onTap: () {
-                    AppHaptics.select();
-                    onSelected(selected == activity ? null : activity);
-                  },
+      const SizedBox(width: AppSpacing.s8),
+      Expanded(
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              for (final activity in Activity.values)
+                Padding(
+                  padding: const EdgeInsets.only(right: AppSpacing.s8),
+                  child: _ActivityChip(
+                    activity: activity,
+                    selected: selected == activity,
+                    onTap: () {
+                      AppHaptics.select();
+                      onSelected(selected == activity ? null : activity);
+                    },
+                  ),
                 ),
-              ),
-          ],
+            ],
+          ),
         ),
       ),
     ],

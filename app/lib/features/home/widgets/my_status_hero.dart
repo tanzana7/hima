@@ -10,6 +10,7 @@ import '../../../data/models/models.dart';
 import '../../../shared/widgets/avatar_view.dart';
 import '../../../shared/widgets/shake.dart';
 import '../hero_state.dart';
+import 'activity_chips.dart';
 import 'declare_button.dart';
 
 /// The hero card: the single most important area of the home screen.
@@ -22,37 +23,43 @@ class MyStatusHero extends StatefulWidget {
     required this.state,
     required this.me,
     required this.lastMood,
+    required this.selectedActivity,
     required this.busy,
     required this.burstToken,
     required this.shakeToken,
     required this.moodShakeKey,
     required this.durationShakeKey,
+    required this.activityShakeKey,
     required this.showHint,
     required this.onDeclare,
     required this.onEnd,
     required this.onChangeMood,
     required this.onChangeDuration,
+    required this.onSelectActivity,
     required this.onExpired,
   });
 
   final HeroState state;
   final UserProfile me;
   final Mood lastMood;
+  final Activity? selectedActivity;
   final bool busy;
 
   /// Bumped by the parent after a successful declaration to play the burst.
   final int burstToken;
   final int shakeToken;
 
-  /// Shaken by the parent when saving the mood / the remaining time failed, so
-  /// the control that failed is the one that moves.
+  /// Shaken by the parent when saving the mood / the remaining time / the
+  /// activity failed, so the control that failed is the one that moves.
   final GlobalKey<ShakeState> moodShakeKey;
   final GlobalKey<ShakeState> durationShakeKey;
+  final GlobalKey<ShakeState> activityShakeKey;
   final bool showHint;
   final ValueChanged<Mood> onDeclare;
   final VoidCallback onEnd;
   final VoidCallback onChangeMood;
   final VoidCallback onChangeDuration;
+  final ValueChanged<Activity?> onSelectActivity;
   final VoidCallback onExpired;
 
   @override
@@ -104,7 +111,7 @@ class _MyStatusHeroState extends State<MyStatusHero>
           ? Duration.zero
           : const Duration(milliseconds: 320),
       curve: Curves.easeOutCubic,
-      padding: const EdgeInsets.all(AppSpacing.s16 + 4),
+      padding: const EdgeInsets.all(AppSpacing.s16),
       decoration: BoxDecoration(
         color: declared
             ? AppColors.coral
@@ -123,7 +130,7 @@ class _MyStatusHeroState extends State<MyStatusHero>
                   AvatarView(
                     name: widget.me.displayName,
                     imageUrl: widget.me.avatarUrl,
-                    size: 60,
+                    size: 56,
                     background: AppColors.surface,
                   ),
                   const SizedBox(width: AppSpacing.s12),
@@ -156,45 +163,49 @@ class _MyStatusHeroState extends State<MyStatusHero>
                             ),
                           ),
                         ),
-                        const SizedBox(height: AppSpacing.s4),
-                        if (!declared)
+                        if (!declared) ...[
+                          const SizedBox(height: 2),
                           Text(
                             state.supporting,
                             style: AppTextStyles.body.copyWith(
-                              color: declared ? AppColors.ink : AppColors.muted,
+                              color: AppColors.muted,
                             ),
                           ),
+                        ],
+                        if (declared) ...[
+                          const SizedBox(height: AppSpacing.s8),
+                          // Directly under the heading and aligned with it: the
+                          // pills used to float centred at the bottom of the
+                          // card, far from the state they describe.
+                          Wrap(
+                            spacing: AppSpacing.s8,
+                            runSpacing: AppSpacing.s8,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: [
+                              Shake(
+                                key: widget.durationShakeKey,
+                                child: _RemainingPill(
+                                  expiresAt: state.expiresAt!,
+                                  onTap: widget.onChangeDuration,
+                                  onExpired: widget.onExpired,
+                                ),
+                              ),
+                              Shake(
+                                key: widget.moodShakeKey,
+                                child: _MoodBadge(
+                                  mood: state.mood,
+                                  onTap: widget.onChangeMood,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
                       ],
                     ),
                   ),
                 ],
               ),
-              if (declared) ...[
-                const SizedBox(height: AppSpacing.s12),
-                Wrap(
-                  spacing: AppSpacing.s8,
-                  runSpacing: AppSpacing.s8,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    Shake(
-                      key: widget.durationShakeKey,
-                      child: _RemainingPill(
-                        expiresAt: state.expiresAt!,
-                        onTap: widget.onChangeDuration,
-                        onExpired: widget.onExpired,
-                      ),
-                    ),
-                    Shake(
-                      key: widget.moodShakeKey,
-                      child: _MoodBadge(
-                        mood: state.mood,
-                        onTap: widget.onChangeMood,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-              const SizedBox(height: AppSpacing.s16),
+              const SizedBox(height: AppSpacing.s12),
               if (declared)
                 _SecondaryPill(
                   label: 'ひまを終了',
@@ -208,6 +219,16 @@ class _MyStatusHeroState extends State<MyStatusHero>
                   shakeToken: widget.shakeToken,
                   onDeclare: widget.onDeclare,
                 ),
+              const SizedBox(height: AppSpacing.s8),
+              // Optional and never a precondition for declaring, so it sits
+              // right under the main button in both states.
+              Shake(
+                key: widget.activityShakeKey,
+                child: ActivityChips(
+                  selected: widget.selectedActivity,
+                  onSelected: widget.onSelectActivity,
+                ),
+              ),
               AnimatedSwitcher(
                 duration: reduceMotion
                     ? Duration.zero
@@ -259,6 +280,50 @@ class _MyStatusHeroState extends State<MyStatusHero>
   }
 }
 
+/// Shared shell of the two small controls under the heading.
+///
+/// It keeps a 48dp tap target and a 40dp minimum height but no fixed height, so
+/// the label can grow with the text scale instead of being clipped.
+class _HeroPill extends StatelessWidget {
+  const _HeroPill({
+    required this.semanticsLabel,
+    required this.onTap,
+    required this.child,
+  });
+
+  final String semanticsLabel;
+  final VoidCallback onTap;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    button: true,
+    label: semanticsLabel,
+    child: InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
+      // Padding instead of a centred fixed box: the pill has to shrink-wrap so
+      // the Wrap can lay the pills out from the heading's left edge, and the
+      // padding still brings the tap target to 48dp.
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: AppSpacing.s4),
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 40),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.s12,
+            vertical: AppSpacing.s4,
+          ),
+          decoration: BoxDecoration(
+            color: AppColors.surface.withValues(alpha: 0.85),
+            borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
+          ),
+          child: child,
+        ),
+      ),
+    ),
+  );
+}
+
 class _RemainingPill extends StatefulWidget {
   const _RemainingPill({
     required this.expiresAt,
@@ -307,49 +372,26 @@ class _RemainingPillState extends State<_RemainingPill> {
   }
 
   @override
-  Widget build(BuildContext context) => Semantics(
-    button: true,
-    label: 'ひまの長さを変更',
-    child: InkWell(
-      onTap: widget.onTap,
-      borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
-      child: SizedBox(
-        height: AppSpacing.minTapTarget,
-        child: Center(
-          child: Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: AppSpacing.s12,
-              vertical: AppSpacing.s4,
-            ),
-            decoration: BoxDecoration(
-              color: AppColors.surface.withValues(alpha: 0.8),
-              borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(
-                  Icons.schedule_rounded,
-                  size: 15,
-                  color: AppColors.ink,
-                ),
-                const SizedBox(width: AppSpacing.s4),
-                Flexible(
-                  child: Text(
-                    himaRemainingLabel(widget.expiresAt),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: AppTextStyles.caption.copyWith(
-                      color: AppColors.ink,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ],
+  Widget build(BuildContext context) => _HeroPill(
+    semanticsLabel: 'ひまの長さを変更',
+    onTap: widget.onTap,
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Icon(Icons.schedule_rounded, size: 15, color: AppColors.ink),
+        const SizedBox(width: AppSpacing.s4),
+        Flexible(
+          child: Text(
+            himaRemainingLabel(widget.expiresAt),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppTextStyles.caption.copyWith(
+              color: AppColors.ink,
+              fontWeight: FontWeight.w700,
             ),
           ),
         ),
-      ),
+      ],
     ),
   );
 }
@@ -361,51 +403,28 @@ class _MoodBadge extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) => Semantics(
-    button: true,
-    label: '温度感を変更',
-    child: InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
-      child: SizedBox(
-        height: AppSpacing.minTapTarget,
-        child: Center(
-          child: Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: AppSpacing.s12,
-              vertical: AppSpacing.s4,
-            ),
-            decoration: BoxDecoration(
-              color: AppColors.surface.withValues(alpha: 0.8),
-              borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(mood.emoji, style: const TextStyle(fontSize: 15)),
-                const SizedBox(width: AppSpacing.s4),
-                Flexible(
-                  child: Text(
-                    mood.label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: AppTextStyles.caption.copyWith(
-                      color: AppColors.ink,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: AppSpacing.s4),
-                const Icon(
-                  Icons.expand_more_rounded,
-                  size: 16,
-                  color: AppColors.ink,
-                ),
-              ],
+  Widget build(BuildContext context) => _HeroPill(
+    semanticsLabel: '温度感を変更',
+    onTap: onTap,
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(mood.emoji, style: const TextStyle(fontSize: 15)),
+        const SizedBox(width: AppSpacing.s4),
+        Flexible(
+          child: Text(
+            mood.label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppTextStyles.caption.copyWith(
+              color: AppColors.ink,
+              fontWeight: FontWeight.w700,
             ),
           ),
         ),
-      ),
+        const SizedBox(width: AppSpacing.s4),
+        const Icon(Icons.expand_more_rounded, size: 16, color: AppColors.ink),
+      ],
     ),
   );
 }
@@ -430,7 +449,13 @@ class _SecondaryPill extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
       child: Container(
-        height: 56,
+        // Minimum height only: at 200% text the label needs to grow instead of
+        // being clipped by a fixed box.
+        constraints: const BoxConstraints(minHeight: 56),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.s16,
+          vertical: AppSpacing.s8,
+        ),
         decoration: BoxDecoration(
           color: AppColors.surface,
           borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
