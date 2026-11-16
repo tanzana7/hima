@@ -85,7 +85,7 @@
 
 ## Flutterアプリ
 
-`app/` に Android / iOS 向け Flutter アプリがあります。API サーバーが未稼働の間は、6人の友だちを含むモックデータで動作します。
+`app/` に Android / iOS 向け Flutter アプリ（表示名 `hima.`）があります。API サーバーが未稼働の間は、複数サーバーのメンバーとヒマ状態を含むモックデータで動作します。見た目と操作の仕様は [デザイン仕様](docs/design/Design.md) を参照してください。
 
 ```bash
 cd app
@@ -97,5 +97,7 @@ flutter run
 ```bash
 flutter run --dart-define=API_BASE_URL=https://api.example.com
 ```
+
+見出し用フォント M PLUS Rounded 1c（SIL OFL 1.1）は `app/assets/fonts/` に同梱しており、実行時のフォント取得は行いません。ライセンスは同ディレクトリの `OFL.txt` です。
 
 API のエンドポイントと JSON 形式は [API 契約案](docs/api-contract.md) を参照してください。

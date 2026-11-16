@@ -2,6 +2,8 @@
 
 atsumaro モバイルアプリと API サーバー間の初版契約案です。以下のパスは API_BASE_URL からの相対パスで、JSON は UTF-8 とします。
 
+> 2026-11-16 追記: `activity` を任意（null 可）に、`duration_min` を 30 / 60 / 120 に変更し、`GET /friends` を追加しました。
+
 ## 共通仕様
 
 - POST /auth/discord 以外は Authorization: Bearer <session_token> が必要です。
@@ -16,7 +18,7 @@ atsumaro モバイルアプリと API サーバー間の初版契約案です。
 | ok | 🙂 誘われたら行く |
 | quiet | 🌙 ひっそり暇 |
 
-- activity は次の値です。
+- activity は任意項目です。未選択は null（または項目の省略）で、表示は単に「ひま」とし、`any` と決めつけません。
 
 | 値 | 表示 |
 | --- | --- |
@@ -26,7 +28,7 @@ atsumaro モバイルアプリと API サーバー間の初版契約案です。
 | out | 🚶 外出 |
 | any | ✨ なんでもOK |
 
-- duration_min は 5 / 15 / 30 / 60 / 180 です（表示は順に 5分 / 15分 / 30分 / 1時間 / 3時間）。source は manual / suggested / auto です。
+- duration_min は 30 / 60 / 120 のいずれかです（表示は順に 30分 / 1時間 / 2時間）。省略時の既定値は 60 です。source は manual / suggested / auto です。
 - note は省略または null 可。文字列は Unicode コードポイント数で 50 文字以内とし、空文字は null に正規化します。
 - 定期時間の weekday は月曜 0〜日曜 6、時刻は日本時間（Asia/Tokyo）の 0:00 からの分数です。
 
@@ -36,7 +38,7 @@ atsumaro モバイルアプリと API サーバー間の初版契約案です。
       "error": {
         "code": "validation_error",
         "message": "入力内容を確認してください。",
-        "details": {"duration_min": "must_be_one_of_5_15_30_60_180"}
+        "details": {"duration_min": "must_be_one_of_30_60_120"}
       }
     }
 
@@ -135,6 +137,56 @@ id は Discord guild Snowflake です。リクエストは {"visible": false}。
 
     {"id": "234567890123456789", "visible": false}
 
+## 友達
+
+### GET /friends
+
+共通サーバーのメンバーをサーバーごとに返します。友達申請の概念はなく、メンバー全員が友達です。各メンバーの hima は、そのサーバーが visible で本人が現在ヒマな場合だけ入り、それ以外は null です。ブロック中の相手は含めません。メンバーは各サーバー内でひまな人を先に並べます。
+
+200 OK:
+
+    {
+      "servers": [
+        {
+          "id": "234567890123456789",
+          "name": "週末ゲーム部",
+          "visible": true,
+          "members": [
+            {
+              "user": {
+                "id": "345678901234567890",
+                "display_name": "みな",
+                "avatar_url": null
+              },
+              "hima": {
+                "session_id": "hima_01JCVB1AB2CD",
+                "user": {
+                  "id": "345678901234567890",
+                  "display_name": "みな",
+                  "avatar_url": null
+                },
+                "mood": "ok",
+                "activity": null,
+                "note": null,
+                "duration_min": 60,
+                "started_at": "2026-11-16T12:01:00Z",
+                "expires_at": "2026-11-16T13:01:00Z",
+                "guild_ids": ["234567890123456789"]
+              }
+            },
+            {
+              "user": {
+                "id": "456789012345678901",
+                "display_name": "はる",
+                "avatar_url": null
+              },
+              "hima": null
+            }
+          ]
+        }
+      ]
+    }
+
 ## ヒマ宣言
 
 ### GET /hima/me
@@ -176,7 +228,7 @@ id は Discord guild Snowflake です。リクエストは {"visible": false}。
       "source": "manual"
     }
 
-200 OK は GET /hima/me と同じ形式です。duration_min は上記 5 種のみ受け付け、expires_at はサーバー受理時刻を基準に設定します。有効な宣言中の PUT は session_id と started_at を維持して内容と期限を更新します。この延長では同じセッションペアを再通知しません。source は必須入力ですが、延長時は最初のセッション作成時の値を維持します。宣言がない場合は新しい session_id を発行し、再マッチ判定します。
+200 OK は GET /hima/me と同じ形式です。duration_min は 30 / 60 / 120 のみ受け付け、expires_at はサーバー受理時刻を基準に設定します。有効な宣言中の PUT は session_id と started_at を維持して内容と期限を更新します。温度感だけを変える場合も同じセッション ID のままで、この延長・変更では同じセッションペアを再通知しません。source は必須入力ですが、延長時は最初のセッション作成時の値を維持します。宣言がない場合は新しい session_id を発行し、再マッチ判定します。
 
 ### DELETE /hima/me
 
@@ -191,7 +243,7 @@ id は Discord guild Snowflake です。リクエストは {"visible": false}。
 
 ### GET /hima
 
-現在ヒマな友達を返します。quiet も一覧に含みます。双方が公開中の共通サーバー経由で見える相手に限り、いずれかが相手をマッチング対象外にしているペアは含めません。同じ activity、次にどちらかが any の相手を先に並べます。同順位は expires_at 昇順です。他人の source は含めません。
+現在ヒマな友達を返します。quiet も一覧に含みます。双方が公開中の共通サーバー経由で見える相手に限り、いずれかが相手をマッチング対象外にしているペアは含めません。同じ activity、次にどちらかが any の相手を先に並べます。activity が null の相手は「指定なし」として any より後ろに並べます（自分が未指定のときも、any の相手は他の activity より先です）。同順位は expires_at 昇順です。他人の source は含めません。
 
 200 OK:
 
@@ -468,7 +520,7 @@ weekday は月曜 0〜日曜 6、hour は 0〜23 です。アプリ側で学習�
 
 - 判定対象は有効期限内の宣言です。fire × fire は双方、fire × ok は fire 側、ok × ok は双方に前述の kind を作成します。
 - quiet は友達一覧には表示しますが、自動マッチせず、マッチ通知も送りません。
-- 同じ activity、次にいずれかが any のペアを優先します。activity が異なり双方 any でないペアもマッチ対象です。
+- 同じ activity、次にいずれかが any のペアを優先します。activity が null の相手は指定なしとして any より後ろに置きます（自分が未指定のときも any を優先します）。activity が異なり双方 any でないペアもマッチ対象です。
 - 共通サーバーで双方が visible の場合だけ、そのサーバー経由の一覧・マッチ・ノックを表示します。
 - 片側だけの対象外設定でも相互に隠し、一覧・マッチ・ノック・通知から除外します。誰が設定したかを相手に知らせません。
 - 他人の source は全レスポンス・通知から除外します。source は本人向けの GET /hima/me と PUT /hima/me に限り返します。
