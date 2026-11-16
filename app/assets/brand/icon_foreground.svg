@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Android adaptive icon foreground for hima.
+
+  Transparent background: the coral plate is the adaptive icon's background
+  layer. The mark is scaled down so it stays inside the 66/108 safe zone that
+  every launcher mask (circle, squircle, rounded square) keeps visible.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>hima. adaptive foreground</title>
+  <g transform="translate(512 512) scale(0.84) translate(-512 -512)">
+    <path d="M291 300 L291 720" fill="none" stroke="#2F124F" stroke-width="96" stroke-linecap="round" />
+    <path d="M291 540 C291 462 341 420 441 420 C541 420 591 462 591 528 L591 720" fill="none" stroke="#2F124F" stroke-width="96" stroke-linecap="round" stroke-linejoin="round" />
+    <circle cx="723" cy="662" r="58" fill="#FFE65A" />
+  </g>
+</svg>

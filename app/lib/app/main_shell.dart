@@ -103,11 +103,9 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
       unawaited(AppHaptics.end());
     }
     _celebrationTimer?.cancel();
-    _celebrationTimer = Timer(const Duration(seconds: 3), () {
-      _dismissCelebration();
-      // Another reply may have arrived while this one was on screen.
-      _handleViewModelChanged();
-    });
+    // Four seconds: long enough to read a name and catch the confetti, short
+    // enough that it never feels like a dialog to dismiss.
+    _celebrationTimer = Timer(const Duration(seconds: 4), _dismissCelebration);
     // Marked seen as soon as it is shown, so the bell dot clears together with
     // the overlay instead of waiting for the 送信 tab.
     final viewModel = _viewModel;
@@ -137,15 +135,23 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     }
   }
 
-  void _dismissCelebration() {
+  /// Takes the overlay away and, unless [keepNextQueued] is set, looks for the
+  /// next queued reply so a second answer that arrived in the meantime is not
+  /// left unseen.
+  ///
+  /// [keepNextQueued] is for the 送信 navigation: the pushed route covers the
+  /// shell, and celebrating underneath it would mark the reply seen without
+  /// anyone seeing it.
+  void _dismissCelebration({bool keepNextQueued = false}) {
     _celebrationTimer?.cancel();
     _celebrationTimer = null;
     if (!mounted) return;
     setState(() => _celebration = null);
+    if (!keepNextQueued) _handleViewModelChanged();
   }
 
   void _openKnocks() {
-    _dismissCelebration();
+    _dismissCelebration(keepNextQueued: true);
     Navigator.of(context).push(
       MaterialPageRoute<void>(builder: (_) => const KnocksScreen(showSentFirst: true)),
     );
@@ -174,6 +180,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
               key: ValueKey(celebration.id),
               knock: celebration,
               onTap: _openKnocks,
+              onDismiss: _dismissCelebration,
             ),
           ),
       ],
@@ -183,17 +190,22 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
 
 /// Celebration shown when a reply to a knock I sent arrives.
 ///
-/// It fades in over whatever tab is open and disappears after a few seconds; the
-/// confetti and the pop are decoration, so reduced motion keeps only the fade.
+/// It covers whatever tab is open: a light scrim dims the app, the avatar pops
+/// in, confetti crosses the whole screen for an 「いいよ！」, and the card leaves
+/// after a few seconds. Tapping the card opens 送信; tapping or swiping down
+/// outside it dismisses early. The confetti and the pop are decoration, so
+/// reduced motion keeps only the fade.
 class _KnockResultOverlay extends StatelessWidget {
   const _KnockResultOverlay({
     super.key,
     required this.knock,
     required this.onTap,
+    required this.onDismiss,
   });
 
   final Knock knock;
   final VoidCallback onTap;
+  final VoidCallback onDismiss;
 
   String get _message {
     final name = knock.recipient?.displayName ?? '友達';
@@ -215,17 +227,23 @@ class _KnockResultOverlay extends StatelessWidget {
       type: MaterialType.transparency,
       child: Stack(
         children: [
+          Positioned.fill(
+            child: _DismissScrim(
+              reduceMotion: reduceMotion,
+              onDismiss: onDismiss,
+            ),
+          ),
           if (accepted) const Positioned.fill(child: ConfettiBurst()),
           Center(
             child: TweenAnimationBuilder<double>(
               tween: Tween<double>(begin: 0, end: 1),
               // Reduced motion keeps the fade and drops the pop.
-              duration: Duration(milliseconds: reduceMotion ? 160 : 260),
-              curve: Curves.easeOutBack,
+              duration: Duration(milliseconds: reduceMotion ? 160 : 420),
+              curve: reduceMotion ? Curves.easeOut : Curves.easeOutBack,
               builder: (context, value, child) => Opacity(
                 opacity: value.clamp(0.0, 1.0),
                 child: Transform.scale(
-                  scale: reduceMotion ? 1 : 0.85 + 0.15 * value,
+                  scale: reduceMotion ? 1 : 0.82 + 0.18 * value,
                   child: child,
                 ),
               ),
@@ -236,41 +254,38 @@ class _KnockResultOverlay extends StatelessWidget {
                 child: GestureDetector(
                   onTap: onTap,
                   child: Container(
-                    constraints: const BoxConstraints(maxWidth: 320),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: AppSpacing.s16 + 4,
-                      vertical: AppSpacing.s16,
-                    ),
+                    constraints: const BoxConstraints(maxWidth: 360),
+                    padding: const EdgeInsets.all(AppSpacing.s24),
                     decoration: BoxDecoration(
                       color: AppColors.surface,
-                      borderRadius: BorderRadius.circular(AppSpacing.radiusCard),
+                      borderRadius: BorderRadius.circular(AppSpacing.radiusHero),
                       border: Border.all(
                         color: accepted ? AppColors.coral : AppColors.purpleSoft,
-                        width: AppSpacing.borderWidth,
+                        width: AppSpacing.borderWidth * 2,
                       ),
                       boxShadow: [
                         BoxShadow(
-                          color: AppColors.ink.withValues(alpha: 0.16),
-                          blurRadius: 18,
-                          offset: const Offset(0, 6),
+                          color: AppColors.ink.withValues(alpha: 0.22),
+                          blurRadius: 32,
+                          offset: const Offset(0, 12),
                         ),
                       ],
                     ),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        AvatarView(
+                        _PoppingAvatar(
                           name: knock.recipient?.displayName ?? '友達',
                           imageUrl: knock.recipient?.avatarUrl,
-                          size: 56,
-                          background: AppColors.purpleSoft,
+                          reduceMotion: reduceMotion,
                         ),
-                        const SizedBox(height: AppSpacing.s8),
+                        const SizedBox(height: AppSpacing.s16),
                         Text(
                           _message,
                           textAlign: TextAlign.center,
-                          style: AppTextStyles.friendName.copyWith(
-                            fontSize: 16,
+                          style: AppTextStyles.heroTitle.copyWith(
+                            fontSize: 30,
+                            height: 1.2,
                           ),
                         ),
                       ],
@@ -282,6 +297,63 @@ class _KnockResultOverlay extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Light dim behind the card. Tapping it, or swiping down on it, dismisses the
+/// celebration early; the card itself stays a single tap target that opens 送信.
+class _DismissScrim extends StatelessWidget {
+  const _DismissScrim({required this.reduceMotion, required this.onDismiss});
+
+  final bool reduceMotion;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) => TweenAnimationBuilder<double>(
+    tween: Tween<double>(begin: 0, end: 1),
+    duration: Duration(milliseconds: reduceMotion ? 160 : 220),
+    builder: (context, value, child) => Opacity(opacity: value, child: child),
+    child: GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      excludeFromSemantics: true,
+      onTap: onDismiss,
+      onVerticalDragEnd: (details) {
+        if ((details.primaryVelocity ?? 0) > 120) onDismiss();
+      },
+      child: ColoredBox(color: AppColors.ink.withValues(alpha: 0.28)),
+    ),
+  );
+}
+
+/// The 72dp avatar with the celebratory pop. Reduced motion keeps it still.
+class _PoppingAvatar extends StatelessWidget {
+  const _PoppingAvatar({
+    required this.name,
+    required this.imageUrl,
+    required this.reduceMotion,
+  });
+
+  final String name;
+  final String? imageUrl;
+  final bool reduceMotion;
+
+  @override
+  Widget build(BuildContext context) {
+    final avatar = AvatarView(
+      name: name,
+      imageUrl: imageUrl,
+      size: 72,
+      background: AppColors.purpleSoft,
+    );
+    if (reduceMotion) return avatar;
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 0, end: 1),
+      duration: const Duration(milliseconds: 560),
+      curve: Curves.elasticOut,
+      builder: (context, value, child) =>
+          Transform.scale(scale: 0.4 + 0.6 * value, child: child),
+      child: avatar,
     );
   }
 }
