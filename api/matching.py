@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from . import discord_rest
 from .models import Match, User
+from .push import send_push
 from .services import has_shared_visible_guild, is_blocked, utcnow
 from .vocab import ACTIVITIES
 
@@ -99,6 +100,12 @@ def evaluate_for_session(db: Session, session_row, rest=None) -> int:
 
         other = db.get(User, other_user)
         other_name = other.display_name if other else f"discord:{other_user}"
+        me = db.get(User, me_user)
+        me_name = me.display_name if me else f"discord:{me_user}"
+        # プッシュ（devices がなければ dry-run ログ）
+        send_push(db, me_user, "🔥 マッチ！", f"{other_name} さんとマッチしたよ（{kind}）")
+        send_push(db, other_user, "🔥 マッチ！", f"{me_name} さんとマッチしたよ（{kind}）")
+
         cand_minutes = max(
             1, int((cand["expires_at"] - now).total_seconds() // 60)
         )

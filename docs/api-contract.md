@@ -77,7 +77,7 @@
 ## 2. 認証
 
 - **Bot→API**：`Authorization: Bearer <BOT_API_SECRET>`。この検証を通ったリクエストのみ、ボディ／ヘッダーで渡された Discord ユーザーID を信用できる。guild_id と user_id を含むリクエストでは membership が upsert され（last_seen_at 更新）、users 行が無ければ作られる
-- **アプリ→API**：API 独自のセッショントークン = JWT（HS256、`API_JWT_SECRET`、有効期限30日）。`sub` にユーザーID。OAuth コード交換エンドポイントは次段で追加
+- **アプリ→API**：API 独自のセッショントークン = JWT（HS256、`API_JWT_SECRET`、有効期限30日）。`sub` にユーザーID。`POST /auth/discord` で発行する。**全 `/app/*` エンドポイントで必須**。JWT から取得したユーザーIDのみを信用し、リクエストで送られた user_id は採用しない
 
 ## 3. 実装済みエンドポイント（すべて Bot 認証必須）
 
@@ -117,15 +117,40 @@
 - **3分ごと**：未送信 watch_queue を watcher ごとにまとめ1通の DM（「👀 ヒマな人が出たよ：名前…（n人）」）を送り sent_at を記録
 - Discord REST は失敗時も例外を投げない（ログのみ）。テストでは `api.discord_rest.rest` をモックへ差し替え可能
 
-## 6. 予定エンドポイント（次段：アプリ→API）
+## 6. アプリ向けエンドポイント（JWT 認証。`/auth/discord` のみ認証不要）
+
+### Discord OAuth
 
 | Method | Path | 概要 |
 | --- | --- | --- |
-| POST | `/auth/discord/code` | OAuth コード交換→JWT 発行 |
-| GET | `/me` / PATCH `/me` | 自分の情報・設定（auto_mode / auto_mood など） |
-| GET | `/guilds/{guild_id}/board` | アプリ向け掲示板（/bot/board と同じ描画ルール） |
-| POST | `/sessions` / DELETE `/sessions/current` | アプリからの宣言（source=app）/解除 |
-| GET | `/knocks/inbox` / POST `/knocks/{id}/respond` / GET `/knocks/results` | アプリ側のノック受信箱・返答・結果 |
-| PUT/DELETE | `/blocks/{user_id}` | アプリからのブロック操作 |
-| POST/DELETE | `/devices` | FCM トークン管理 |
-| GET/PUT | `/me/regular-slots` | よくヒマになる時間帯 |
+| POST | `/auth/discord` | ボディ `{code, redirect_uri, code_verifier}`（PKCE）。Discord v10 `/oauth2/token` で交換（`DISCORD_CLIENT_ID`/`DISCORD_CLIENT_SECRET` は環境変数）→ `/users/@me` で users を upsert（`display_name` は global_name があればそれ、無ければ username。`avatar` は CDN URL `https://cdn.discordapp.com/avatars/{id}/{hash}.png`、hash 無しは null）→ `/users/@me/guilds` と guilds テーブルの**共通サーバーのみ** memberships を upsert（visible 既定 true、last_seen_at 更新）→ 第1段の JWT を発行し `{token, user, guilds}` を返す |
+
+### アプリ本体（すべて JWT 必須。user_id は常に JWT から取得）
+
+| Method | Path | 概要 |
+| --- | --- | --- |
+| GET | `/app/me` | プロフィール・設定・**自分の有効セッション（source を含む）**・memberships 一覧 |
+| PUT | `/app/me/settings` | `notify_on_hima` / `auto_mode` / `auto_mood` の部分更新 |
+| PUT | `/app/memberships/{guild_id}/visibility` | 自分の membership visible 更新（人数メッセージを即更新） |
+| GET | `/app/board` | **横断掲示板**：自分が member の全サーバーを統合。共有可視・ブロック除外判定は Bot 側と同じ。各行に `shared_guild_ids`（共通の visible サーバーID一覧）を付ける。ノック受信箱（最大5件、`to_moon` 付き）＋未見結果も返す。**他人のセッション行に source は含めない**（自分の行のみ `/app/me` で返す） |
+| POST | `/app/sessions` | ヒマ宣言 `{mood, activity, note, minutes, source}`（source は manual/suggested/auto）。Bot 側と**同一のサービス関数**を使うためマッチング・見守りキュー・人数メッセージ更新も同じに発火 |
+| DELETE | `/app/sessions` | 有効セッション終了（Bot 側と同一挙動） |
+| POST | `/app/knocks` | ノック作成（from_user は JWT 本人） |
+| POST | `/app/knocks/{id}/reply` | 返答（accept/later/pass）。to_user 本人のみ |
+| POST | `/app/knocks/results/seen` | 未見結果に `result_seen_at` を打つ |
+| GET | `/app/blocks` | 自分がブロックしている一覧 |
+| POST | `/app/blocks` | ブロック登録 `{blocked_user_id}`（効果は双方向） |
+| DELETE | `/app/blocks` | ブロック解除 |
+| POST | `/app/devices` | FCM トークン upsert `{platform, fcm_token}`（updated_at 更新） |
+| DELETE | `/app/devices` | FCM トークン削除 |
+
+### プッシュ通知（FCM）
+
+- `api/push.py` の `send_push` がマッチ成立時・ノック着信時・ノック返答時に、**相手が devices を持っていれば**送る
+- `FCM_SERVICE_ACCOUNT_JSON`（サービスアカウント JSON のファイルパス）未設定なら **dry-run**：通知は送らず `[push dry-run] user=… devices=… title=… body=…` をログ出力するだけ（**ハッカソン期間の既定**）
+- プッシュはどのような失敗（例外・HTTP エラー）でも**リクエストを失敗させない**（ログのみ）
+
+### 実装上の注記
+
+- 宣言・終了・マッチング・ノックのロジックは Bot / アプリで**同一のサービス層**（`api/domain.py`）を共有し、二重実装はない。Bot 側の外部仕様（パス・項目・ステータスコード）は不変
+- `GET /bot/board` は `/bot/board`（単一ギルド版）と `/app/board`（横断版）で同じ除外ロジック（共有可視・ブロック）を共有

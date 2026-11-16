@@ -51,3 +51,47 @@ class VisibilityIn(BaseModel):
     user_id: int
     guild_id: int
     visible: bool
+
+
+class AppVisibilityIn(BaseModel):
+    visible: bool
+
+
+# --- app (JWT) ------------------------------------------------------------
+
+class AuthIn(BaseModel):
+    code: str
+    redirect_uri: str
+    code_verifier: str
+
+
+class AppSessionIn(BaseModel):
+    mood: str
+    activity: str
+    note: str | None = None
+    minutes: int = 30
+    source: str = "manual"
+
+
+class AppSettingsIn(BaseModel):
+    notify_on_hima: bool | None = None
+    auto_mode: bool | None = None
+    auto_mood: str | None = None
+
+
+class AppKnockIn(BaseModel):
+    to_user: int
+    template: str
+
+
+class AppBlockIn(BaseModel):
+    blocked_user_id: int
+
+
+class DeviceIn(BaseModel):
+    platform: str
+    fcm_token: str
+
+
+class DeviceDeleteIn(BaseModel):
+    fcm_token: str
