@@ -62,7 +62,7 @@
 | `atsumaro:suggest:declare` | 提案 DM の「このまま宣言する」（押すと `POST /bot/suggest-declare` を呼び、source=suggested / 30分 / auto_mood（未設定なら ok）で宣言。DynamicItem・再起動後も有効） |
 | `board:declare` / `board:knock` / `board:blocks` / `board:leave` | 掲示板下部ボタン（Bot 内部用） |
 
-### 公開パネルのボタン custom_id（旧パネルの受け口）
+### 公開パネルのボタン custom_id（Discord components に埋め込む値）
 
 | custom_id | ボタン |
 | --- | --- |
@@ -70,15 +70,12 @@
 | `atsumaro:join` | 今ヒマ！ |
 | `atsumaro:leave` | やめる |
 
-※ チャンネルへの Bot メッセージは廃止されたため、**API / Bot は新規にパネルを投稿しない**。上記 custom_id は掃除前に残っている旧パネルが押された場合の応答用として永続登録だけ維持する。操作は /board とコマンド＋ephemeral で完結する
+※ トピック人数方式（人数をチャンネルトピックに表示）は一時採用後に不採用（revert: back to counter and panel messages）。guilds の base_topic / topic_counter 列は未使用のまま残置
 
-### 人数表示トピックの形式
+### 共有メッセージの形式
 
-- チャンネルに残る Bot メッセージはゼロ。人数は**チャンネルのトピック**に表示する
-- 形式：`いま{n}人ヒマ` ＋（base_topic があれば「`｜{base_topic}`」を後ろに付ける。n = visible な membership を持つ有効セッション中のユーザー数）
-- 宣言・解除の直後とワーカー tick の再計算は共通関数を通す。**人数が前回描画値（topic_counter）と同じなら PATCH しない**。変わったときだけ PATCH し topic_counter を更新する
-- トピック編集は失敗（403 等）しても例外を投げない（ログのみ。宣言などの本体処理は失敗させない）。失敗時は topic_counter を更新しないため、以降の更新・tick で自動リトライされる
-- `guilds.base_topic`（設置時のトピック）／`guilds.topic_counter`（描画済み人数）／`guilds.list_channel_id`（対象チャンネル）で状態管理。teardown でトピックを base_topic に復元する（NULL なら空にする）
+- 人数メッセージ：`いま{n}人ヒマ`（n = visible な membership を持つ有効セッション中のユーザー数。宣言・解除の直後とワーカーtickで編集・更新）
+- パネルメッセージ：上記3ボタン付き。**チャンネルに残る Bot メッセージはこの2件のみ**で、それ以外の応答はコマンド／ボタン＋ephemeral で完結する
 
 ## 2. 認証
 
@@ -91,10 +88,10 @@
 | --- | --- | --- |
 | GET | `/health` | 疎通確認。DB 接続込みで 200 を返す（認証不要） |
 | GET | `/bot/ping` | Bot→API 認証の動作確認 |
-| POST | `/bot/guilds/{guild_id}/setup` | guilds を upsert し、`list_channel_id` に指定チャンネルを保存。**メッセージは一切投稿しない**。base_topic 未保存なら現在のトピックを GET して保存し、現在の人数でトピックを PATCH する。応答に `base_topic` / `count` / `topic_applied` を含む |
-| POST | `/bot/guilds/{guild_id}/teardown` | トピックを base_topic に復元（NULL なら空に）し、base_topic / topic_counter / list_channel_id を NULL に。旧方式のメッセージ対（ID 保存済み）は削除を試みる（移行用。失敗は無視） |
-| POST | `/bot/sessions` | ヒマ宣言（延長=同ID更新／新規は source=manual）。マッチング評価＋見守りキュー登録＋人数表示トピック更新 |
-| DELETE | `/bot/sessions` | 有効セッション終了。宛ノックを expired に、人数表示トピックを更新 |
+| POST | `/bot/guilds/{guild_id}/setup` | guilds を upsert し、人数メッセージ＋パネルメッセージを REST 投稿して ID を保存 |
+| POST | `/bot/guilds/{guild_id}/teardown` | 2つのメッセージを REST 削除（失敗は無視）し、メッセージID を NULL に |
+| POST | `/bot/sessions` | ヒマ宣言（延長=同ID更新／新規は source=manual）。マッチング評価＋見守りキュー登録＋人数メッセージ更新 |
+| DELETE | `/bot/sessions` | 有効セッション終了。宛ノックを expired に、人数メッセージを更新 |
 | GET | `/bot/board?guild_id=&user_id=` | 閲覧者に見える有効セッション一覧（共有可視・ブロック除外・source非表示）＋宛ノック（最大5件。**`to_moon` は宛先＝受信者が現在🌙の有効セッションを持つときのみ true**）＋未見結果。レスポンスに `viewer.notify_on_hima` を含む |
 | POST | `/bot/knocks/results/seen` | 未見結果に `result_seen_at` を打つ |
 | POST | `/bot/knocks` | ノック作成（相手が有効セッション中・共有可視・非ブロック必須。5分クールダウンは 409） |
@@ -103,7 +100,7 @@
 | DELETE | `/bot/blocks` | ブロック解除 |
 | GET | `/bot/blocks?user_id=` | 自分がブロックしているユーザー一覧 |
 | PUT | `/bot/users/{user_id}/settings` | `notify_on_hima` の更新 |
-| PUT | `/bot/memberships/visibility` | membership の visible 更新（人数表示トピックを即更新） |
+| PUT | `/bot/memberships/visibility` | membership の visible 更新（人数メッセージを即更新） |
 | POST | `/bot/suggest-declare` | 提案 DM の「このまま宣言する」ボタン用。`{user_id}`。そのユーザーの auto_mood（未設定・無効値なら ok）/ activity=any / 30分 / source=suggested で宣言（マッチング・人数更新は通常宣言と同一）。応答は `/bot/sessions` と同じ形 |
 | GET | `/bot/guilds/{guild_id}/count` | 人数の取得（デバッグ用） |
 
@@ -147,7 +144,7 @@
 ## 5. バックグラウンドワーカー（30秒tick・advisory lock）
 
 - 期限切れセッションのクローズ（ended_at 書き込み）
-- 全ギルドの人数表示トピック再計算・修正（人数が変わったギルドのみ PATCH・失敗はリトライ）
+- 全ギルドの人数メッセージ再計算・修正
 - **3分ごと**：未送信 watch_queue を watcher ごとにまとめ1通の DM（「👀 ヒマな人が出たよ：名前…（n人）」）を送り sent_at を記録
 - Discord REST は失敗時も例外を投げない（ログのみ）。テストでは `api.discord_rest.rest` をモックへ差し替え可能
 
@@ -165,9 +162,9 @@
 | --- | --- | --- |
 | GET | `/app/me` | プロフィール・設定・**自分の有効セッション（source を含む）**・memberships 一覧 |
 | PUT | `/app/me/settings` | `notify_on_hima` / `auto_mode` / `auto_mood` の部分更新 |
-| PUT | `/app/memberships/{guild_id}/visibility` | 自分の membership visible 更新（人数表示トピックを即更新） |
+| PUT | `/app/memberships/{guild_id}/visibility` | 自分の membership visible 更新（人数メッセージを即更新） |
 | GET | `/app/board` | **横断掲示板**：自分が member の全サーバーを統合。共有可視・ブロック除外判定は Bot 側と同じ。各行に `shared_guild_ids`（共通の visible サーバーID一覧）を付ける。ノック受信箱（最大5件、`to_moon` 付き）＋未見結果も返す。**他人のセッション行に source は含めない**（自分の行のみ `/app/me` で返す） |
-| POST | `/app/sessions` | ヒマ宣言 `{mood, activity, note, minutes, source}`（source は manual/suggested/auto）。Bot 側と**同一のサービス関数**を使うためマッチング・見守りキュー・人数表示トピック更新も同じに発火 |
+| POST | `/app/sessions` | ヒマ宣言 `{mood, activity, note, minutes, source}`（source は manual/suggested/auto）。Bot 側と**同一のサービス関数**を使うためマッチング・見守りキュー・人数メッセージ更新も同じに発火 |
 | DELETE | `/app/sessions` | 有効セッション終了（Bot 側と同一挙動） |
 | POST | `/app/knocks` | ノック作成（from_user は JWT 本人） |
 | POST | `/app/knocks/{id}/reply` | 返答（accept/later/pass）。to_user 本人のみ |

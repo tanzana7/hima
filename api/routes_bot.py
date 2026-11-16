@@ -32,7 +32,6 @@ router = APIRouter(prefix="/bot", dependencies=[Depends(require_bot_secret)])
 
 @router.post("/guilds/{guild_id}/setup")
 def guild_setup(guild_id: int, body: SetupIn) -> dict:
-    """メッセージは投稿しない。指定チャンネルのトピックに人数を表示する。"""
     with SessionLocal() as db:
         guild = db.get(Guild, guild_id)
         if guild is None:
@@ -40,51 +39,36 @@ def guild_setup(guild_id: int, body: SetupIn) -> dict:
             db.add(guild)
         else:
             guild.name = body.name
-        guild.list_channel_id = body.channel_id  # 旧方式の message id 列は書き込まない
         db.flush()
-        if guild.base_topic is None:
-            channel = discord_rest.rest.get_channel(body.channel_id)
-            current = channel.get("topic") if isinstance(channel, dict) else None
-            guild.base_topic = current if current else None
-        n = count_visible_active_sessions(db, guild_id)
-        ok = (
-            discord_rest.rest.edit_channel_topic(body.channel_id, notify.render_topic(n, guild.base_topic))
-            is not None
+        counter = discord_rest.rest.send_message(body.channel_id, notify.COUNTER_FORMAT.format(n=0))
+        panel = discord_rest.rest.send_message(
+            body.channel_id, discord_rest.PANEL_CONTENT, components=discord_rest.panel_components()
         )
-        if ok:
-            guild.topic_counter = n
+        guild.list_channel_id = body.channel_id
+        guild.list_message_id = int(counter["id"]) if counter else None
+        guild.panel_message_id = int(panel["id"]) if panel else None
         db.commit()
         return {
             "guild_id": guild_id,
-            "base_topic": guild.base_topic,
-            "count": n,
-            "topic_applied": ok,
+            "counter_message_id": guild.list_message_id,
+            "panel_message_id": guild.panel_message_id,
         }
 
 
 @router.post("/guilds/{guild_id}/teardown")
 def guild_teardown(guild_id: int) -> dict:
-    """トピックを base_topic に復元し、旧方式のメッセージが残っていれば削除する。"""
     with SessionLocal() as db:
         guild = db.get(Guild, guild_id)
         if guild is None:
             raise HTTPException(status_code=404, detail="guild not found")
-        channel_id = guild.list_channel_id
-        # 旧方式のメッセージ対（ID 保存済みのもの）は削除を試みる（移行用。失敗はログのみ）
-        if guild.list_message_id is not None and channel_id is not None:
-            discord_rest.rest.delete_message(channel_id, guild.list_message_id)
-        if guild.panel_message_id is not None and channel_id is not None:
-            discord_rest.rest.delete_message(channel_id, guild.panel_message_id)
-        if channel_id is not None:
-            # base_topic が NULL ならトピックを空にする
-            discord_rest.rest.edit_channel_topic(channel_id, guild.base_topic)
-        guild.base_topic = None
-        guild.topic_counter = None
-        guild.list_channel_id = None
+        if guild.list_message_id is not None and guild.list_channel_id is not None:
+            discord_rest.rest.delete_message(guild.list_channel_id, guild.list_message_id)
+        if guild.panel_message_id is not None and guild.list_channel_id is not None:
+            discord_rest.rest.delete_message(guild.list_channel_id, guild.panel_message_id)
         guild.list_message_id = None
         guild.panel_message_id = None
         db.commit()
-        return {"guild_id": guild_id, "torn_down": True, "topic_restored": True}
+        return {"guild_id": guild_id, "torn_down": True}
 
 
 # ------------------------------------------------------------------ sessions

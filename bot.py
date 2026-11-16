@@ -141,7 +141,7 @@ class HimaCog(commands.Cog):
 
     # ------------------------------------------------------------------ /panel_setup
 
-    @app_commands.command(name="panel_setup", description="人数表示をこのチャンネルのトピックに設置する")
+    @app_commands.command(name="panel_setup", description="Atsumaro パネル（人数表示つき）をこのチャンネルに設置する")
     @app_commands.guild_only()
     async def panel_setup(self, interaction: discord.Interaction) -> None:
         assert interaction.guild_id is not None
@@ -171,9 +171,11 @@ class HimaCog(commands.Cog):
             except (ApiConnectionError, ApiHTTPError) as exc:
                 await send_api_error(interaction, exc)
                 return
-            lines = [f"トピックに人数を表示します！（掃除：{removed}件削除）"]
-            if not data.get("topic_applied", False):
-                lines.append("⚠️ トピックの編集に失敗しました。Bot ロールに「チャンネルの管理」権限が必要です。")
+            lines = [f"パネルを設置したよ！（掃除：{removed}件削除）"]
+            if data.get("counter_message_id"):
+                lines.append(f"人数メッセージ: {data.get('counter_message_id')}")
+            if data.get("panel_message_id"):
+                lines.append(f"パネルメッセージ: {data.get('panel_message_id')}")
             await interaction.followup.send("\n".join(lines), ephemeral=True)
 
     # ------------------------------------------------------------------ /panel_remove
@@ -195,9 +197,7 @@ class HimaCog(commands.Cog):
         except ApiConnectionError as exc:
             await send_api_error(interaction, exc)
             return
-        await interaction.followup.send(
-            f"パネルを撤去したよ！（トピックを元に戻しました／掃除：{removed}件削除）", ephemeral=True
-        )
+        await interaction.followup.send(f"パネルを撤去したよ！（掃除：{removed}件削除）", ephemeral=True)
 
     # ------------------------------------------------------------------ /board
 
