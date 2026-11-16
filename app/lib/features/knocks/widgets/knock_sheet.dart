@@ -85,7 +85,9 @@ class _KnockSheetState extends State<KnockSheet>
       }
       if (!mounted) return;
       navigator.pop();
-      messenger.showSnackBar(const SnackBar(content: Text('さそったよ')));
+      // No success SnackBar: the paper plane and the 「さそった」 pill the sheet
+      // leaves behind already say the knock went out, so a third confirmation
+      // would only cover the friend list. Errors still get one below.
     } catch (_) {
       if (!mounted) return;
       setState(() => _sending = false);

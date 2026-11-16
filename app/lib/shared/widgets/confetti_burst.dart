@@ -8,8 +8,12 @@ import '../../app/theme/app_colors.dart';
 ///
 /// It paints once and then reports completion so the parent can drop it from
 /// the tree; there is no looping sparkle anywhere in the app.
+///
+/// Pieces leave from the middle of the surface and from both bottom corners,
+/// and travel far enough to reach the screen edges, so the celebration reads as
+/// full-screen instead of as a puff around whatever card is in the middle.
 class ConfettiBurst extends StatefulWidget {
-  const ConfettiBurst({super.key, this.onCompleted, this.particleCount = 18});
+  const ConfettiBurst({super.key, this.onCompleted, this.particleCount = 46});
 
   final VoidCallback? onCompleted;
   final int particleCount;
@@ -30,7 +34,7 @@ class _ConfettiBurstState extends State<ConfettiBurst>
     super.initState();
     _controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 900),
+      duration: const Duration(milliseconds: 1400),
     )..addStatusListener((status) {
       if (status == AnimationStatus.completed) _finish();
     });
@@ -82,6 +86,24 @@ class _ConfettiBurstState extends State<ConfettiBurst>
   }
 }
 
+/// One launch point, expressed as a fraction of the surface plus the direction
+/// the pieces fan out in and how far they travel relative to the longest side.
+class _Emitter {
+  const _Emitter({
+    required this.dx,
+    required this.dy,
+    required this.angle,
+    required this.spread,
+    required this.reach,
+  });
+
+  final double dx;
+  final double dy;
+  final double angle;
+  final double spread;
+  final double reach;
+}
+
 class _ConfettiPainter extends CustomPainter {
   _ConfettiPainter({required this.progress, required this.particleCount});
 
@@ -96,23 +118,54 @@ class _ConfettiPainter extends CustomPainter {
     AppColors.skySoft,
   ];
 
+  /// A centre burst plus two corner cannons firing up and inward. Together they
+  /// put pieces in every part of the screen, not just around the card.
+  static const _emitters = [
+    _Emitter(
+      dx: 0.5,
+      dy: 0.42,
+      angle: 0,
+      spread: math.pi * 2,
+      reach: 0.62,
+    ),
+    _Emitter(
+      dx: -0.02,
+      dy: 1.02,
+      angle: -math.pi / 4,
+      spread: math.pi / 5,
+      reach: 0.95,
+    ),
+    _Emitter(
+      dx: 1.02,
+      dy: 1.02,
+      angle: -math.pi * 3 / 4,
+      spread: math.pi / 5,
+      reach: 0.95,
+    ),
+  ];
+
   @override
   void paint(Canvas canvas, Size size) {
     if (progress <= 0 || progress >= 1) return;
     final random = math.Random(7);
-    final origin = Offset(size.width / 2, size.height * 0.45);
-    final fade = progress < 0.7 ? 1.0 : (1 - (progress - 0.7) / 0.3);
+    final span = size.longestSide;
+    final fade = progress < 0.72
+        ? 1.0
+        : (1 - (progress - 0.72) / 0.28).clamp(0.0, 1.0).toDouble();
     for (var i = 0; i < particleCount; i++) {
-      final angle = random.nextDouble() * math.pi * 2;
-      final speed = 40 + random.nextDouble() * 90;
+      final emitter = _emitters[i % _emitters.length];
+      final origin = Offset(size.width * emitter.dx, size.height * emitter.dy);
+      final angle =
+          emitter.angle + (random.nextDouble() - 0.5) * emitter.spread;
+      final speed = span * emitter.reach * (0.45 + random.nextDouble() * 0.55);
       final spin = random.nextDouble() * math.pi;
-      final particleSize = 4 + random.nextDouble() * 5;
+      final particleSize = 5 + random.nextDouble() * 5;
       final color = _colors[i % _colors.length];
       final distance = speed * progress;
       final position =
           origin +
           Offset(math.cos(angle), math.sin(angle)) * distance +
-          Offset(0, 60 * progress * progress);
+          Offset(0, span * 0.16 * progress * progress);
       canvas.save();
       canvas.translate(position.dx, position.dy);
       canvas.rotate(spin + progress * math.pi);
