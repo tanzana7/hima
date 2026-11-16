@@ -95,3 +95,13 @@ class DeviceIn(BaseModel):
 
 class DeviceDeleteIn(BaseModel):
     fcm_token: str
+
+
+class RegularSlotIn(BaseModel):
+    weekday: int
+    start_min: int
+    end_min: int
+
+
+class SuggestDeclareIn(BaseModel):
+    user_id: int

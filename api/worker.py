@@ -6,7 +6,7 @@ import threading
 
 from sqlalchemy import text
 
-from . import notify
+from . import notify, suggestions
 from .db import SessionLocal, engine
 
 log = logging.getLogger("atsumaro.worker")
@@ -59,6 +59,11 @@ def _run(stop_event: threading.Event) -> None:
                     notified = notify.flush_watch_queue()
                     if notified:
                         log.info("watch flush notified %d watcher(s)", notified)
+                if ticks % suggestions.SUGGEST_EVERY_TICKS == 0:
+                    with SessionLocal() as session:
+                        sent = suggestions.suggestion_pass(session)
+                        if sent:
+                            log.info("suggestions sent to %d user(s)", sent)
             except Exception:  # noqa: BLE001 - the worker must survive tick errors
                 log.exception("worker tick failed")
     finally:

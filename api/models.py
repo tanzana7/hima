@@ -6,6 +6,7 @@ from datetime import datetime
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    Date,
     DateTime,
     ForeignKey,
     Index,
@@ -67,6 +68,7 @@ class HimaSession(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    demo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")  # デモ投入スクリプト由來
 
     __table_args__ = (
         Index(
@@ -132,6 +134,22 @@ class RegularSlot(Base):
     weekday: Mapped[int] = mapped_column(Integer)  # 0-6 (Mon=0)
     start_min: Mapped[int] = mapped_column(Integer)
     end_min: Mapped[int] = mapped_column(Integer)
+    demo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")  # デモ投入スクリプト由來
+
+
+class SuggestionLog(Base):
+    __tablename__ = "suggestion_log"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)  # BIGSERIAL
+    user_id: Mapped[int] = mapped_column(BigInteger)
+    slot_date: Mapped[datetime.date] = mapped_column(Date)  # 提案対象日のローカル日付
+    weekday: Mapped[int] = mapped_column(Integer)  # 0-6 (Mon=0)
+    start_min: Mapped[int] = mapped_column(Integer)
+    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "slot_date", "start_min", name="uq_suggestion_once_per_slot"),
+    )
 
 
 class WatchQueue(Base):

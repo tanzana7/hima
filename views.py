@@ -145,6 +145,43 @@ class KnockReplyButton(ui.DynamicItem, template=r"atsumaro:knockreply:(?P<knock_
         await interaction.response.send_message(f"「{label}」を返したよ！（送り主は /board の結果欄で確認できるよ）", ephemeral=True)
 
 
+class SuggestDeclareButton(ui.DynamicItem, template=r"atsumaro:suggest:declare"):
+    """提案 DM の「このまま宣言する」。押すと source=suggested / 30分 / auto_mood で宣言。"""
+
+    def __init__(self, row: int | None = 0) -> None:
+        super().__init__(
+            ui.Button(
+                label="このまま宣言する",
+                style=discord.ButtonStyle.success,
+                custom_id="atsumaro:suggest:declare",
+                row=row,
+            )
+        )
+
+    @classmethod
+    async def from_custom_id(cls, interaction: discord.Interaction, item: ui.Item, match: Any) -> "SuggestDeclareButton":
+        return cls()
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        bot = interaction.client  # type: ignore[union-attr]
+        try:
+            data = await bot.api.suggest_declare(interaction.user.id)
+        except ApiConnectionError as exc:
+            await send_api_error(interaction, exc)
+            return
+        except Exception as exc:  # noqa: BLE001
+            await send_api_error(interaction, exc)
+            return
+        if data.get("created"):
+            await interaction.response.send_message(
+                "宣言したよ！（あと30分・提案ボタンからの宣言）", ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(
+                "もう宣言中だったので、あと30分に延長したよ！", ephemeral=True
+            )
+
+
 class WatchToggle(ui.DynamicItem, template=r"atsumaro:watchtoggle:(?P<state>[01])"):
     """見守り ON/OFF トグル。custom_id に現在の状態を埋め込む。"""
 

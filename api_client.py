@@ -88,6 +88,10 @@ class ApiClient:
     async def end_session(self, user_id: int) -> dict:
         return await self._request("DELETE", "/bot/sessions", json_body={"user_id": user_id})
 
+    async def suggest_declare(self, user_id: int) -> dict:
+        """提案 DM の「このまま宣言する」（source=suggested / 30分 / auto_mood）。"""
+        return await self._request("POST", "/bot/suggest-declare", json_body={"user_id": user_id})
+
     async def get_board(self, guild_id: int, user_id: int) -> dict:
         return await self._request("GET", "/bot/board", params={"guild_id": guild_id, "user_id": user_id})
 

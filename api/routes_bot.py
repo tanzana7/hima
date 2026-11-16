@@ -14,6 +14,7 @@ from .schemas import (
     KnockIn,
     ResultsSeenIn,
     ReplyIn,
+    SuggestDeclareIn,
     SessionIn,
     SettingsIn,
     SetupIn,
@@ -21,6 +22,7 @@ from .schemas import (
 )
 from .services import upsert_membership, upsert_user
 from .notify import count_visible_active_sessions
+from .vocab import MOODS
 
 router = APIRouter(prefix="/bot", dependencies=[Depends(require_bot_secret)])
 
@@ -195,3 +197,26 @@ def guild_count(guild_id: int) -> dict:
         if db.get(Guild, guild_id) is None:
             raise HTTPException(status_code=404, detail="guild not found")
         return {"guild_id": guild_id, "count": count_visible_active_sessions(db, guild_id)}
+
+
+# ------------------------------------------------------------------ suggestions
+
+
+@router.post("/suggest-declare")
+def suggest_declare(body: SuggestDeclareIn) -> dict:
+    """提案 DM の「このまま宣言する」ボタン用。source=suggested / 30分 / auto_mood（なければ ok）。"""
+    with SessionLocal() as db:
+        user = db.get(User, body.user_id)
+        if user is None:
+            raise HTTPException(status_code=404, detail="user not found")
+        mood = user.auto_mood if user.auto_mood in MOODS else "ok"
+        return domain.declare_session(
+            db,
+            user_id=body.user_id,
+            mood=mood,
+            activity="any",
+            note=None,
+            minutes=30,
+            source="suggested",
+            rest=discord_rest.rest,
+        )

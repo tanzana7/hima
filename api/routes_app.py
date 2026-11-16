@@ -5,10 +5,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import text
 
-from . import discord_oauth, discord_rest, domain, notify
+from . import discord_oauth, discord_rest, domain, forecast, notify
 from .auth import issue_app_token, require_app_user
 from .db import SessionLocal
-from .models import Block, Device, Guild, User
+from .models import Block, Device, Guild, RegularSlot, User
 from .schemas import (
     AppBlockIn,
     AppKnockIn,
@@ -18,6 +18,7 @@ from .schemas import (
     AuthIn,
     DeviceDeleteIn,
     DeviceIn,
+    RegularSlotIn,
     ReplyIn,
 )
 from .services import active_session, upsert_membership, upsert_user, utcnow
@@ -264,3 +265,61 @@ def delete_device(body: DeviceDeleteIn, user_id: int = Depends(require_app_user)
             db.delete(device)
             db.commit()
         return {"user_id": user_id, "fcm_token": body.fcm_token, "removed": removed}
+
+
+# ------------------------------------------------------------------ /app/regular-slots
+
+
+@app_router.get("/regular-slots")
+def list_regular_slots(user_id: int = Depends(require_app_user)) -> dict:
+    with SessionLocal() as db:
+        rows = (
+            db.query(RegularSlot.id, RegularSlot.weekday, RegularSlot.start_min, RegularSlot.end_min)
+            .filter(RegularSlot.user_id == user_id)
+            .order_by(RegularSlot.weekday, RegularSlot.start_min)
+            .all()
+        )
+        return {
+            "user_id": user_id,
+            "slots": [
+                {"id": int(rid), "weekday": wd, "start_min": s, "end_min": e}
+                for rid, wd, s, e in rows
+            ],
+        }
+
+
+@app_router.post("/regular-slots")
+def add_regular_slot(body: RegularSlotIn, user_id: int = Depends(require_app_user)) -> dict:
+    if not 0 <= body.weekday <= 6:
+        raise HTTPException(status_code=400, detail="invalid weekday (0=Mon..6=Sun)")
+    if not (0 <= body.start_min <= 1439 and 0 <= body.end_min <= 1439):
+        raise HTTPException(status_code=400, detail="invalid minutes (0..1439)")
+    if body.start_min >= body.end_min:
+        raise HTTPException(status_code=400, detail="start_min must be before end_min")
+    with SessionLocal() as db:
+        slot = RegularSlot(user_id=user_id, weekday=body.weekday,
+                           start_min=body.start_min, end_min=body.end_min)
+        db.add(slot)
+        db.commit()
+        return {"id": slot.id, "weekday": slot.weekday,
+                "start_min": slot.start_min, "end_min": slot.end_min}
+
+
+@app_router.delete("/regular-slots/{slot_id}")
+def delete_regular_slot(slot_id: int, user_id: int = Depends(require_app_user)) -> dict:
+    with SessionLocal() as db:
+        slot = db.get(RegularSlot, slot_id)
+        if slot is None or slot.user_id != user_id:
+            raise HTTPException(status_code=404, detail="slot not found")
+        db.delete(slot)
+        db.commit()
+        return {"user_id": user_id, "id": slot_id, "removed": True}
+
+
+# ------------------------------------------------------------------ /app/free-time
+
+
+@app_router.get("/free-time/forecast")
+def free_time_forecast(user_id: int = Depends(require_app_user)) -> dict:
+    with SessionLocal() as db:
+        return {"user_id": user_id, "slots": forecast.compute_forecast(db, user_id)}

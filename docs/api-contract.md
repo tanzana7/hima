@@ -59,6 +59,7 @@
 | --- | --- |
 | `atsumaro:knockreply:{knock_id}:{accept\|later\|pass}` | ノック返答（いいよ！／あとで／パス。DynamicItem・再起動後も有効） |
 | `atsumaro:watchtoggle:{0\|1}` | 見守り ON/OFF トグル（状態を custom_id に埋め込む） |
+| `atsumaro:suggest:declare` | 提案 DM の「このまま宣言する」（押すと `POST /bot/suggest-declare` を呼び、source=suggested / 30分 / auto_mood（未設定なら ok）で宣言。DynamicItem・再起動後も有効） |
 | `board:declare` / `board:knock` / `board:blocks` / `board:leave` | 掲示板下部ボタン（Bot 内部用） |
 
 ### 公開パネルのボタン custom_id（Discord components に埋め込む値）
@@ -98,6 +99,7 @@
 | GET | `/bot/blocks?user_id=` | 自分がブロックしているユーザー一覧 |
 | PUT | `/bot/users/{user_id}/settings` | `notify_on_hima` の更新 |
 | PUT | `/bot/memberships/visibility` | membership の visible 更新（人数メッセージを即更新） |
+| POST | `/bot/suggest-declare` | 提案 DM の「このまま宣言する」ボタン用。`{user_id}`。そのユーザーの auto_mood（未設定・無効値なら ok）/ activity=any / 30分 / source=suggested で宣言（マッチング・人数更新は通常宣言と同一）。応答は `/bot/sessions` と同じ形 |
 | GET | `/bot/guilds/{guild_id}/count` | 人数の取得（デバッグ用） |
 
 ## 4. データモデル（主要テーブル）
@@ -107,8 +109,35 @@
 - `blocks`（blocker_id+blocked_id PK。双方向に効果：掲示板・マッチング・ノック・見守りすべてで不可視/対象外）
 - `matches`（(session_a_id, session_b_id) ユニーク）
 - `knocks`（status ライフサイクル上記。`responded_at` / `result_seen_at`）
-- `devices`, `regular_slots`
+- `devices`, `regular_slots`（id, user_id, weekday 0=月〜6=日, start_min, end_min。demo フラグはダメ投入スクリプトの投入物を識別）
 - **`watch_queue`**（見守り通知キュー）：id, watcher_id, session_id, created_at, sent_at(nullable)。未送信行の部分インデックスあり
+- **`suggestion_log`**（提案送信記録）：id, user_id, slot_date（ローカル日付）, weekday, start_min, sent_at。(user_id, slot_date, start_min) ユニーク＝同じ枠・同じ日は1回だけ
+- `hima_sessions.demo` / `regular_slots.demo`：`scripts/seed_demo_history.py` が投入したデモデータの識別用（`--reset` で demo=true の行だけ削除）
+
+## 5.5 自由時間の推定と提案（Phase C）
+
+### GET /app/free-time/forecast（JWT 必須）
+
+- 過去8週間の終了済み hima_sessions を集計する（Python 側で素直に集計。キャッシュや専用テーブルは作らない）
+- 曜日 × 30分刻みの枠ごとに「その曜日に宣言が枠と重なった日の数 ÷ その曜日が期間内にあった日数」をスコアにする
+- スコア 0.5 以上かつ実績3日以上の枠を、連続する枠はマージして返す（タイムゾーンは Asia/Tokyo）
+- 各枠に `basis` を付ける：`history`（集計のみ）／`manual`（regular_slots のみ）／`both`。manual のみの枠は score=0 / days=0
+- 応答：`{user_id, slots: [{weekday, start_min, end_min, basis, score, days}]}`
+
+### 提案（ワーカー）
+
+- ワーカーは **15分ごと**（30秒tick × 30）に判定する
+- いまが「forecast（history/manual/both いずれも）または regular_slots の枠の**開始15分前**」に当たるユーザーがいて、
+  ①そのユーザーが宣言中でなく、②同じ枠・同じ日に suggestion_log の送信実績がなければ、提案を1回送る
+- 送信先：devices があればプッシュ（dry-run 可）。あわせて Discord DM も送る。DM には「このまま宣言する」ボタン（`atsumaro:suggest:declare`）を付ける。文面は「そろそろヒマな時間じゃない？ HH:MM 頃のあなたのいつもの時間だよ。このまま宣言する？」
+- DM 送信は Discord REST 失敗でも例外を投げない（ログのみ）
+
+### デモ用ダミー履歴（scripts/seed_demo_history.py）
+
+- 実ユーザー2人（引数）＋ダミーユーザー3人（ID 990000000000000001〜003、表示名「デモ・みか／そら／かい」）
+- 過去4週間分の終了済みセッションを投入：平日は22時台、週末は午後の偏り付き。mood / activity / source を混ぜる（source は manual 中心）
+- 実ユーザー2人には regular_slots（平日22:00〜23:59）も登録
+- `--reset` で demo=true の投入分だけを削除
 
 ## 5. バックグラウンドワーカー（30秒tick・advisory lock）
 
@@ -143,6 +172,10 @@
 | DELETE | `/app/blocks` | ブロック解除 |
 | POST | `/app/devices` | FCM トークン upsert `{platform, fcm_token}`（updated_at 更新） |
 | DELETE | `/app/devices` | FCM トークン削除 |
+| GET | `/app/regular-slots` | 自分の登録済み時間帯一覧 `{id, weekday, start_min, end_min}` |
+| POST | `/app/regular-slots` | 時間帯追加 `{weekday, start_min, end_min}`（weekday は 0=月曜〜6=日曜、分は 0〜1439、start < end を検証。違反は 400） |
+| DELETE | `/app/regular-slots/{id}` | 自分の枠のみ削除可（存在しない・他人のは 404） |
+| GET | `/app/free-time/forecast` | 自分のヒマ時間帯の推定（下記「自由時間の推定」参照） |
 
 ### プッシュ通知（FCM）
 
