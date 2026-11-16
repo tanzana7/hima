@@ -7,21 +7,33 @@ import '../../../data/models/models.dart';
 import '../../../shared/widgets/avatar_view.dart';
 import '../../../shared/widgets/knock_pill.dart';
 
-/// Match card shown between the hero and the friend grid.
+/// One card per match kind, shown between the hero and the friend grid.
 ///
-/// It springs in once. For ok × ok the two avatars slide together and bump,
-/// which is the visual for 「お互い誘われ待ちだよ」.
+/// A card per person flooded the screen (four separate cards with 🔥) and listed
+/// the same people the friend grid below already shows, so the friends of a kind
+/// are grouped into one card with a row of avatars.
+///
+/// It springs in once. For ok × ok the first avatar slides in and bumps against
+/// a small 🙂 badge, which is the visual for 「お互い誘われ待ちだよ」; the bump
+/// belongs to the card as a whole instead of pairing my own avatar with theirs.
 class MatchCard extends StatefulWidget {
   const MatchCard({
     super.key,
-    required this.match,
-    required this.me,
+    required this.kind,
+    required this.matches,
+    required this.pendingUserIds,
     required this.onKnock,
   });
 
-  final MatchRecord match;
-  final UserProfile me;
-  final VoidCallback onKnock;
+  final MatchKind kind;
+
+  /// Every matched friend of this kind.
+  final List<MatchRecord> matches;
+
+  /// People whose knock from me is still waiting for an answer.
+  final Set<String> pendingUserIds;
+
+  final ValueChanged<MatchRecord> onKnock;
 
   @override
   State<MatchCard> createState() => _MatchCardState();
@@ -29,6 +41,12 @@ class MatchCard extends StatefulWidget {
 
 class _MatchCardState extends State<MatchCard>
     with SingleTickerProviderStateMixin {
+  /// Beyond this the row would only be scrolled, so the rest is summarised.
+  static const _maxAvatars = 5;
+
+  /// Cell width at the default text scale; wider text scales the cell up.
+  static const _cellWidth = 72.0;
+
   late final AnimationController _controller;
   bool _started = false;
 
@@ -59,19 +77,27 @@ class _MatchCardState extends State<MatchCard>
     super.dispose();
   }
 
-  String get _message => switch (widget.match.kind) {
+  String get _message => switch (widget.kind) {
     MatchKind.fireFire => 'いっしょに遊べる人がいるよ',
     MatchKind.fireOk => '誘えば来る人がいるよ',
     MatchKind.okOk => 'お互い誘われ待ちだよ',
   };
 
+  IconData get _icon => switch (widget.kind) {
+    MatchKind.fireFire => Icons.local_fire_department_rounded,
+    MatchKind.fireOk => Icons.bolt_rounded,
+    MatchKind.okOk => Icons.people_alt_rounded,
+  };
+
   @override
   Widget build(BuildContext context) {
-    final other = widget.match.otherUser;
-    final activity = widget.match.otherHima.activity;
-    final detail = activity == null
-        ? '${other.displayName} · ひま'
-        : '${other.displayName} · ${activity.label}';
+    final visible = widget.matches.take(_maxAvatars).toList();
+    final extra = widget.matches.length - visible.length;
+    // The cell grows with the text scale: a fixed 72dp cell squeezed 「さそう」
+    // into an ellipsis at 200%. Scaling by the same factor as the label keeps
+    // the pill readable at any size.
+    final textScale = MediaQuery.textScalerOf(context).scale(10) / 10;
+    final cellWidth = _cellWidth * (textScale < 1 ? 1.0 : textScale);
     final appearance = CurvedAnimation(
       parent: _controller,
       curve: const Interval(0, 0.7, curve: Curves.easeOutBack),
@@ -105,39 +131,46 @@ class _MatchCardState extends State<MatchCard>
               ),
             ],
           ),
-          child: Row(
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _avatars(context),
-              const SizedBox(width: AppSpacing.s12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
+              Row(
+                children: [
+                  Icon(_icon, size: 16, color: AppColors.purple),
+                  const SizedBox(width: AppSpacing.s4),
+                  Expanded(
+                    child: Text(
                       _message,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: AppTextStyles.friendName.copyWith(fontSize: 15),
                     ),
-                    const SizedBox(height: 2),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            detail,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: AppTextStyles.caption,
-                          ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.s8),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    for (var index = 0; index < visible.length; index++) ...[
+                      if (index > 0) const SizedBox(width: AppSpacing.s8),
+                      _FriendCell(
+                        match: visible[index],
+                        width: cellWidth,
+                        bump: widget.kind == MatchKind.okOk && index == 0,
+                        progress: _controller,
+                        pending: widget.pendingUserIds.contains(
+                          visible[index].otherUser.id,
                         ),
-                        const SizedBox(width: AppSpacing.s4),
-                        KnockPill(
-                          friendName: other.displayName,
-                          onTap: widget.onKnock,
-                        ),
-                      ],
-                    ),
+                        onTap: () => widget.onKnock(visible[index]),
+                      ),
+                    ],
+                    if (extra > 0) ...[
+                      const SizedBox(width: AppSpacing.s8),
+                      _MoreBadge(count: extra),
+                    ],
                   ],
                 ),
               ),
@@ -147,56 +180,139 @@ class _MatchCardState extends State<MatchCard>
       ),
     );
   }
+}
 
-  Widget _avatars(BuildContext context) {
-    final other = widget.match.otherUser;
-    if (widget.match.kind != MatchKind.okOk) {
-      return AvatarView(
-        name: other.displayName,
-        imageUrl: other.avatarUrl,
-        size: 44,
+/// One matched friend: avatar, name and its own さそう pill.
+class _FriendCell extends StatelessWidget {
+  const _FriendCell({
+    required this.match,
+    required this.width,
+    required this.bump,
+    required this.progress,
+    required this.pending,
+    required this.onTap,
+  });
+
+  final MatchRecord match;
+  final double width;
+  final bool bump;
+  final Animation<double> progress;
+  final bool pending;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final user = match.otherUser;
+    final avatar = GestureDetector(
+      onTap: pending ? null : onTap,
+      child: AvatarView(
+        name: user.displayName,
+        imageUrl: user.avatarUrl,
+        // 48dp keeps the avatar itself a valid tap target.
+        size: 48,
         background: AppColors.purpleSoft,
-      );
-    }
-    return AnimatedBuilder(
-      animation: _controller,
-      builder: (context, _) {
-        final close = CurvedAnimation(
-          parent: _controller,
-          curve: const Interval(0.35, 0.95, curve: Curves.easeOutBack),
-        ).value;
-        // Ends slightly overlapped so the two heads "bump" but stay readable.
-        final gap = 14 + 10 * (1 - close);
-        return SizedBox(
-          width: 84,
-          height: 44,
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              Positioned(
-                left: 42 - gap - 15,
-                top: 7,
-                child: AvatarView(
-                  name: widget.me.displayName,
-                  imageUrl: widget.me.avatarUrl,
-                  size: 30,
-                  background: AppColors.yellow,
-                ),
-              ),
-              Positioned(
-                left: 42 + gap - 15,
-                top: 7,
-                child: AvatarView(
-                  name: other.displayName,
-                  imageUrl: other.avatarUrl,
-                  size: 30,
-                  background: AppColors.purpleSoft,
-                ),
-              ),
-            ],
+      ),
+    );
+    return SizedBox(
+      width: width,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (bump) _bump(context, avatar) else avatar,
+          const SizedBox(height: AppSpacing.s4),
+          Text(
+            user.displayName,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppTextStyles.caption.copyWith(
+              color: AppColors.ink,
+              fontWeight: FontWeight.w700,
+            ),
           ),
-        );
-      },
+          const SizedBox(height: 2),
+          KnockPill(
+            friendName: user.displayName,
+            onTap: onTap,
+            sent: pending,
+            dense: true,
+          ),
+        ],
+      ),
     );
   }
+
+  /// The avatar slides in from the right until it bumps the 🙂 badge.
+  Widget _bump(BuildContext context, Widget avatar) => AnimatedBuilder(
+    animation: progress,
+    builder: (context, child) {
+      final close = CurvedAnimation(
+        parent: progress,
+        curve: const Interval(0.35, 0.95, curve: Curves.easeOutBack),
+      ).value;
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Transform.scale(scale: 0.88 + 0.12 * close, child: const _OkBadge()),
+          const SizedBox(width: 2),
+          // Only the paint offset moves, so the row never overflows its cell.
+          Transform.translate(
+            offset: Offset(14 * (1 - close), 0),
+            child: child,
+          ),
+        ],
+      );
+    },
+    child: avatar,
+  );
+}
+
+class _OkBadge extends StatelessWidget {
+  const _OkBadge();
+
+  @override
+  Widget build(BuildContext context) => ExcludeSemantics(
+    child: Container(
+      width: 20,
+      height: 20,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        shape: BoxShape.circle,
+        border: Border.all(
+          color: AppColors.purpleSoft,
+          width: AppSpacing.borderWidth,
+        ),
+      ),
+      child: const Text('🙂', style: TextStyle(fontSize: 11)),
+    ),
+  );
+}
+
+/// 「+N」 for the friends of this kind that do not fit in the row.
+class _MoreBadge extends StatelessWidget {
+  const _MoreBadge({required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    label: 'ほかに$count人',
+    child: Container(
+      constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s8),
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: AppColors.purpleSoft,
+        borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
+      ),
+      child: Text(
+        '+$count',
+        maxLines: 1,
+        style: AppTextStyles.caption.copyWith(
+          color: AppColors.ink,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    ),
+  );
 }

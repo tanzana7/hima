@@ -6,14 +6,12 @@ import 'package:provider/provider.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../data/models/models.dart';
 import '../../shared/haptics.dart';
-import '../../shared/widgets/confetti_burst.dart';
 import '../../shared/widgets/shake.dart';
 import '../../state/app_view_model.dart';
 import '../knocks/knocks_screen.dart';
 import '../knocks/widgets/knock_sheet.dart';
 import '../profile/settings_screen.dart';
 import 'hero_state.dart';
-import 'widgets/activity_chips.dart';
 import 'widgets/friends_section.dart';
 import 'widgets/home_header.dart';
 import 'widgets/match_card.dart';
@@ -42,8 +40,6 @@ class _HomeScreenState extends State<HomeScreen> {
   Timer? _expiredTimer;
   bool _hintVisible = false;
   Timer? _hintTimer;
-  bool _showConfetti = false;
-  int _confettiToken = 0;
 
   final Set<String> _seenMatchIds = {};
   bool _primed = false;
@@ -68,9 +64,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final viewModel = context.read<AppViewModel>();
-    _watchMatches(viewModel.matches);
-    _watchKnockResults(viewModel);
+    _watchMatches(context.read<AppViewModel>().matches);
     _primed = true;
   }
 
@@ -82,7 +76,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   /// The first frame only records what already exists so opening the app does
-  /// not replay haptics for old matches and replies.
+  /// not replay haptics for old matches.
   void _watchMatches(List<MatchRecord> matches) {
     final fresh = matches
         .map((match) => match.id)
@@ -90,26 +84,6 @@ class _HomeScreenState extends State<HomeScreen> {
         .toList();
     if (!_primed || fresh.isEmpty) return;
     AppHaptics.match();
-  }
-
-  void _watchKnockResults(AppViewModel viewModel) {
-    if (!_primed) return;
-    // The claim lives in the view model so the sent tab does not celebrate the
-    // same accepted result a second time.
-    final fresh = viewModel.sent
-        .where(
-          (knock) =>
-              knock.status == KnockStatus.accepted &&
-              knock.resultSeenAt == null,
-        )
-        .where((knock) => viewModel.claimResultCelebration(knock.id))
-        .toList();
-    if (fresh.isEmpty) return;
-    AppHaptics.celebrate();
-    _confettiToken++;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) setState(() => _showConfetti = true);
-    });
   }
 
   void _showMessage(String message) {
@@ -234,6 +208,33 @@ class _HomeScreenState extends State<HomeScreen> {
     Mood? mood,
   }) => showKnockSheet(context, user: user, activity: activity, mood: mood);
 
+  /// One card per match kind, in a fixed order.
+  ///
+  /// A card per person flooded the screen (four cards with 🔥) and repeated the
+  /// people the friend grid already lists, so the friends of a kind share one
+  /// card.
+  List<MatchCard> _matchCards(
+    List<MatchRecord> matches,
+    Set<String> pendingUserIds,
+  ) {
+    const order = [MatchKind.fireFire, MatchKind.fireOk, MatchKind.okOk];
+    return [
+      for (final kind in order)
+        if (matches.any((match) => match.kind == kind))
+          MatchCard(
+            key: ValueKey(kind),
+            kind: kind,
+            matches: matches.where((match) => match.kind == kind).toList(),
+            pendingUserIds: pendingUserIds,
+            onKnock: (match) => _knock(
+              match.otherUser,
+              activity: match.otherHima.activity,
+              mood: match.otherHima.mood,
+            ),
+          ),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     final viewModel = context.watch<AppViewModel>();
@@ -243,87 +244,63 @@ class _HomeScreenState extends State<HomeScreen> {
       justExpired: _justExpired,
       fallbackMood: viewModel.lastMood,
     );
-    return Stack(
+    final pendingUserIds = viewModel.pendingKnockUserIds;
+    final matchCards = _matchCards(viewModel.matches, pendingUserIds);
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.s16,
+        AppSpacing.s8,
+        AppSpacing.s16,
+        AppSpacing.s32,
+      ),
       children: [
-        ListView(
-          padding: const EdgeInsets.fromLTRB(
-            AppSpacing.s16,
-            AppSpacing.s8,
-            AppSpacing.s16,
-            AppSpacing.s32,
-          ),
-          children: [
-            HomeHeader(
-              hasKnockBadge: viewModel.hasUnseenKnocks,
-              onOpenKnocks: _openKnocks,
-              onOpenSettings: _openSettings,
-            ),
-            const SizedBox(height: AppSpacing.s16),
-            if (me != null)
-              MyStatusHero(
-                state: state,
-                me: me,
-                lastMood: viewModel.lastMood,
-                busy: _busy,
-                burstToken: _burstToken,
-                shakeToken: _shakeToken,
-                moodShakeKey: _moodShakeKey,
-                durationShakeKey: _durationShakeKey,
-                showHint: _hintVisible,
-                onDeclare: _declare,
-                onEnd: _end,
-                onChangeMood: _changeMood,
-                onChangeDuration: _changeDuration,
-                onExpired: _handleExpired,
-              ),
-            if (me != null && viewModel.matches.isNotEmpty) ...[
-              const SizedBox(height: AppSpacing.s24),
-              for (final match in viewModel.matches)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: AppSpacing.s12),
-                  child: MatchCard(
-                    key: ValueKey(match.id),
-                    match: match,
-                    me: me,
-                    onKnock: () => _knock(
-                      match.otherUser,
-                      activity: match.otherHima.activity,
-                      mood: match.otherHima.mood,
-                    ),
-                  ),
-                ),
-            ],
-            const SizedBox(height: AppSpacing.s24),
-            FriendsSection(
-              friends: viewModel.friends,
-              loading: viewModel.isRefreshingLive,
-              hasError: viewModel.hasLiveError,
-              onRetry: () => unawaited(viewModel.refreshLiveData()),
-              onKnock: (friend) => _knock(
-                friend.user,
-                activity: friend.activity,
-                mood: friend.mood,
-              ),
-            ),
-            const SizedBox(height: AppSpacing.s32),
-            Shake(
-              key: _activityShakeKey,
-              child: ActivityChips(
-                selected: viewModel.selectedActivity,
-                onSelected: _selectActivity,
-              ),
-            ),
-          ],
+        HomeHeader(
+          hasKnockBadge: viewModel.hasUnseenKnocks,
+          onOpenKnocks: _openKnocks,
+          onOpenSettings: _openSettings,
         ),
-        if (_showConfetti)
-          Positioned.fill(
-            child: ConfettiBurst(
-              key: ValueKey(_confettiToken),
-              onCompleted: () {
-                if (mounted) setState(() => _showConfetti = false);
-              },
-            ),
+        const SizedBox(height: AppSpacing.s16),
+        if (me != null)
+          MyStatusHero(
+            state: state,
+            me: me,
+            lastMood: viewModel.lastMood,
+            selectedActivity: viewModel.selectedActivity,
+            busy: _busy,
+            burstToken: _burstToken,
+            shakeToken: _shakeToken,
+            moodShakeKey: _moodShakeKey,
+            durationShakeKey: _durationShakeKey,
+            activityShakeKey: _activityShakeKey,
+            showHint: _hintVisible,
+            onDeclare: _declare,
+            onEnd: _end,
+            onChangeMood: _changeMood,
+            onChangeDuration: _changeDuration,
+            onSelectActivity: _selectActivity,
+            onExpired: _handleExpired,
           ),
+        if (matchCards.isNotEmpty) ...[
+          const SizedBox(height: AppSpacing.s16),
+          for (final card in matchCards)
+            Padding(
+              padding: const EdgeInsets.only(bottom: AppSpacing.s12),
+              child: card,
+            ),
+        ],
+        const SizedBox(height: AppSpacing.s24),
+        FriendsSection(
+          friends: viewModel.friends,
+          pendingUserIds: pendingUserIds,
+          loading: viewModel.isRefreshingLive,
+          hasError: viewModel.hasLiveError,
+          onRetry: () => unawaited(viewModel.refreshLiveData()),
+          onKnock: (friend) => _knock(
+            friend.user,
+            activity: friend.activity,
+            mood: friend.mood,
+          ),
+        ),
       ],
     );
   }

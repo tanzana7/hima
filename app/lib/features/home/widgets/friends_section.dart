@@ -13,6 +13,7 @@ class FriendsSection extends StatelessWidget {
   const FriendsSection({
     super.key,
     required this.friends,
+    required this.pendingUserIds,
     required this.loading,
     required this.hasError,
     required this.onRetry,
@@ -20,10 +21,18 @@ class FriendsSection extends StatelessWidget {
   });
 
   final List<HimaSession> friends;
+
+  /// People whose knock from me is still waiting for an answer.
+  final Set<String> pendingUserIds;
+
   final bool loading;
   final bool hasError;
   final VoidCallback onRetry;
   final ValueChanged<HimaSession> onKnock;
+
+  /// Two columns need this much width for the 56dp avatar plus the name, the
+  /// status and the remaining time next to it.
+  static const _twoColumnMinWidth = 348.0;
 
   @override
   Widget build(BuildContext context) => Column(
@@ -61,9 +70,10 @@ class FriendsSection extends StatelessWidget {
         LayoutBuilder(
           builder: (context, constraints) {
             final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
-            // Narrow screens and large text switch to one column so names and
-            // the さそう pill never overlap.
-            final columns = constraints.maxWidth < 340 || textScale > 1.3
+            // Narrow screens and large text switch to one column so names, the
+            // remaining time and the さそう pill never overlap.
+            final columns =
+                constraints.maxWidth < _twoColumnMinWidth || textScale > 1.3
                 ? 1
                 : 2;
             final gap = AppSpacing.s12;
@@ -102,6 +112,7 @@ class FriendsSection extends StatelessWidget {
                         tint:
                             AppColors.friendTints[index %
                                 AppColors.friendTints.length],
+                        pending: pendingUserIds.contains(friends[index].user.id),
                         onKnock: () => onKnock(friends[index]),
                       ),
                     ),

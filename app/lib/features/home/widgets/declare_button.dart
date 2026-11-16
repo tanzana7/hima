@@ -16,6 +16,12 @@ import 'pickers.dart';
 /// declaration must not require answering a question). Long-press opens the
 /// mood bubbles around the finger; releasing on one declares with it, releasing
 /// anywhere else cancels.
+///
+/// The bubbles and their scrim live in the root [Overlay], not in the hero: the
+/// bubbles arc above the button over the heading, and a scrim drawn inside the
+/// list would be painted over by the cards below it. The scrim is punched out
+/// around the button so the button and the bubbles stay the only bright things
+/// while the rest of the screen dims.
 class DeclareButton extends StatefulWidget {
   const DeclareButton({
     super.key,
@@ -44,6 +50,10 @@ class DeclareButtonState extends State<DeclareButton>
   static const _bubbleSize = 68.0;
   static const _arcRadius = 104.0;
 
+  /// Width of the box a bubble is positioned in: the circle plus room for the
+  /// label underneath it. Wide enough for the longest label at 200% text.
+  static const _bubbleSlotWidth = 120.0;
+
   late final AnimationController _menuController;
   late final AnimationController _commitController;
   late final AnimationController _pressController;
@@ -54,6 +64,13 @@ class DeclareButtonState extends State<DeclareButton>
   Mood? _hovered;
   Mood? _committing;
   Size _stackSize = Size.zero;
+
+  /// Global rect of the button, captured when the menu opens. It anchors the
+  /// bubbles and the hole in the scrim.
+  Rect _buttonRect = Rect.zero;
+
+  OverlayEntry? _scrimEntry;
+  OverlayEntry? _bubbleEntry;
 
   @override
   void initState() {
@@ -90,6 +107,7 @@ class DeclareButtonState extends State<DeclareButton>
 
   @override
   void dispose() {
+    _removeMenuOverlay();
     _menuController.dispose();
     _commitController.dispose();
     _pressController.dispose();
@@ -161,12 +179,18 @@ class DeclareButtonState extends State<DeclareButton>
   void _handleLongPressStart(LongPressStartDetails details) {
     if (widget.busy) return;
     AppHaptics.openMenu();
+    final box = context.findRenderObject();
+    final origin = box is RenderBox
+        ? box.localToGlobal(Offset.zero)
+        : Offset.zero;
     setState(() {
       _menuOpen = true;
       _origin = details.localPosition;
       _hovered = null;
       _committing = null;
+      _buttonRect = origin & (box is RenderBox ? box.size : _stackSize);
     });
+    _insertMenuOverlay();
     if (_reduceMotion) {
       _menuController.value = 1;
     } else {
@@ -179,6 +203,7 @@ class DeclareButtonState extends State<DeclareButton>
     final mood = _moodAt(details.localPosition);
     if (mood == _hovered) return;
     setState(() => _hovered = mood);
+    _refreshMenuOverlay();
     if (mood != null) AppHaptics.select();
   }
 
@@ -191,6 +216,7 @@ class DeclareButtonState extends State<DeclareButton>
     // No haptic here: the single heavy impact belongs to the successful
     // declaration, so a failed request must not feel like a success.
     setState(() => _committing = mood);
+    _refreshMenuOverlay();
     if (_reduceMotion) {
       _finishCommit(mood);
       return;
@@ -205,9 +231,28 @@ class DeclareButtonState extends State<DeclareButton>
       _hovered = null;
       _committing = null;
     });
-    _menuController.value = 0;
     _commitController.value = 0;
-    widget.onDeclare(mood);
+    if (_reduceMotion) {
+      _menuController.value = 0;
+      _removeMenuOverlay();
+      widget.onDeclare(mood);
+      return;
+    }
+    // Fade the scrim out and only then drop the overlay: removing it straight
+    // away made the screen snap back to full brightness the moment a mood was
+    // chosen. The declaration waits for the fade, because a rebuild would
+    // dispose this button (and its overlay) mid-fade.
+    _menuController
+        .animateBack(
+          0,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+        )
+        .whenComplete(() {
+          if (!mounted) return;
+          _removeMenuOverlay();
+          widget.onDeclare(mood);
+        });
   }
 
   void _cancelMenu() {
@@ -218,6 +263,7 @@ class DeclareButtonState extends State<DeclareButton>
         _hovered = null;
       });
       _menuController.value = 0;
+      _removeMenuOverlay();
       return;
     }
     _menuController.reverse().whenComplete(() {
@@ -226,15 +272,62 @@ class DeclareButtonState extends State<DeclareButton>
         _menuOpen = false;
         _hovered = null;
       });
+      _removeMenuOverlay();
     });
   }
 
+  void _insertMenuOverlay() {
+    final overlay = Overlay.maybeOf(context, rootOverlay: true);
+    if (overlay == null) return;
+    _scrimEntry = OverlayEntry(builder: _buildScrim);
+    _bubbleEntry = OverlayEntry(builder: _buildBubbles);
+    // Inserted in order so the bubbles stay above the scrim.
+    overlay.insertAll([_scrimEntry!, _bubbleEntry!]);
+  }
+
+  void _removeMenuOverlay() {
+    _scrimEntry?.remove();
+    _bubbleEntry?.remove();
+    _scrimEntry = null;
+    _bubbleEntry = null;
+  }
+
+  /// The entries are separate widgets, so a hover change has to be pushed to
+  /// them explicitly.
+  void _refreshMenuOverlay() {
+    _scrimEntry?.markNeedsBuild();
+    _bubbleEntry?.markNeedsBuild();
+  }
+
+  Widget _buildScrim(BuildContext context) => IgnorePointer(
+    child: AnimatedBuilder(
+      animation: _menuController,
+      builder: (context, _) => CustomPaint(
+        painter: _ScrimPainter(
+          hole: _buttonRect.inflate(2),
+          opacity: 0.35 * _menuController.value.clamp(0.0, 1.0),
+        ),
+      ),
+    ),
+  );
+
+  Widget _buildBubbles(BuildContext context) => Material(
+    // The menu lives in the root Overlay, outside any Scaffold, so it needs its
+    // own Material: without one the labels fall back to the framework's
+    // placeholder text style (yellow underline).
+    type: MaterialType.transparency,
+    child: IgnorePointer(
+      child: Stack(
+        children: [
+          for (var index = 0; index < Mood.values.length; index++)
+            _bubble(context, Mood.values[index], index),
+        ],
+      ),
+    ),
+  );
+
   @override
   Widget build(BuildContext context) {
-    final textScale = MediaQuery.textScalerOf(context).scale(12) / 12;
-    // At very large text sizes the bubbles drop their labels instead of
-    // growing past the hero; the emoji and the screen reader label stay.
-    final showLabels = textScale <= 1.3;
     return LayoutBuilder(
       builder: (context, constraints) {
         _stackSize = Size(constraints.maxWidth, _buttonHeight);
@@ -286,9 +379,6 @@ class DeclareButtonState extends State<DeclareButton>
                   ),
                 ),
               ),
-              if (_menuOpen)
-                for (var index = 0; index < Mood.values.length; index++)
-                  _bubble(context, Mood.values[index], index, showLabels),
             ],
           ),
         );
@@ -341,13 +431,8 @@ class DeclareButtonState extends State<DeclareButton>
     ),
   );
 
-  Widget _bubble(
-    BuildContext context,
-    Mood mood,
-    int index,
-    bool showLabels,
-  ) {
-    final center = _bubbleCenter(index);
+  Widget _bubble(BuildContext context, Mood mood, int index) {
+    final center = _buttonRect.topLeft + _bubbleCenter(index);
     final isHovered = _hovered == mood;
     final isCommitting = _committing == mood;
     final start = 0.05 * index;
@@ -356,13 +441,13 @@ class DeclareButtonState extends State<DeclareButton>
       curve: Interval(start, start + 0.6, curve: Curves.elasticOut),
     );
     final hoverScale = isHovered ? 1.3 : (_hovered == null ? 1.0 : 0.9);
-    final buttonCenter = Offset(_stackSize.width / 2, _buttonHeight / 2);
+    final buttonCenter =
+        _buttonRect.topLeft + Offset(_buttonRect.width / 2, _buttonRect.height / 2);
 
     return Positioned(
-      left: center.dx - _bubbleSize / 2,
+      left: center.dx - _bubbleSlotWidth / 2,
       top: center.dy - _bubbleSize / 2,
-      width: _bubbleSize,
-      height: _bubbleSize,
+      width: _bubbleSlotWidth,
       child: AnimatedBuilder(
         animation: Listenable.merge([_menuController, _commitController]),
         builder: (context, child) {
@@ -378,52 +463,73 @@ class DeclareButtonState extends State<DeclareButton>
             child: Transform.scale(scale: scale, child: child),
           );
         },
-        child: AnimatedScale(
-          scale: hoverScale,
-          duration: _reduceMotion
-              ? Duration.zero
-              : const Duration(milliseconds: 150),
-          curve: Curves.easeOutBack,
-          // Kept out of the accessibility tree: a bubble is a touch affordance
-          // that only exists mid-long-press, so a focusable button here would be
-          // a dead end. The declare button exposes the same choice as a custom
-          // action instead.
-          child: ExcludeSemantics(
-            child: Container(
-              decoration: BoxDecoration(
-                color: _moodTint(mood),
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: AppColors.ink,
-                  width: AppSpacing.borderWidth,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: AppColors.ink.withValues(alpha: 0.14),
-                    blurRadius: 10,
-                    offset: const Offset(0, 3),
-                  ),
-                ],
-              ),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(mood.emoji, style: const TextStyle(fontSize: 24)),
-                  if (showLabels)
-                    Text(
-                      _shortLabel(mood),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.ink,
-                      ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AnimatedScale(
+              scale: hoverScale,
+              duration: _reduceMotion
+                  ? Duration.zero
+                  : const Duration(milliseconds: 150),
+              curve: Curves.easeOutBack,
+              // Kept out of the accessibility tree: a bubble is a touch
+              // affordance that only exists mid-long-press, so a focusable
+              // button here would be a dead end. The declare button exposes the
+              // same choice as a custom action instead.
+              child: ExcludeSemantics(
+                child: Container(
+                  width: _bubbleSize,
+                  height: _bubbleSize,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: _moodTint(mood),
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: AppColors.ink,
+                      width: AppSpacing.borderWidth,
                     ),
-                ],
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppColors.ink.withValues(alpha: 0.14),
+                        blurRadius: 10,
+                        offset: const Offset(0, 3),
+                      ),
+                    ],
+                  ),
+                  child: Text(
+                    mood.emoji,
+                    style: const TextStyle(fontSize: 24),
+                  ),
+                ),
               ),
             ),
-          ),
+            const SizedBox(height: AppSpacing.s4),
+            // Below the circle on a solid chip: the label used to sit inside the
+            // bubble over the heading and was hard to read. It stays visible at
+            // every text scale and wraps instead of being dropped.
+            ExcludeSemantics(
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.s4 + 2,
+                  vertical: 1,
+                ),
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
+                ),
+                child: Text(
+                  _shortLabel(mood),
+                  maxLines: 2,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.ink,
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -440,4 +546,34 @@ class DeclareButtonState extends State<DeclareButton>
     Mood.ok => '誘われたら',
     Mood.quiet => 'ひっそり',
   };
+}
+
+/// Dims the screen except for the button, so the bubbles no longer sit on top of
+/// the readable heading.
+class _ScrimPainter extends CustomPainter {
+  _ScrimPainter({required this.hole, required this.opacity});
+
+  final Rect hole;
+  final double opacity;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (opacity <= 0) return;
+    final full = Path()..addRect(Offset.zero & size);
+    final cut = Path()
+      ..addRRect(
+        RRect.fromRectAndRadius(
+          hole,
+          const Radius.circular(AppSpacing.radiusPill),
+        ),
+      );
+    canvas.drawPath(
+      Path.combine(PathOperation.difference, full, cut),
+      Paint()..color = AppColors.ink.withValues(alpha: opacity),
+    );
+  }
+
+  @override
+  bool shouldRepaint(_ScrimPainter oldDelegate) =>
+      oldDelegate.opacity != opacity || oldDelegate.hole != hole;
 }
