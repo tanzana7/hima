@@ -38,9 +38,11 @@ class Guild(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)  # Discord ID
     name: Mapped[str] = mapped_column(String(100))
-    list_channel_id: Mapped[int | None] = mapped_column(BigInteger)
-    list_message_id: Mapped[int | None] = mapped_column(BigInteger)
-    panel_message_id: Mapped[int | None] = mapped_column(BigInteger)
+    list_channel_id: Mapped[int | None] = mapped_column(BigInteger)  # 人数表示トピック対象チャンネル
+    list_message_id: Mapped[int | None] = mapped_column(BigInteger)  # 旧方式（今後は書き込まない。掃除用に残す）
+    panel_message_id: Mapped[int | None] = mapped_column(BigInteger)  # 旧方式（同上）
+    base_topic: Mapped[str | None] = mapped_column(Text)  # 設置時のトピック（teardown で復元）
+    topic_counter: Mapped[int | None] = mapped_column(Integer)  # トピックに描画済みの人数（変更時のみ PATCH）
 
 
 class Membership(Base):

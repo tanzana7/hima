@@ -39,7 +39,7 @@ def declare_session(
     guild_id: int | None = None,
     rest=None,
 ) -> dict:
-    """宣言（新規 or 延長）。マッチング評価・見守りキュー・人数メッセージ更新も行う。"""
+    """宣言（新規 or 延長）。マッチング評価・見守りキュー・人数表示トピック更新も行う。"""
     if mood not in MOODS:
         raise HTTPException(status_code=400, detail="invalid mood")
     if activity not in ACTIVITIES:
@@ -79,7 +79,7 @@ def declare_session(
 
 
 def end_session(db, user_id: int, rest=None) -> dict:
-    """有効セッション終了。宛ノックを expired にし、人数メッセージを更新する。"""
+    """有効セッション終了。宛ノックを expired にし、人数表示トピックを更新する。"""
     row = active_session(db, user_id)
     ended = row is not None
     if ended:

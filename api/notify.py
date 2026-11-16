@@ -1,4 +1,4 @@
-"""Counter messages and watch (見守り) notifications."""
+"""Counter topic updates and watch (見守り) notifications."""
 from __future__ import annotations
 
 import logging
@@ -18,7 +18,15 @@ COUNTER_FORMAT = "いま{n}人ヒマ"
 FLUSH_INTERVAL_TICKS = 6  # 30s tick × 6 = 3 minutes
 
 
-# ------------------------------------------------------------------ counter
+# ------------------------------------------------------------------ counter (channel topic)
+
+
+def render_topic(n: int, base_topic: str | None) -> str:
+    """トピック描画：「いま{n}人ヒマ」＋（base_topic があれば「｜{base_topic}」を後ろに）"""
+    topic = COUNTER_FORMAT.format(n=n)
+    if base_topic:
+        topic += f"｜{base_topic}"
+    return topic
 
 
 def count_visible_active_sessions(db: Session, guild_id: int) -> int:
@@ -39,12 +47,18 @@ def count_visible_active_sessions(db: Session, guild_id: int) -> int:
 
 
 def update_counter_for_guild(db: Session, guild_id: int, rest=None) -> None:
+    """人数表示トピックの更新。人数が変わったときだけ PATCH する（失敗はログのみ）。"""
     rest = rest or discord_rest.rest
     guild = db.get(Guild, guild_id)
-    if guild is None or guild.list_message_id is None or guild.list_channel_id is None:
+    if guild is None or guild.list_channel_id is None:
         return
     n = count_visible_active_sessions(db, guild_id)
-    rest.edit_message(guild.list_channel_id, guild.list_message_id, COUNTER_FORMAT.format(n=n))
+    if guild.topic_counter == n:
+        return  # 変化なしなら PATCH しない
+    ok = rest.edit_channel_topic(guild.list_channel_id, render_topic(n, guild.base_topic)) is not None
+    if ok:  # 失敗時は topic_counter を更新しない（次の tick でリトライ）
+        guild.topic_counter = n
+        db.commit()
 
 
 def update_counters_for_user(db: Session, user_id: int, rest=None) -> None:
@@ -53,7 +67,7 @@ def update_counters_for_user(db: Session, user_id: int, rest=None) -> None:
 
 
 def refresh_all_counters(db: Session | None = None, rest=None) -> int:
-    """Recompute and fix every guild's counter message (worker tick)."""
+    """Recompute and fix every guild's counter topic (worker tick)."""
     rest = rest or discord_rest.rest
     own = db is None
     if own:
@@ -63,15 +77,14 @@ def refresh_all_counters(db: Session | None = None, rest=None) -> int:
         rows = db.execute(
             text(
                 """
-                SELECT id, list_channel_id, list_message_id
+                SELECT id
                 FROM guilds
-                WHERE list_message_id IS NOT NULL AND list_channel_id IS NOT NULL
+                WHERE list_channel_id IS NOT NULL
                 """
             )
         ).all()
-        for guild_id, channel_id, message_id in rows:
-            n = count_visible_active_sessions(db, int(guild_id))
-            rest.edit_message(int(channel_id), int(message_id), COUNTER_FORMAT.format(n=n))
+        for (guild_id,) in rows:
+            update_counter_for_guild(db, int(guild_id), rest)
             updated += 1
     finally:
         if own:

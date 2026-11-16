@@ -141,7 +141,7 @@ class HimaCog(commands.Cog):
 
     # ------------------------------------------------------------------ /panel_setup
 
-    @app_commands.command(name="panel_setup", description="Atsumaro パネル（人数表示つき）をこのチャンネルに設置する")
+    @app_commands.command(name="panel_setup", description="人数表示をこのチャンネルのトピックに設置する")
     @app_commands.guild_only()
     async def panel_setup(self, interaction: discord.Interaction) -> None:
         assert interaction.guild_id is not None
@@ -151,6 +151,16 @@ class HimaCog(commands.Cog):
             await interaction.followup.send("設置処理中です。少し待ってからもう一度試してね。", ephemeral=True)
             return
         async with lock:
+            # 旧方式のメッセージ対を先に消す（未設置なら何も起きない）
+            try:
+                await self.bot.api.teardown_guild(interaction.guild_id)
+            except ApiHTTPError as exc:
+                if exc.status_code != 404:
+                    await send_api_error(interaction, exc)
+                    return
+            except ApiConnectionError as exc:
+                await send_api_error(interaction, exc)
+                return
             channel = interaction.channel
             assert channel is not None and hasattr(channel, "send")
             scanned, removed = await self.bot.sweep_legacy_messages(channel)
@@ -161,12 +171,10 @@ class HimaCog(commands.Cog):
             except (ApiConnectionError, ApiHTTPError) as exc:
                 await send_api_error(interaction, exc)
                 return
-            await interaction.followup.send(
-                f"パネルを設置したよ！（掃除：{removed}件削除）\n"
-                f"人数メッセージ: {data.get('counter_message_id')}\n"
-                f"パネルメッセージ: {data.get('panel_message_id')}",
-                ephemeral=True,
-            )
+            lines = [f"トピックに人数を表示します！（掃除：{removed}件削除）"]
+            if not data.get("topic_applied", False):
+                lines.append("⚠️ トピックの編集に失敗しました。Bot ロールに「チャンネルの管理」権限が必要です。")
+            await interaction.followup.send("\n".join(lines), ephemeral=True)
 
     # ------------------------------------------------------------------ /panel_remove
 
@@ -187,7 +195,9 @@ class HimaCog(commands.Cog):
         except ApiConnectionError as exc:
             await send_api_error(interaction, exc)
             return
-        await interaction.followup.send(f"パネルを撤去したよ！（掃除：{removed}件削除）", ephemeral=True)
+        await interaction.followup.send(
+            f"パネルを撤去したよ！（トピックを元に戻しました／掃除：{removed}件削除）", ephemeral=True
+        )
 
     # ------------------------------------------------------------------ /board
 

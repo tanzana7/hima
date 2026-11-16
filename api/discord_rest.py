@@ -72,6 +72,16 @@ class DiscordRest:
     def delete_message(self, channel_id: int | str, message_id: int | str) -> None:
         self._request("DELETE", f"/channels/{channel_id}/messages/{message_id}")
 
+    def get_channel(self, channel_id: int | str) -> dict | None:
+        """GET /channels/{id} → channel payload (topic included). None on failure."""
+        data = self._request("GET", f"/channels/{channel_id}")
+        return data if isinstance(data, dict) else None
+
+    def edit_channel_topic(self, channel_id: int | str, topic: str | None) -> dict | None:
+        """PATCH /channels/{id} with a new topic. None on failure (e.g. missing permissions)."""
+        payload = {"topic": topic if topic is not None else ""}
+        return self._request("PATCH", f"/channels/{channel_id}", payload)
+
 
 rest = DiscordRest()
 
