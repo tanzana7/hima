@@ -38,6 +38,7 @@ class HimaBot(commands.Bot):
         self.display_name = os.getenv("BOT_DISPLAY_NAME") or DEFAULT_DISPLAY_NAME
         # /panel_setup のサーバー単位ロック（同時実行防止）
         self.panel_setup_locks: dict[int, asyncio.Lock] = {}
+        self._started_at = time.time()
 
     async def setup_hook(self) -> None:
         storage.init()
@@ -46,8 +47,31 @@ class HimaBot(commands.Bot):
         self.add_view(HimaPanelView(self))
         self.add_view(BoardView(self))
         self.add_dynamic_items(KnockReplyButton)
+        # スラッシュコマンドのグローバルエラーハンドラ（例外を [hima-bot][cmd-error] で記録）
+        self.tree.on_error = self._on_app_command_error
         await self._sync_commands()
         self.cleanup_loop.start()
+        self.liveness_loop.start()
+
+    async def _on_app_command_error(
+        self, interaction: discord.Interaction, error: app_commands.AppCommandError
+    ) -> None:
+        command = interaction.command
+        name = command.name if command is not None else "<unknown>"
+        print(f"[hima-bot][cmd-error] /{name}: {type(error).__name__}: {error}")
+        # ユーザーへの応答試行で二次例外を出さないよう握る
+
+    async def on_disconnect(self) -> None:
+        print("[hima-bot][gateway] disconnected")
+
+    async def on_resumed(self) -> None:
+        print("[hima-bot][gateway] resumed")
+
+    @tasks.loop(minutes=10)
+    async def liveness_loop(self) -> None:
+        """10分おきの生存確認ログ。"""
+        uptime = time.time() - self._started_at
+        print(f"[hima-bot][heartbeat] alive for {int(uptime // 3600)}h{int(uptime % 3600 // 60):02d}m")
 
     async def _sync_commands(self) -> None:
         dev_guild_id = os.getenv("DEV_GUILD_ID")
