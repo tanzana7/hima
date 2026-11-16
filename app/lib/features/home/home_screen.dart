@@ -7,6 +7,7 @@ import '../../app/theme/app_spacing.dart';
 import '../../data/models/models.dart';
 import '../../shared/haptics.dart';
 import '../../shared/widgets/confetti_burst.dart';
+import '../../shared/widgets/shake.dart';
 import '../../state/app_view_model.dart';
 import '../knocks/knocks_screen.dart';
 import '../knocks/widgets/knock_sheet.dart';
@@ -30,6 +31,13 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _busy = false;
   int _burstToken = 0;
   int _shakeToken = 0;
+
+  // One key per control that can fail to save, so a failure shakes the control
+  // the user touched instead of the whole hero.
+  final GlobalKey<ShakeState> _moodShakeKey = GlobalKey<ShakeState>();
+  final GlobalKey<ShakeState> _durationShakeKey = GlobalKey<ShakeState>();
+  final GlobalKey<ShakeState> _activityShakeKey = GlobalKey<ShakeState>();
+
   bool _justExpired = false;
   Timer? _expiredTimer;
   bool _hintVisible = false;
@@ -159,6 +167,7 @@ class _HomeScreenState extends State<HomeScreen> {
     } catch (_) {
       if (!mounted) return;
       AppHaptics.error();
+      _moodShakeKey.currentState?.shake();
       _showMessage('変更できなかった。もう一度試してね');
     }
   }
@@ -179,6 +188,7 @@ class _HomeScreenState extends State<HomeScreen> {
     } catch (_) {
       if (!mounted) return;
       AppHaptics.error();
+      _durationShakeKey.currentState?.shake();
       _showMessage('変更できなかった。もう一度試してね');
     }
   }
@@ -190,6 +200,7 @@ class _HomeScreenState extends State<HomeScreen> {
     } catch (_) {
       if (!mounted) return;
       AppHaptics.error();
+      _activityShakeKey.currentState?.shake();
       _showMessage('変更できなかった。もう一度試してね');
     }
   }
@@ -256,6 +267,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 busy: _busy,
                 burstToken: _burstToken,
                 shakeToken: _shakeToken,
+                moodShakeKey: _moodShakeKey,
+                durationShakeKey: _durationShakeKey,
                 showHint: _hintVisible,
                 onDeclare: _declare,
                 onEnd: _end,
@@ -293,9 +306,12 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             const SizedBox(height: AppSpacing.s32),
-            ActivityChips(
-              selected: viewModel.selectedActivity,
-              onSelected: _selectActivity,
+            Shake(
+              key: _activityShakeKey,
+              child: ActivityChips(
+                selected: viewModel.selectedActivity,
+                onSelected: _selectActivity,
+              ),
             ),
           ],
         ),

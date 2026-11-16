@@ -8,6 +8,7 @@ import '../../../app/theme/app_spacing.dart';
 import '../../../app/theme/app_text_styles.dart';
 import '../../../data/models/models.dart';
 import '../../../shared/widgets/avatar_view.dart';
+import '../../../shared/widgets/shake.dart';
 import '../hero_state.dart';
 import 'declare_button.dart';
 
@@ -24,6 +25,8 @@ class MyStatusHero extends StatefulWidget {
     required this.busy,
     required this.burstToken,
     required this.shakeToken,
+    required this.moodShakeKey,
+    required this.durationShakeKey,
     required this.showHint,
     required this.onDeclare,
     required this.onEnd,
@@ -40,6 +43,11 @@ class MyStatusHero extends StatefulWidget {
   /// Bumped by the parent after a successful declaration to play the burst.
   final int burstToken;
   final int shakeToken;
+
+  /// Shaken by the parent when saving the mood / the remaining time failed, so
+  /// the control that failed is the one that moves.
+  final GlobalKey<ShakeState> moodShakeKey;
+  final GlobalKey<ShakeState> durationShakeKey;
   final bool showHint;
   final ValueChanged<Mood> onDeclare;
   final VoidCallback onEnd;
@@ -168,14 +176,20 @@ class _MyStatusHeroState extends State<MyStatusHero>
                   runSpacing: AppSpacing.s8,
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    _RemainingPill(
-                      expiresAt: state.expiresAt!,
-                      onTap: widget.onChangeDuration,
-                      onExpired: widget.onExpired,
+                    Shake(
+                      key: widget.durationShakeKey,
+                      child: _RemainingPill(
+                        expiresAt: state.expiresAt!,
+                        onTap: widget.onChangeDuration,
+                        onExpired: widget.onExpired,
+                      ),
                     ),
-                    _MoodBadge(
-                      mood: state.mood,
-                      onTap: widget.onChangeMood,
+                    Shake(
+                      key: widget.moodShakeKey,
+                      child: _MoodBadge(
+                        mood: state.mood,
+                        onTap: widget.onChangeMood,
+                      ),
                     ),
                   ],
                 ),
