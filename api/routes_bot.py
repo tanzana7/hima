@@ -209,8 +209,6 @@ def board(guild_id: int = Query(...), user_id: int = Query(...)) -> dict:
         ).mappings().all()
         inbox = []
         for k in inbox_rows:
-            sender_active = active_session(db, int(k["from_user"]))
-            sender_moon = sender_active is not None and sender_active.mood == "moon"
             sender = db.get(User, int(k["from_user"]))
             inbox.append(
                 {
@@ -219,8 +217,8 @@ def board(guild_id: int = Query(...), user_id: int = Query(...)) -> dict:
                     "from_display_name": sender.display_name if sender else f"discord:{k['from_user']}",
                     "template": k["template"],
                     "created_at": k["created_at"].isoformat(),
-                    # 🌙 宛/からのノックはスルーしてOK
-                    "to_moon": viewer_mood == "moon" or sender_moon,
+                    # 宛先（受信者）が現在 🌙 の有効セッションを持つときだけ true
+                    "to_moon": viewer_mood == "moon",
                 }
             )
 
@@ -249,7 +247,15 @@ def board(guild_id: int = Query(...), user_id: int = Query(...)) -> dict:
                 }
             )
 
-        return {"guild_id": guild_id, "viewer_id": user_id, "sessions": sessions_out, "inbox": inbox, "results": results}
+        viewer = db.get(User, user_id)
+        return {
+            "guild_id": guild_id,
+            "viewer_id": user_id,
+            "viewer": {"user_id": user_id, "notify_on_hima": bool(viewer.notify_on_hima) if viewer else False},
+            "sessions": sessions_out,
+            "inbox": inbox,
+            "results": results,
+        }
 
 
 # ------------------------------------------------------------------ knocks

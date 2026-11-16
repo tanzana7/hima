@@ -53,6 +53,14 @@
 | `chat` | ちょっと話さない？ |
 | `work` | 作業通話しない？ |
 
+### 個人用掲示板のボタン custom_id（Bot が components に埋め込む値）
+
+| custom_id | ボタン |
+| --- | --- |
+| `atsumaro:knockreply:{knock_id}:{accept\|later\|pass}` | ノック返答（いいよ！／あとで／パス。DynamicItem・再起動後も有効） |
+| `atsumaro:watchtoggle:{0\|1}` | 見守り ON/OFF トグル（状態を custom_id に埋め込む） |
+| `board:declare` / `board:knock` / `board:blocks` / `board:leave` | 掲示板下部ボタン（Bot 内部用） |
+
 ### 公開パネルのボタン custom_id（Discord components に埋め込む値）
 
 | custom_id | ボタン |
@@ -81,7 +89,7 @@
 | POST | `/bot/guilds/{guild_id}/teardown` | 2つのメッセージを REST 削除（失敗は無視）し、メッセージID を NULL に |
 | POST | `/bot/sessions` | ヒマ宣言（延長=同ID更新／新規は source=manual）。マッチング評価＋見守りキュー登録＋人数メッセージ更新 |
 | DELETE | `/bot/sessions` | 有効セッション終了。宛ノックを expired に、人数メッセージを更新 |
-| GET | `/bot/board?guild_id=&user_id=` | 閲覧者に見える有効セッション一覧（共有可視・ブロック除外・source非表示）＋宛ノック（最大5件、🌙関係で `to_moon=true`）＋未見結果 |
+| GET | `/bot/board?guild_id=&user_id=` | 閲覧者に見える有効セッション一覧（共有可視・ブロック除外・source非表示）＋宛ノック（最大5件。**`to_moon` は宛先＝受信者が現在🌙の有効セッションを持つときのみ true**）＋未見結果。レスポンスに `viewer.notify_on_hima` を含む |
 | POST | `/bot/knocks/results/seen` | 未見結果に `result_seen_at` を打つ |
 | POST | `/bot/knocks` | ノック作成（相手が有効セッション中・共有可視・非ブロック必須。5分クールダウンは 409） |
 | POST | `/bot/knocks/{id}/reply` | 返答（accept/later/pass）。to_user 本人のみ。status と responded_at を更新 |

@@ -1,156 +1,327 @@
-"""UI parts (persistent panel view, ephemeral join/knock views, modal, DM reply buttons)."""
+"""UI parts for the Atsumaro bot (thin client over the Atsumaro API)."""
 from __future__ import annotations
 
-import time
-from datetime import datetime
-from typing import TYPE_CHECKING, Any, Dict, List
+import logging
+from typing import TYPE_CHECKING, Any
 
 import discord
 from discord import ui
 
-import storage
+from api_client import ApiConnectionError, ApiHTTPError
 
 if TYPE_CHECKING:
     from bot import HimaBot
 
+log = logging.getLogger("atsumaro.views")
 
-# ------------------------------------------------------------------ constants
-
-DURATIONS = [(5, "5分"), (15, "15分"), (30, "30分"), (60, "1時間"), (180, "3時間")]
-
-MOODS = [("fire", "🔥 今すぐ遊びたい"), ("ok", "🙂 誘われたら行く"), ("quiet", "🌙 ひっそり暇")]
-MOOD_SHORT: Dict[str, str] = {"fire": "🔥", "ok": "🙂", "quiet": "🌙"}
-
-ACTIVITIES = [
-    ("game", "🎮 ゲーム"),
-    ("chat", "💬 雑談・通話"),
-    ("work", "💻 作業通話"),
-    ("out", "🚶 外出"),
-    ("any", "✨ なんでもOK"),
-]
-ACTIVITY_SHORT: Dict[str, str] = {
-    "game": "ゲーム",
-    "chat": "雑談・通話",
-    "work": "作業通話",
-    "out": "外出",
-    "any": "なんでもOK",
-}
-
-ANNOUNCE_OPTIONS = [
-    ("silent", "🔕 静かに登録（何も流さない）"),
-    ("message", "💬 メッセージで流す"),
-    ("mention", "📣 メンション付きで流す"),
-]
-
-KNOCK_TEMPLATES = ["ゲームしない？", "ちょっと話さない？", "作業通話しない？"]
-
-REPLY_LABELS = {"ok": "いいよ！", "later": "あとで", "pass": "今回はパス"}
-REPLY_STATUS = {"ok": "accepted", "later": "later", "pass": "passed"}
+MOOD_EMOJI = {"fire": "🔥", "ok": "🙂", "moon": "🌙"}
+MOOD_OPTIONS = [("fire", "🔥 誘う人（自分から誘う）"), ("ok", "🙂 誘われ待ち"), ("moon", "🌙 静か（マッチング通知なし）")]
+ACTIVITY_LABELS = {"game": "ゲーム", "chat": "雑談・通話", "work": "作業通話", "out": "外出", "any": "なんでもOK"}
 RESULT_LABELS = {"accepted": "いいよ！", "later": "あとで", "passed": "今回はパス"}
+KNOCK_TEMPLATES = ["ゲームしない？", "ちょっと話さない？", "作業通話しない？"]
+DURATIONS = [(5, "5分"), (15, "15分"), (30, "30分"), (60, "1時間"), (180, "3時間")]
+DEFAULT_MINUTES = 30
+NOTE_MAX = 50
+CANDIDATE_LIMIT = 25
+INBOX_LIMIT = 5
 
-PANEL_CUSTOM_IDS = {"hima:join", "hima:leave", "hima:knock"}
+CONNECTION_ERROR_TEXT = "APIサーバーに接続できませんでした。しばらくしてからもう一度試してください。"
 
 
-def remaining_text(expires_at: int, now: int) -> str:
-    minutes = max(1, (expires_at - now) // 60)
-    return f"あと{minutes}分"
+async def send_api_error(target, exc: Exception) -> None:
+    """Show a friendly ephemeral message for API errors (never crash the flow)."""
+    log.warning("api error: %s: %s", type(exc).__name__, exc)
+    if isinstance(exc, ApiConnectionError):
+        content = CONNECTION_ERROR_TEXT
+    elif isinstance(exc, ApiHTTPError):
+        if exc.status_code == 409:
+            content = "さっき送ったばかりだよ！5分待ってからもう一度ね。"
+        elif exc.status_code == 403:
+            content = "その人には送れません。"
+        else:
+            content = f"エラーが発生しました: {exc.detail}"
+    else:
+        content = "予期しないエラーが発生しました。しばらくしてからもう一度試してください。"
+    if target.response.is_done():
+        await target.followup.send(content, ephemeral=True)
+    else:
+        await target.response.send_message(content, ephemeral=True)
 
 
-def build_panel_embed(display_name: str) -> discord.Embed:
-    embed = discord.Embed(
-        title=display_name,
-        description=(
-            "ヒマをそっと置いておく掲示板だよ。\n"
-            "暇だなと思ったときに見に来て、誰かいたら気が向いたほうから声をかけてね。\n\n"
-            "・**今ヒマ！** … 自分のヒマを掲示板に置く\n"
-            "・**やめる** … 置いたものを下ろす\n"
-            "・**ノックする** … 掲示板の人にDMで声をかける"
-        ),
+# ------------------------------------------------------------------ board render
+
+
+def render_board(data: dict) -> list[discord.Embed]:
+    sessions = data.get("sessions", [])
+    board = discord.Embed(
+        title=f"📜 掲示板（いま{len(sessions)}人）",
+        description=_session_lines(sessions),
+        color=discord.Color.green() if sessions else discord.Color.dark_grey(),
+    )
+    inbox_lines = []
+    for k in data.get("inbox", []):
+        line = f"・**{k['from_display_name']}** さんが「{k['template']}」"
+        if k.get("to_moon"):
+            line += "（スルーしてOK）"
+        inbox_lines.append(line)
+    inbox = discord.Embed(
+        title="📬 ノック受信箱",
+        description="\n".join(inbox_lines) if inbox_lines else "今は届いていないよ",
+        color=discord.Color.gold(),
+    )
+    result_lines = [
+        f"・**{k['to_display_name']}** さんの返事：「{RESULT_LABELS.get(k['status'], k['status'])}」（{k['template']}）"
+        for k in data.get("results", [])
+    ]
+    results = discord.Embed(
+        title="🔔 ノックの結果",
+        description="\n".join(result_lines) if result_lines else "まだ結果はないよ",
         color=discord.Color.green(),
     )
-    return embed
+    return [board, inbox, results]
 
 
-def build_list_embed(rows: List[Any], display_name: str) -> discord.Embed:
-    now = int(time.time())
-    title = f"📜 {display_name} 掲示板（いま{len(rows)}人）"
-    if not rows:
-        description = "今ヒマな人はいません"
-    else:
-        lines = []
-        for row in rows:
-            end_time = datetime.fromtimestamp(row["expires_at"]).strftime("%H:%M")
-            line = f"**{row['display_name']}**｜{row['mood']}｜{row['activity']}"
-            if row["note"]:
-                line += f"｜{row['note']}"
-            line += f"｜{remaining_text(row['expires_at'], now)}（{end_time}まで）"
-            lines.append(line)
-        description = "\n".join(lines)
-    embed = discord.Embed(title=title, description=description)
-    embed.color = discord.Color.green() if rows else discord.Color.dark_grey()
-    return embed
+def _session_lines(sessions: list[dict]) -> str:
+    lines = []
+    for s in sessions:
+        line = (
+            f"{MOOD_EMOJI.get(s['mood'], '🙂')} **{s['display_name']}**｜"
+            f"{ACTIVITY_LABELS.get(s['activity'], s['activity'])}"
+        )
+        if s.get("note"):
+            line += f"｜{s['note']}"
+        line += f"｜あと{s['remaining_minutes']}分"
+        lines.append(line)
+    return "\n".join(lines) if lines else "今ヒマな人はいません"
 
 
-# ------------------------------------------------------- persistent panel view
+def _empty_board_data() -> dict:
+    return {
+        "guild_id": 0,
+        "viewer_id": 0,
+        "viewer": {"user_id": 0, "notify_on_hima": False},
+        "sessions": [],
+        "inbox": [],
+        "results": [],
+    }
 
 
-class HimaPanelView(ui.View):
-    """Persistent panel (timeout=None, fixed custom_ids) so buttons survive restarts."""
+# ------------------------------------------------------------------ dynamic items
+
+
+class KnockReplyButton(ui.DynamicItem, template=r"atsumaro:knockreply:(?P<knock_id>\d+):(?P<action>accept|later|pass)"):
+    """返答ボタン（いいよ！／あとで／パス）。custom_id にノックIDを埋め込み再起動後も有効。"""
+
+    def __init__(self, knock_id: int, action: str, row: int | None = None, label: str | None = None) -> None:
+        super().__init__(
+            ui.Button(
+                label=label or RESULT_LABELS.get({"accept": "ok", "later": "later", "pass": "pass"}.get(action, action), action),
+                style=discord.ButtonStyle.success if action == "accept" else discord.ButtonStyle.secondary,
+                custom_id=f"atsumaro:knockreply:{knock_id}:{action}",
+                row=row,
+            )
+        )
+        self.knock_id = knock_id
+        self.action = action
+
+    @classmethod
+    async def from_custom_id(cls, interaction: discord.Interaction, item: ui.Item, match: Any) -> "KnockReplyButton":
+        return cls(int(match["knock_id"]), match["action"])
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        bot = interaction.client  # type: ignore[union-attr]
+        try:
+            await bot.api.reply_knock(self.knock_id, user_id=interaction.user.id, action=self.action)
+        except ApiHTTPError as exc:
+            if exc.status_code == 409:
+                await interaction.response.send_message("返事はもう送ったよ！", ephemeral=True)
+                return
+            await send_api_error(interaction, exc)
+            return
+        except Exception as exc:  # noqa: BLE001
+            await send_api_error(interaction, exc)
+            return
+        label = RESULT_LABELS[{"accept": "accepted", "later": "later", "pass": "passed"}[self.action]]
+        await interaction.response.send_message(f"「{label}」を返したよ！（送り主は /board の結果欄で確認できるよ）", ephemeral=True)
+
+
+class WatchToggle(ui.DynamicItem, template=r"atsumaro:watchtoggle:(?P<state>[01])"):
+    """見守り ON/OFF トグル。custom_id に現在の状態を埋め込む。"""
+
+    def __init__(self, state: bool, row: int | None = 0) -> None:
+        self.state = bool(state)
+        super().__init__(
+            ui.Button(
+                label=f"見守り: {'ON' if state else 'OFF'}",
+                style=discord.ButtonStyle.success if state else discord.ButtonStyle.secondary,
+                custom_id=f"atsumaro:watchtoggle:{1 if state else 0}",
+                row=row,
+            )
+        )
+
+    @classmethod
+    async def from_custom_id(cls, interaction: discord.Interaction, item: ui.Item, match: Any) -> "WatchToggle":
+        return cls(match["state"] == "1")
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        bot = interaction.client  # type: ignore[union-attr]
+        new_state = not self.state
+        try:
+            await bot.api.update_settings(interaction.user.id, notify_on_hima=new_state)
+        except Exception as exc:  # noqa: BLE001
+            await send_api_error(interaction, exc)
+            return
+        embeds, view = await _build_board(bot, interaction)
+        if embeds is None:
+            return
+        await interaction.response.edit_message(embeds=embeds, view=view)
+
+
+# ------------------------------------------------------------------ board view
+
+
+class BoardView(ui.View):
+    """個人用掲示板（ephemeral）。ヒマ宣言/ノック/ブロック/見守り/やめるのボタン＋受信箱の返答ボタン。"""
+
+    def __init__(self, bot: "HimaBot", data: dict) -> None:
+        super().__init__(timeout=None)
+        self.bot = bot
+        self.data = data
+        self.add_item(WatchToggle(bool((data.get("viewer") or {}).get("notify_on_hima"))))
+        inbox = data.get("inbox", [])[:INBOX_LIMIT]
+        flat = []
+        for k in inbox:
+            short_name = k["from_display_name"][:8]
+            for action in ("accept", "later", "pass"):
+                label = f"{RESULT_LABELS[{'accept': 'accepted', 'later': 'later', 'pass': 'passed'}[action]]}·{short_name}"
+                flat.append((int(k["id"]), action, label))
+        for index, (knock_id, action, label) in enumerate(flat):
+            self.add_item(KnockReplyButton(knock_id, action, row=1 + index // 5, label=label))
+
+    @ui.button(label="ヒマ宣言する", style=discord.ButtonStyle.success, custom_id="board:declare", emoji="🙋", row=0)
+    async def declare(self, interaction: discord.Interaction, _: ui.Button) -> None:
+        await interaction.response.send_message(
+            view=JoinView(self.bot, interaction.guild_id, interaction.user), ephemeral=True
+        )
+
+    @ui.button(label="ノックする", style=discord.ButtonStyle.primary, custom_id="board:knock", emoji="🚪", row=0)
+    async def knock(self, interaction: discord.Interaction, _: ui.Button) -> None:
+        guild_id = interaction.guild_id
+        assert guild_id is not None
+        try:
+            data = await self.bot.api.get_board(guild_id, interaction.user.id)
+        except Exception as exc:  # noqa: BLE001
+            await send_api_error(interaction, exc)
+            return
+        candidates = [s for s in data.get("sessions", []) if s["user_id"] != interaction.user.id][:CANDIDATE_LIMIT]
+        if not candidates:
+            await interaction.response.send_message(
+                "今ヒマな人はいないよ。自分が宣言してみよう！", ephemeral=True
+            )
+            return
+        await interaction.response.send_message(
+            view=KnockSendView(self.bot, interaction.user, candidates), ephemeral=True
+        )
+
+    @ui.button(label="ブロック設定", style=discord.ButtonStyle.secondary, custom_id="board:blocks", row=0)
+    async def blocks(self, interaction: discord.Interaction, _: ui.Button) -> None:
+        guild_id = interaction.guild_id
+        assert guild_id is not None
+        try:
+            data = await self.bot.api.list_blocks(interaction.user.id)
+        except Exception as exc:  # noqa: BLE001
+            await send_api_error(interaction, exc)
+            return
+        blocked = data.get("blocked", [])
+        await interaction.response.send_message(
+            embed=_block_embed(blocked),
+            view=BlockManageView(self.bot, interaction.user, blocked),
+            ephemeral=True,
+        )
+
+    @ui.button(label="やめる", style=discord.ButtonStyle.secondary, custom_id="board:leave", emoji="👋", row=0)
+    async def leave(self, interaction: discord.Interaction, _: ui.Button) -> None:
+        try:
+            data = await self.bot.api.end_session(interaction.user.id)
+        except Exception as exc:  # noqa: BLE001
+            await send_api_error(interaction, exc)
+            return
+        if not data.get("ended"):
+            await interaction.response.send_message("今は宣言していないよ。", ephemeral=True)
+            return
+        embeds, view = await _build_board(self.bot, interaction)
+        if embeds is None:
+            return
+        await interaction.response.edit_message(embeds=embeds, view=view)
+
+
+async def _build_board(bot: "HimaBot", interaction: discord.Interaction) -> tuple[list[discord.Embed] | None, ui.View | None]:
+    guild_id = interaction.guild_id
+    assert guild_id is not None
+    try:
+        data = await bot.api.get_board(guild_id, interaction.user.id)
+    except Exception as exc:  # noqa: BLE001
+        await send_api_error(interaction, exc)
+        return None, None
+    view = BoardView(bot, data)
+    return render_board(data), view
+
+
+# ------------------------------------------------------------------ panel view
+
+
+class AtsumaroPanelView(ui.View):
+    """共有パネル（API が投稿する atsumaro:* ボタン）への応答。永続登録済み。"""
 
     def __init__(self, bot: "HimaBot") -> None:
         super().__init__(timeout=None)
         self.bot = bot
 
-    @ui.button(label="今ヒマ！", style=discord.ButtonStyle.success, custom_id="hima:join", emoji="🙋")  # custom_id は PANEL_CUSTOM_IDS と一致させること
-    async def join(self, interaction: discord.Interaction, _: ui.Button) -> None:
-        await interaction.response.send_message(view=HimaJoinView(self.bot), ephemeral=True)
-
-    @ui.button(label="やめる", style=discord.ButtonStyle.secondary, custom_id="hima:leave")  # custom_id は PANEL_CUSTOM_IDS と一致させること
-    async def leave(self, interaction: discord.Interaction, _: ui.Button) -> None:
-        guild_id = interaction.guild_id
-        assert guild_id is not None
-        row = storage.get_hima(guild_id, interaction.user.id)
-        if row is None:
-            await interaction.response.send_message("今はヒマ登録されていないよ。", ephemeral=True)
+    @ui.button(label="掲示板を見る", style=discord.ButtonStyle.primary, custom_id="atsumaro:board", emoji="📜", row=0)
+    async def board_btn(self, interaction: discord.Interaction, _: ui.Button) -> None:
+        embeds, view = await _build_board(self.bot, interaction)
+        if embeds is None:
             return
-        storage.delete_hima(guild_id, interaction.user.id)
-        await self.bot.delete_stored_message(guild_id, row["announce_message_id"])
-        await self.bot.refresh_guild_list(guild_id)
-        await interaction.response.send_message("登録をやめたよ！また誘ってね。", ephemeral=True)
+        await interaction.response.send_message(embeds=embeds, view=view, ephemeral=True)
 
-    @ui.button(label="ノックする", style=discord.ButtonStyle.primary, custom_id="hima:knock", emoji="🚪")  # custom_id は PANEL_CUSTOM_IDS と一致させること
-    async def knock(self, interaction: discord.Interaction, _: ui.Button) -> None:
-        guild_id = interaction.guild_id
-        assert guild_id is not None
-        rows = [r for r in storage.list_hima(guild_id, int(time.time())) if r["user_id"] != interaction.user.id]
-        others = rows[:25]
-        if not others:
-            await interaction.response.send_message(
-                "今ヒマな人はいないよ。自分が「今ヒマ！」で登録してみよう！", ephemeral=True
-            )
+    @ui.button(label="今ヒマ！", style=discord.ButtonStyle.success, custom_id="atsumaro:join", emoji="🙋", row=0)
+    async def join_btn(self, interaction: discord.Interaction, _: ui.Button) -> None:
+        await interaction.response.send_message(
+            view=JoinView(self.bot, interaction.guild_id, interaction.user), ephemeral=True
+        )
+
+    @ui.button(label="やめる", style=discord.ButtonStyle.secondary, custom_id="atsumaro:leave", row=0)
+    async def leave_btn(self, interaction: discord.Interaction, _: ui.Button) -> None:
+        try:
+            data = await self.bot.api.end_session(interaction.user.id)
+        except Exception as exc:  # noqa: BLE001
+            await send_api_error(interaction, exc)
             return
-        await interaction.response.send_message(view=KnockView(self.bot, others), ephemeral=True)
+        await interaction.response.send_message(
+            "やめたよ！また誘ってね。" if data.get("ended") else "今は宣言していないよ。", ephemeral=True
+        )
 
 
-# --------------------------------------------------------- join view (ephemeral)
+# ------------------------------------------------------------------ join view
 
 
-class HimaJoinView(ui.View):
-    """Ephemeral registration screen shown only to the person who pressed the button."""
+class JoinView(ui.View):
+    """登録ビュー（時間/温度感/やりたいことのセレクト＋ひとことModal＋確定）。"""
 
-    def __init__(self, bot: "HimaBot") -> None:
+    def __init__(self, bot: "HimaBot", guild_id: int | None, user: discord.abc.User) -> None:
         super().__init__(timeout=300)
         self.bot = bot
-        self.duration_min = 30
-        self.mood = "ok"
-        self.activity = "any"
-        self.announce = "silent"
-        self.note = ""
+        self.guild_id = guild_id
+        self.user = user
+        self.duration_min: int = DEFAULT_MINUTES
+        self.mood: str = "ok"
+        self.activity: str = "any"
+        self.note: str = ""
 
     @ui.select(
-        placeholder="時間：あとどれくらいヒマ？",
+        placeholder="時間：あとどれくらいヒマ？（既定30分）",
         options=[
-            discord.SelectOption(label=label, value=str(minutes), default=(minutes == 30))
+            discord.SelectOption(label=label, value=str(minutes), default=(minutes == DEFAULT_MINUTES))
             for minutes, label in DURATIONS
         ],
         row=0,
@@ -160,11 +331,8 @@ class HimaJoinView(ui.View):
         await interaction.response.defer()
 
     @ui.select(
-        placeholder="温度感は？",
-        options=[
-            discord.SelectOption(label=label, value=value, default=(value == "ok"))
-            for value, label in MOODS
-        ],
+        placeholder="温度感（既定：🙂 誘われ待ち）",
+        options=[discord.SelectOption(label=label, value=value, default=(value == "ok")) for value, label in MOOD_OPTIONS],
         row=1,
     )
     async def mood(self, interaction: discord.Interaction, select: ui.Select) -> None:
@@ -172,10 +340,10 @@ class HimaJoinView(ui.View):
         await interaction.response.defer()
 
     @ui.select(
-        placeholder="やりたいことは？",
+        placeholder="やりたいこと（既定：✨ なんでもOK）",
         options=[
             discord.SelectOption(label=label, value=value, default=(value == "any"))
-            for value, label in ACTIVITIES
+            for value, label in ACTIVITY_LABELS.items()
         ],
         row=2,
     )
@@ -183,75 +351,44 @@ class HimaJoinView(ui.View):
         self.activity = select.values[0]
         await interaction.response.defer()
 
-    @ui.select(
-        placeholder="みんなへのお知らせ",
-        options=[
-            discord.SelectOption(label=label, value=value, default=(value == "silent"))
-            for value, label in ANNOUNCE_OPTIONS
-        ],
-        row=3,
-    )
-    async def announce_select(self, interaction: discord.Interaction, select: ui.Select) -> None:
-        self.announce = select.values[0]
-        await interaction.response.defer()
-
-    @ui.button(label="ひとことを追加（任意）", style=discord.ButtonStyle.secondary, row=4, emoji="✏️")
+    @ui.button(label="ひとことを追加（任意）", style=discord.ButtonStyle.secondary, row=3, emoji="✏️")
     async def note_button(self, interaction: discord.Interaction, _: ui.Button) -> None:
-        await interaction.response.send_modal(NoteModal(self))
+        await interaction.response.send_modal(JoinNoteModal(self))
 
-    @ui.button(label="決定", style=discord.ButtonStyle.success, row=4)
+    @ui.button(label="確定", style=discord.ButtonStyle.success, row=4)
     async def decide(self, interaction: discord.Interaction, _: ui.Button) -> None:
-        if self.duration_min is None or self.mood is None or self.activity is None:
-            await interaction.response.send_message(
-                "時間・温度感・やりたいことをぜんぶ選んでね！", ephemeral=True
-            )
+        if self.guild_id is None:
+            await interaction.response.send_message("サーバー内でのみ使えるよ。", ephemeral=True)
             return
-        guild_id = interaction.guild_id
-        assert guild_id is not None
-        now = int(time.time())
-        # 再登録のときは前回の告知メッセージを先に下ろす
-        old = storage.get_hima(guild_id, interaction.user.id)
-        if old is not None and old["announce_message_id"]:
-            await self.bot.delete_stored_message(guild_id, old["announce_message_id"])
-        storage.upsert_hima(
-            guild_id=guild_id,
-            user_id=interaction.user.id,
-            display_name=interaction.user.display_name,
-            started_at=now,
-            expires_at=now + self.duration_min * 60,
-            mood=MOOD_SHORT[self.mood],
-            activity=ACTIVITY_SHORT[self.activity],
-            note=self.note,
-        )
-        await self.bot.refresh_guild_list(guild_id)
-        mood_label = dict(MOODS)[self.mood]
-        activity_label = ACTIVITY_SHORT[self.activity]
-        announce_id = await self.bot.announce_hima(
-            guild_id=guild_id,
-            display_name=interaction.user.display_name,
-            minutes=self.duration_min,
-            mood_label=mood_label,
-            activity=activity_label,
-            note=self.note,
-            method=self.announce,
-        )
-        if announce_id is not None:
-            storage.set_announce_message_id(guild_id, interaction.user.id, announce_id)
-        suffix = f"（{self.note}）" if self.note else ""
+        try:
+            data = await self.bot.api.declare_session(
+                user_id=self.user.id,
+                display_name=self.user.display_name,
+                guild_id=self.guild_id,
+                mood=self.mood,
+                activity=self.activity,
+                note=self.note,
+                minutes=self.duration_min,
+            )
+        except Exception as exc:  # noqa: BLE001
+            await send_api_error(interaction, exc)
+            return
+        kind = "掲示板に載せたよ！" if data.get("created") else "延長したよ！"
+        suffix = f"（ひとこと：{self.note}）" if self.note else ""
         await interaction.response.send_message(
-            f"掲示板に載せたよ！ あと{self.duration_min}分ヒマ宣言中{suffix}", ephemeral=True
+            f"{kind} あと{self.duration_min}分ヒマ宣言中。マッチした相手にはDMが届くよ🚀{suffix}", ephemeral=True
         )
 
 
-class NoteModal(ui.Modal):
+class JoinNoteModal(ui.Modal):
     note_input = ui.TextInput(
         label="ひとこと（ゲーム名など・50文字まで）",
-        max_length=50,
+        max_length=NOTE_MAX,
         required=False,
         style=discord.TextStyle.short,
     )
 
-    def __init__(self, join_view: HimaJoinView) -> None:
+    def __init__(self, join_view: JoinView) -> None:
         super().__init__(title="ひとこと追加", timeout=300)
         self.join_view = join_view
 
@@ -259,32 +396,33 @@ class NoteModal(ui.Modal):
         self.join_view.note = str(self.note_input.value or "")
         if self.join_view.note:
             await interaction.response.send_message(
-                f"ひとことを設定したよ：「{self.join_view.note}」。あとは「決定」を押してね！", ephemeral=True
+                f"ひとことを設定したよ：「{self.join_view.note}」。あとは「確定」を押してね！", ephemeral=True
             )
         else:
-            await interaction.response.send_message("ひとことを空にしたよ。そのまま「決定」できるよ！", ephemeral=True)
+            await interaction.response.send_message("ひとことを空にしたよ。そのまま「確定」できるよ！", ephemeral=True)
 
 
-# -------------------------------------------------------- knock view (ephemeral)
+# ------------------------------------------------------------------ knock send view
 
 
-class KnockView(ui.View):
-    """Ephemeral knock screen: pick targets and a template, then DM them."""
+class KnockSendView(ui.View):
+    """ノック送信画面（相手とテンプレを選んで POST /bot/knocks）。"""
 
-    def __init__(self, bot: "HimaBot", candidate_rows: List[Any]) -> None:
+    def __init__(self, bot: "HimaBot", user: discord.abc.User, candidates: list[dict]) -> None:
         super().__init__(timeout=300)
         self.bot = bot
+        self.user = user
         self.template = KNOCK_TEMPLATES[0]
         self.user_select.options = [
             discord.SelectOption(
-                label=row["display_name"],
-                value=str(row["user_id"]),
-                description=f"{row['activity']}｜{row['mood']}",
+                label=s["display_name"],
+                value=str(s["user_id"]),
+                description=f"{MOOD_EMOJI.get(s['mood'], '🙂')} {ACTIVITY_LABELS.get(s['activity'], s['activity'])}",
             )
-            for row in candidate_rows
+            for s in candidates
         ]
 
-    @ui.select(cls=ui.UserSelect, placeholder="誰にノックする？（最大25人まで）", min_values=1, max_values=25, row=0)
+    @ui.select(cls=ui.UserSelect, placeholder="誰にノックする？（最大25人まで）", min_values=1, max_values=CANDIDATE_LIMIT, row=0)
     async def user_select(self, interaction: discord.Interaction, select: ui.UserSelect) -> None:
         await interaction.response.defer()
 
@@ -302,173 +440,88 @@ class KnockView(ui.View):
         if not self.user_select.values:
             await interaction.response.send_message("先にノックする相手を選んでね！", ephemeral=True)
             return
-        guild_id = interaction.guild_id
-        assert guild_id is not None
-        sender = interaction.user
-        now = int(time.time())
-        sent: List[str] = []
-        cooldown: List[str] = []
-        # DM配送は廃止。受信箱（/board）向けに knock_log へ status='sent' で記録するだけ。
-        for target in self.user_select.values:
-            if storage.recent_knock_exists(guild_id, sender.id, target.id, now, window=300):
-                cooldown.append(target.display_name)
-                continue
-            storage.record_knock(guild_id, sender.id, target.id, self.template, "sent", now)
-            sent.append(target.display_name)
         parts = []
-        if sent:
-            parts.append("✅ ノックを届けたよ！相手は /board の「あなたへのノック」で確認できるよ: " + ", ".join(sent))
-        if cooldown:
-            parts.append("⏳ 同じ相手には5分に1回まで。ちょっと待ってね: " + ", ".join(cooldown))
+        for member in self.user_select.values:
+            try:
+                await self.bot.api.create_knock(
+                    from_user=self.user.id, to_user=member.id, template=self.template
+                )
+            except ApiHTTPError as exc:
+                if exc.status_code == 409:
+                    parts.append(f"⏳ {member.display_name}: さっき送ったばかりだよ")
+                elif exc.status_code == 403:
+                    parts.append(f"🚫 {member.display_name}: その人には送れません")
+                else:
+                    parts.append(f"⚠️ {member.display_name}: {exc.detail}")
+            except ApiConnectionError:
+                parts.append(f"⚠️ {member.display_name}: {CONNECTION_ERROR_TEXT}")
+            else:
+                parts.append(f"✅ {member.display_name}: 届けたよ！（相手の /board 受信箱に表示されるよ）")
         await interaction.response.send_message("\n".join(parts), ephemeral=True)
 
 
-# ------------------------------------------------------ DM reply (persistent)
+# ------------------------------------------------------------------ block manage view
 
 
-class KnockReplyButton(ui.DynamicItem, template=r"hima:knockreply:(?P<knock_id>\d+):(?P<action>ok|later|pass)"):
-    """Persistent reply button whose custom_id carries the knock_log id.
-
-    Used on the private board (formerly on knock DMs). Works after restarts.
-    """
-
-    def __init__(self, knock_id: int, action: str, row: int | None = None, label: str | None = None) -> None:
-        super().__init__(
-            ui.Button(
-                label=label or REPLY_LABELS[action],
-                style=discord.ButtonStyle.success if action == "ok" else discord.ButtonStyle.secondary,
-                custom_id=f"hima:knockreply:{knock_id}:{action}",
-                row=row,
-            )
-        )
-        self.knock_id = knock_id
-        self.action = action
-
-    @classmethod
-    async def from_custom_id(
-        cls, interaction: discord.Interaction, item: ui.Item, match: Any
-    ) -> "KnockReplyButton":
-        return cls(int(match["knock_id"]), match["action"])
-
-    async def callback(self, interaction: discord.Interaction) -> None:
-        knock = storage.get_knock(self.knock_id)
-        if knock is None:
-            await interaction.response.send_message("このノックはもう無効だよ。", ephemeral=True)
-            return
-        if knock["status"] != "sent":
-            await interaction.response.send_message("返事はもう送ったよ！", ephemeral=True)
-            return
-        storage.update_knock_status(self.knock_id, REPLY_STATUS[self.action])
-        label = REPLY_LABELS[self.action]
-        await interaction.response.send_message(
-            f"「{label}」を返したよ！（送り主は /board の「ノックの結果」で確認できるよ）", ephemeral=True
-        )
+def _block_embed(blocked: list[int]) -> discord.Embed:
+    lines = [f"・ID: {uid}" for uid in blocked]
+    return discord.Embed(
+        title="🚫 ブロック設定",
+        description="\n".join(lines) if lines else "ブロック中のユーザーはいないよ",
+        color=discord.Color.red() if lines else discord.Color.dark_grey(),
+    )
 
 
-# ------------------------------------------------------- private board (ephemeral)
+class BlockManageView(ui.View):
+    """ブロック追加（ユーザーセレクト）と解除（文字セレクト）。相手には知らせない。"""
 
-
-class BoardView(ui.View):
-    """Private board buttons (fixed custom_ids so they survive restarts)."""
-
-    def __init__(self, bot: "HimaBot", incoming_knocks: List[Any] | None = None) -> None:
-        super().__init__(timeout=None)
+    def __init__(self, bot: "HimaBot", user: discord.abc.User, blocked: list[int]) -> None:
+        super().__init__(timeout=300)
         self.bot = bot
-        # 返答ボタンは1人あたり3つ。5行制限内に収めるため行単位で束ねず順に並べる。
-        flat: List[Any] = []
-        for k in incoming_knocks or []:
-            short_name = str(k["sender_name"])[:8]
-            for action in ("ok", "later", "pass"):
-                flat.append((int(k["id"]), action, f"{REPLY_LABELS[action]}·{short_name}"))
-        for index, (knock_id, action, label) in enumerate(flat[:20]):
-            self.add_item(KnockReplyButton(knock_id, action, row=1 + index // 5, label=label))
+        self.user = user
+        self.blocked = blocked
+        if blocked:
+            self.remove_select.options = [
+                discord.SelectOption(label=f"ID: {uid}", value=str(uid)) for uid in blocked
+            ]
+        else:
+            self.remove_item(self.remove_select)
 
-    @ui.button(label="今ヒマ！", style=discord.ButtonStyle.success, custom_id="board:join", emoji="🙋", row=0)
-    async def join(self, interaction: discord.Interaction, _: ui.Button) -> None:
-        await interaction.response.send_message(view=HimaJoinView(self.bot), ephemeral=True)
-
-    @ui.button(label="やめる", style=discord.ButtonStyle.secondary, custom_id="board:leave", row=0)
-    async def leave(self, interaction: discord.Interaction, _: ui.Button) -> None:
-        guild_id = interaction.guild_id
-        assert guild_id is not None
-        row = storage.get_hima(guild_id, interaction.user.id)
-        if row is None:
-            await interaction.response.send_message("今はヒマ登録されていないよ。", ephemeral=True)
+    @ui.select(cls=ui.UserSelect, placeholder="ブロックに追加するユーザー", min_values=1, max_values=20, row=0)
+    async def add_select(self, interaction: discord.Interaction, select: ui.UserSelect) -> None:
+        errors = []
+        for member in select.values:
+            try:
+                await self.bot.api.add_block(self.user.id, member.id)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{member.display_name}: {getattr(exc, 'detail', exc)}")
+        try:
+            data = await self.bot.api.list_blocks(self.user.id)
+        except Exception as exc:  # noqa: BLE001
+            await send_api_error(interaction, exc)
             return
-        storage.delete_hima(guild_id, interaction.user.id)
-        await self.bot.delete_stored_message(guild_id, row["announce_message_id"])
-        embeds, view, _ = await build_board_components(self.bot, guild_id, interaction.user.id)
-        await interaction.response.edit_message(embeds=embeds, view=view)
-
-    @ui.button(label="ノックする", style=discord.ButtonStyle.primary, custom_id="board:knock", emoji="🚪", row=0)
-    async def knock(self, interaction: discord.Interaction, _: ui.Button) -> None:
-        guild_id = interaction.guild_id
-        assert guild_id is not None
-        rows = [r for r in storage.list_hima(guild_id, int(time.time())) if r["user_id"] != interaction.user.id]
-        others = rows[:25]
-        if not others:
-            await interaction.response.send_message(
-                "今ヒマな人はいないよ。自分が「今ヒマ！」で登録してみよう！", ephemeral=True
-            )
-            return
-        await interaction.response.send_message(view=KnockView(self.bot, others), ephemeral=True)
-
-    @ui.button(label="更新", style=discord.ButtonStyle.secondary, custom_id="board:refresh", emoji="🔄", row=0)
-    async def refresh(self, interaction: discord.Interaction, _: ui.Button) -> None:
-        guild_id = interaction.guild_id
-        assert guild_id is not None
-        embeds, view, result_ids = await build_board_components(
-            self.bot, guild_id, interaction.user.id
+        self.blocked = data.get("blocked", [])
+        note = ("\n" + "\n".join(errors)) if errors else ""
+        await interaction.response.edit_message(
+            embed=_block_embed(self.blocked), view=BlockManageView(self.bot, self.user, self.blocked)
         )
-        await interaction.response.edit_message(embeds=embeds, view=view)
-        if result_ids:
-            storage.mark_results_seen(result_ids)
+        if note:
+            await interaction.followup.send(note, ephemeral=True)
 
-
-async def _sender_display_name(bot: "HimaBot", guild_id: int, user_id: int) -> str:
-    row = storage.get_hima(guild_id, user_id)
-    if row is not None:
-        return str(row["display_name"])
-    try:
-        user = await bot.fetch_user(user_id)
-        return user.display_name
-    except discord.HTTPException:
-        return "不明なユーザー"
-
-
-async def build_board_components(bot: "HimaBot", guild_id: int, user_id: int):
-    """個人用掲示板の embed 群と View を組み立てる。
-
-    Returns (embeds, view, result_ids). result_ids は描画後に result_seen=1 にする対象。
-    """
-    rows = storage.list_hima(guild_id, now=int(time.time()))
-    board_embed = build_list_embed(rows, bot.display_name)
-
-    inbox = list(storage.list_knocks_inbox(guild_id, user_id, limit=5))
-    inbox_pairs = []
-    inbox_lines = []
-    for k in inbox:
-        name = await _sender_display_name(bot, guild_id, k["from_user_id"])
-        inbox_pairs.append({"id": int(k["id"]), "sender_name": name})
-        inbox_lines.append(f"・**{name}** さんが「{k['template']}」とノックしてきた！")
-    inbox_embed = discord.Embed(
-        title="📬 あなたへのノック",
-        description="\n".join(inbox_lines) if inbox_lines else "今は届いていないよ",
-        color=discord.Color.gold(),
-    )
-
-    results = list(storage.list_knock_results(guild_id, user_id))
-    result_ids = []
-    result_lines = []
-    for k in results:
-        name = await _sender_display_name(bot, guild_id, k["to_user_id"])
-        result_ids.append(int(k["id"]))
-        label = RESULT_LABELS.get(k["status"], k["status"])
-        result_lines.append(f"・**{name}** さんの返事：「{label}」（{k['template']}）")
-    results_embed = discord.Embed(
-        title="🔔 ノックの結果",
-        description="\n".join(result_lines) if result_lines else "まだ結果はないよ",
-        color=discord.Color.green(),
-    )
-
-    return [board_embed, inbox_embed, results_embed], BoardView(bot, inbox_pairs), result_ids
+    @ui.select(placeholder="ブロックを解除するユーザー", min_values=1, max_values=1, row=1)
+    async def remove_select(self, interaction: discord.Interaction, select: ui.Select) -> None:
+        uid = int(select.values[0])
+        try:
+            await self.bot.api.remove_block(self.user.id, uid)
+        except Exception as exc:  # noqa: BLE001
+            await send_api_error(interaction, exc)
+            return
+        try:
+            data = await self.bot.api.list_blocks(self.user.id)
+        except Exception as exc:  # noqa: BLE001
+            await send_api_error(interaction, exc)
+            return
+        self.blocked = data.get("blocked", [])
+        await interaction.response.edit_message(
+            embed=_block_embed(self.blocked), view=BlockManageView(self.bot, self.user, self.blocked)
+        )
