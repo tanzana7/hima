@@ -142,46 +142,31 @@ class _SettingsViewState extends State<SettingsView> {
               _SavingControl<bool>(
                 value: settings.autoMode,
                 onSave: (value) => _updateSettings(context, autoMode: value),
-                builder: (context, value, onChanged) => SwitchListTile(
-                  title: const Text('自動でひま宣言'),
-                  value: value,
-                  onChanged: onChanged,
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.s16,
-                  0,
-                  AppSpacing.s16,
-                  AppSpacing.s12,
-                ),
-                child: _SavingControl<Mood>(
-                  value: settings.autoMood,
-                  onSave: (mood) => _updateSettings(context, autoMood: mood),
-                  builder: (context, value, onChanged) =>
-                      DropdownButtonFormField<Mood>(
-                        // A form field keeps the value it was initialised with,
-                        // so a rejected mood would stay on screen. Keying by the
-                        // shown value rebuilds the field from `initialValue`
-                        // when a failed save reverts it.
-                        key: ValueKey(value),
-                        initialValue: value,
-                        isExpanded: true,
-                        decoration: const InputDecoration(
-                          labelText: '自動宣言の温度感',
-                        ),
-                        items: Mood.values
-                            .map(
-                              (mood) => DropdownMenuItem(
-                                value: mood,
-                                child: Text('${mood.emoji} ${mood.label}'),
-                              ),
+                builder: (context, autoMode, onChanged) => Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    SwitchListTile(
+                      title: const Text('自動でひま宣言'),
+                      value: autoMode,
+                      onChanged: onChanged,
+                    ),
+                    // The mood only matters while auto mode is on, so it folds
+                    // away instead of sitting there as a dead control.
+                    AnimatedSize(
+                      duration: MediaQuery.disableAnimationsOf(context)
+                          ? Duration.zero
+                          : const Duration(milliseconds: 220),
+                      curve: Curves.easeOutCubic,
+                      alignment: Alignment.topCenter,
+                      child: autoMode
+                          ? _AutoMoodChips(
+                              mood: settings.autoMood,
+                              onSave: (mood) =>
+                                  _updateSettings(context, autoMood: mood),
                             )
-                            .toList(),
-                        onChanged: (mood) {
-                          if (mood != null) onChanged(mood);
-                        },
-                      ),
+                          : const SizedBox(width: double.infinity),
+                    ),
+                  ],
                 ),
               ),
               const Divider(height: 1),
@@ -190,7 +175,7 @@ class _SettingsViewState extends State<SettingsView> {
                 onSave: (value) =>
                     _updateSettings(context, notifyOnHima: value),
                 builder: (context, value, onChanged) => SwitchListTile(
-                  title: const Text('友達のヒマ宣言を通知'),
+                  title: const Text('友達のひま宣言を通知'),
                   value: value,
                   onChanged: onChanged,
                 ),
@@ -263,7 +248,7 @@ class _SettingsViewState extends State<SettingsView> {
         ),
         const SizedBox(height: AppSpacing.s24),
         _SectionHeading(
-          'よくヒマな時間',
+          'よくひまな時間',
           trailing: IconButton(
             tooltip: '時間を追加',
             onPressed: () => _addSlot(context, viewModel),
@@ -493,6 +478,147 @@ class _SettingsViewState extends State<SettingsView> {
           ),
         ),
       ],
+    ),
+  );
+}
+
+/// The 自動宣言の温度感 choice, shown only while auto mode is on.
+class _AutoMoodChips extends StatelessWidget {
+  const _AutoMoodChips({required this.mood, required this.onSave});
+
+  final Mood mood;
+  final Future<bool> Function(Mood mood) onSave;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(
+      AppSpacing.s16,
+      0,
+      AppSpacing.s16,
+      AppSpacing.s12,
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text('自動宣言の温度感', style: AppTextStyles.caption),
+        const SizedBox(height: AppSpacing.s8),
+        _SavingControl<Mood>(
+          value: mood,
+          onSave: onSave,
+          builder: (context, value, onChanged) =>
+              _MoodChips(selected: value, onSelected: onChanged),
+        ),
+      ],
+    ),
+  );
+}
+
+/// The three auto-declaration moods as compact chips. The full mood names are
+/// too long to sit side by side, so each chip carries the emoji plus a short
+/// label and keeps the full name as its accessible label.
+class _MoodChips extends StatelessWidget {
+  const _MoodChips({required this.selected, required this.onSelected});
+
+  final Mood selected;
+  final ValueChanged<Mood> onSelected;
+
+  static String _shortLabel(Mood mood) => switch (mood) {
+    Mood.fire => '今すぐ',
+    Mood.ok => '誘い待ち',
+    Mood.quiet => 'ひっそり',
+  };
+
+  /// Full name for screen readers. `Mood.label` still spells ひま as 暇, and the
+  /// app writes it in hiragana everywhere, so the spoken name is spelled here.
+  static String _semanticLabel(Mood mood) => switch (mood) {
+    Mood.fire => '今すぐ遊びたい',
+    Mood.ok => '誘われたら行く',
+    Mood.quiet => 'ひっそりひま',
+  };
+
+  @override
+  Widget build(BuildContext context) => Wrap(
+    spacing: AppSpacing.s8,
+    runSpacing: AppSpacing.s8,
+    children: [
+      for (final mood in Mood.values)
+        _MoodChip(
+          mood: mood,
+          label: _shortLabel(mood),
+          semanticLabel: _semanticLabel(mood),
+          selected: mood == selected,
+          onTap: () {
+            if (mood == selected) return;
+            AppHaptics.select();
+            onSelected(mood);
+          },
+        ),
+    ],
+  );
+}
+
+class _MoodChip extends StatelessWidget {
+  const _MoodChip({
+    required this.mood,
+    required this.label,
+    required this.semanticLabel,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final Mood mood;
+  final String label;
+  final String semanticLabel;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    button: true,
+    selected: selected,
+    label: '${mood.emoji} $semanticLabel',
+    // The child's semantics are excluded, so the wrapper has to carry the
+    // action itself or the chip cannot be activated by a screen reader.
+    onTap: onTap,
+    excludeSemantics: true,
+    child: InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
+      child: AnimatedContainer(
+        duration: MediaQuery.disableAnimationsOf(context)
+            ? Duration.zero
+            : const Duration(milliseconds: 160),
+        curve: Curves.easeOut,
+        constraints: const BoxConstraints(minHeight: AppSpacing.minTapTarget),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.s12,
+          vertical: AppSpacing.s8,
+        ),
+        decoration: BoxDecoration(
+          color: selected ? AppColors.purpleSoft : AppColors.surface,
+          borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
+          border: Border.all(
+            color: selected ? AppColors.purple : AppColors.purpleSoft,
+            width: AppSpacing.borderWidth,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(mood.emoji, style: const TextStyle(fontSize: 15)),
+            const SizedBox(width: AppSpacing.s4 + 2),
+            Text(
+              label,
+              maxLines: 1,
+              style: AppTextStyles.body.copyWith(
+                fontSize: 14,
+                fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                color: selected ? AppColors.ink : AppColors.muted,
+              ),
+            ),
+          ],
+        ),
+      ),
     ),
   );
 }

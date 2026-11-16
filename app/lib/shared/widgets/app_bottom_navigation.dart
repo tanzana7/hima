@@ -128,13 +128,21 @@ class _NavItem extends StatelessWidget {
                 size: 24,
               ),
               const SizedBox(height: 2),
-              Text(
-                destination.label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: AppTextStyles.caption.copyWith(
-                  color: color,
-                  fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+              // The bar is a fixed strip at the bottom of the screen, so the
+              // label is clamped to 130% instead of growing until
+              // 「プロフィール」 turns into 「プロフィ…」. The labels are short and
+              // the icon plus the semantics label still carry the meaning at
+              // any system text size.
+              MediaQuery.withClampedTextScaling(
+                maxScaleFactor: 1.3,
+                child: Text(
+                  destination.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTextStyles.caption.copyWith(
+                    color: color,
+                    fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                  ),
                 ),
               ),
             ],
