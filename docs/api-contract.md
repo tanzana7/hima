@@ -84,10 +84,15 @@
 ### チャンネル内の常設メッセージ（廃止）
 
 - **チャンネルに Bot の常設メッセージ（人数メッセージ・パネルメッセージ）は置かない**。人数の常時表示も廃止（現在地は `GET /bot/guilds/{id}/count` で確認可能）
-- 操作の入口は **`/board` コマンド（ephemeral）のみ**。宣言・ノック・ブロック・見守り・解除はすべて /board のボタンとそれに続く ephemeral 応答で完結する
+- 操作の入口は **`/panel` コマンドグループの4サブコマンド（すべて ephemeral）のみ**：
+  - `/panel 確認`：いま募集している人と自分の状態を見る（旧 /board と同一内容。掲示板＋受信箱＋ボタン群）
+  - `/panel 募集`：募集をはじめる（温度感・やりたいこと・時間の選択フローを起動）
+  - `/panel 取り消し`：募集を取り消す（未宣言なら「いまは募集していません」）
+  - `/panel 参加 相手`：募集している人にノックで参加を申し込む（相手が募集していなければ「いまは募集していないみたいです」）
+- **廃止したコマンド**：`/board`（/panel 確認 に統合）、`/panel_remove`（API の teardown エンドポイントは残る）、`/hima` / `/hima_off` / `/hima_list`
 - `POST /bot/guilds/{id}/setup` はギルド登録のみ（メッセージは投稿しない）。`teardown` は旧パネル掃除用（ID 保存済みの常設メッセージ対が残っていれば削除）
 - `guilds.list_message_id` / `panel_message_id` / `base_topic` / `topic_counter` は**未使用列**（マイグレーションはせず、今後書き込まない）
-- 上記 `atsumaro:board/join/leave` は、掃除前に残っている旧パネルが押された場合の受け口として永続登録だけ維持する（新規に投稿されることはない）
+- 上記 `atsumaro:board/join/leave` は、残っている旧パネルが押された場合の受け口として永続登録だけ維持する（新規に投稿されることはない）
 - トピック人数方式も一時採用後に不採用（revert: back to counter and panel messages → remove channel panel）
 
 ## 2. 認証

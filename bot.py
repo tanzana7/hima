@@ -6,9 +6,7 @@ carries over from commit a9ca819.
 """
 from __future__ import annotations
 
-import asyncio
 import os
-import re
 import sys
 import time
 
@@ -23,6 +21,7 @@ from views import (
     BoardView,
     JoinView,
     KnockReplyButton,
+    KnockTemplateView,
     SuggestDeclareButton,
     WatchToggle,
     _build_board,
@@ -30,11 +29,6 @@ from views import (
 )
 
 load_dotenv()
-
-# 旧形式の自Botメッセージ（移行期の掃除対象）
-OLD_PANEL_CUSTOM_IDS = {"hima:join", "hima:leave", "hima:knock"}
-OLD_BOARD_TITLE_WORDS = ("掲示板", "メンバー一覧")
-COUNTER_RE = re.compile(r"^いま\d+人ヒマ$")
 
 
 class HimaBot(commands.Bot):
@@ -97,36 +91,6 @@ class HimaBot(commands.Bot):
 
     # ------------------------------------------------------------------ helpers
 
-    async def sweep_legacy_messages(self, channel: discord.abc.Messageable) -> tuple[int, int]:
-        """旧形式の自Botメッセージ（hima:* ボタン/旧掲示板embed/旧人数メッセージ）を掃除する。"""
-        scanned = 0
-        removed = 0
-        async for message in channel.history(limit=200):
-            if message.author.id != self.user.id:
-                continue
-            scanned += 1
-            component_ids = {
-                getattr(child, "custom_id", "") or ""
-                for row in message.components
-                for child in row.children
-            }
-            is_old_panel = any(cid in OLD_PANEL_CUSTOM_IDS for cid in component_ids)
-            is_any_panel = any(cid.startswith("atsumaro:") for cid in component_ids)
-            is_old_board = any(
-                embed.title is not None and any(w in embed.title for w in OLD_BOARD_TITLE_WORDS)
-                for embed in message.embeds
-            )
-            is_old_counter = bool(COUNTER_RE.match(message.content or ""))
-            if not (is_old_panel or is_any_panel or is_old_board or is_old_counter):
-                continue
-            try:
-                await message.delete()
-                removed += 1
-            except Exception as exc:  # noqa: BLE001 - cleanup must not break setup
-                print(f"[hima-bot] 旧メッセージの削除に失敗しました（無視します）: {exc}")
-        print(f"[hima-bot][sweep] scanned={scanned} removed={removed}")
-        return scanned, removed
-
     async def _send_board(self, interaction: discord.Interaction) -> None:
         embeds, view = await _build_board(self, interaction)
         if embeds is None:
@@ -135,66 +99,63 @@ class HimaBot(commands.Bot):
 
 
 class HimaCog(commands.Cog):
+    panel = app_commands.Group(
+        name="panel",
+        description="Atsumaro の操作（応答はすべて自分だけに表示されます）",
+        guild_only=True,
+    )
+
     def __init__(self, bot: HimaBot) -> None:
         self.bot = bot
 
-    # ------------------------------------------------------------------ /panel_remove（旧パネル掃除用）
+    # ------------------------------------------------------------------ /panel 確認
 
-    @app_commands.command(name="panel_remove", description="残っている旧パネル・人数メッセージを掃除する（入口は /board に一本化済み）")
-    @app_commands.guild_only()
-    async def panel_remove(self, interaction: discord.Interaction) -> None:
-        assert interaction.guild_id is not None
-        await interaction.response.defer(ephemeral=True)
-        # API 側 teardown：残っていれば旧常設メッセージ対を消す（未設置なら何も起きない）
-        try:
-            await self.bot.api.teardown_guild(interaction.guild_id)
-        except ApiHTTPError as exc:
-            if exc.status_code != 404:
-                await send_api_error(interaction, exc)
-                return
-        except ApiConnectionError as exc:
-            await send_api_error(interaction, exc)
-            return
-        channel = interaction.channel
-        assert channel is not None
-        scanned, removed = await self.bot.sweep_legacy_messages(channel)
-        await interaction.followup.send(
-            f"パネルを削除しました。今後は /board だけが入口です（掃除：{removed}件削除）",
-            ephemeral=True,
-        )
-
-    # ------------------------------------------------------------------ /board
-
-    @app_commands.command(name="board", description="自分専用の掲示板（受信箱つき）を開く")
-    @app_commands.guild_only()
-    async def board(self, interaction: discord.Interaction) -> None:
+    @panel.command(name="確認", description="いま募集している人と自分の状態を見る")
+    async def panel_check(self, interaction: discord.Interaction) -> None:
+        """旧 /board と同一内容（掲示板＋自分の状態＋受信箱＋ボタン群）。"""
         await self.bot._send_board(interaction)
 
-    # ------------------------------------------------------------------ 互換エイリアス
+    # ------------------------------------------------------------------ /panel 募集
 
-    @app_commands.command(name="hima", description="ヒマ宣言する（/board のボタンと同じ）")
-    @app_commands.guild_only()
-    async def hima(self, interaction: discord.Interaction) -> None:
+    @panel.command(name="募集", description="募集をはじめる")
+    async def panel_recruit(self, interaction: discord.Interaction) -> None:
         await interaction.response.send_message(
             view=JoinView(self.bot, interaction.guild_id, interaction.user), ephemeral=True
         )
 
-    @app_commands.command(name="hima_off", description="ヒマ宣言をやめる")
-    @app_commands.guild_only()
-    async def hima_off(self, interaction: discord.Interaction) -> None:
+    # ------------------------------------------------------------------ /panel 取り消し
+
+    @panel.command(name="取り消し", description="募集を取り消す")
+    async def panel_cancel(self, interaction: discord.Interaction) -> None:
         try:
             data = await self.bot.api.end_session(interaction.user.id)
         except Exception as exc:  # noqa: BLE001
             await send_api_error(interaction, exc)
             return
-        await interaction.response.send_message(
-            "やめたよ！また誘ってね。" if data.get("ended") else "今は宣言していないよ。", ephemeral=True
-        )
+        if data.get("ended"):
+            await interaction.response.send_message("募集を取り消したよ！また誘ってね。", ephemeral=True)
+        else:
+            await interaction.response.send_message("いまは募集していません", ephemeral=True)
 
-    @app_commands.command(name="hima_list", description="掲示板を見る（/board と同じ）")
-    @app_commands.guild_only()
-    async def hima_list(self, interaction: discord.Interaction) -> None:
-        await self.bot._send_board(interaction)
+    # ------------------------------------------------------------------ /panel 参加
+
+    @panel.command(name="参加", description="募集している人に参加を申し込む")
+    @app_commands.describe(相手="参加を申し込む相手（いま募集している人）")
+    async def panel_join(self, interaction: discord.Interaction, 相手: discord.User) -> None:
+        guild_id = interaction.guild_id
+        assert guild_id is not None
+        try:
+            data = await self.bot.api.get_board(guild_id, interaction.user.id)
+        except Exception as exc:  # noqa: BLE001
+            await send_api_error(interaction, exc)
+            return
+        target = next((s for s in data.get("sessions", []) if s["user_id"] == 相手.id), None)
+        if target is None:
+            await interaction.response.send_message("いまは募集していないみたいです", ephemeral=True)
+            return
+        await interaction.response.send_message(
+            view=KnockTemplateView(self.bot, interaction.user, 相手), ephemeral=True
+        )
 
 
 def _empty_board_data() -> dict:

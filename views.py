@@ -509,6 +509,44 @@ class KnockSendView(ui.View):
         await interaction.response.send_message("\n".join(parts), ephemeral=True)
 
 
+class KnockTemplateView(ui.View):
+    """テンプレ選択（game / chat / work）→ 指定した相手にノックを送る。/panel 参加 から使う。"""
+
+    def __init__(self, bot: "HimaBot", user: discord.abc.User, target: discord.abc.User) -> None:
+        super().__init__(timeout=180)
+        self.bot = bot
+        self.user = user
+        self.target = target
+
+    async def _knock(self, interaction: discord.Interaction, template: str) -> None:
+        try:
+            await self.bot.api.create_knock(from_user=self.user.id, to_user=self.target.id, template=template)
+        except ApiHTTPError as exc:
+            if exc.status_code == 409:
+                content = "⏳ さっき送ったばかりだよ。5分待ってからもう一度ね。"
+            elif exc.status_code == 403:
+                content = "🚫 その人には送れません。"
+            else:
+                content = f"⚠️ {exc.detail}"
+        except ApiConnectionError:
+            content = f"⚠️ {CONNECTION_ERROR_TEXT}"
+        else:
+            content = f"✅ {self.target.display_name} さんにノックを送ったよ！（相手の受信箱と DM に届くよ）"
+        await interaction.response.edit_message(content=content, view=None)
+
+    @ui.button(label="🎮 ゲームしない？", style=discord.ButtonStyle.primary, row=0)
+    async def game(self, interaction: discord.Interaction, _: ui.Button) -> None:
+        await self._knock(interaction, KNOCK_TEMPLATES[0])
+
+    @ui.button(label="💬 ちょっと話さない？", style=discord.ButtonStyle.primary, row=0)
+    async def chat(self, interaction: discord.Interaction, _: ui.Button) -> None:
+        await self._knock(interaction, KNOCK_TEMPLATES[1])
+
+    @ui.button(label="💻 作業通話しない？", style=discord.ButtonStyle.primary, row=0)
+    async def work(self, interaction: discord.Interaction, _: ui.Button) -> None:
+        await self._knock(interaction, KNOCK_TEMPLATES[2])
+
+
 # ------------------------------------------------------------------ block manage view
 
 
