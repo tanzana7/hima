@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
@@ -14,10 +16,20 @@ import 'paint_geometry.dart';
 /// uneven fingers with rounded tips and throws splatter where the paint ran out.
 ///
 /// **Content safety.** [child] is laid out inside [padding], and the widget
-/// additionally reserves [paintSwipeEndBand] on the right for the frayed end.
-/// The solid band therefore always covers the padded content, and the fingers,
-/// the dry streaks and the splatter all start to the right of it: no hole in
-/// the paint can run under a label.
+/// additionally reserves [paintSwipeContentInset] on the right for the dry end
+/// and the splatter. That inset replaces `padding.right` rather than being added
+/// to it — the two used to be summed, which pushed the content left of the
+/// stroke's own centre. The solid band therefore always covers the padded
+/// content, and the fingers, the dry streaks and the splatter all start to the
+/// right of it: no hole in the paint can run under a label.
+///
+/// **Centring.** Both ends of the stroke are pinned to the box rather than to
+/// the content — the loaded start 4dp from the left edge, the longest finger
+/// 14dp from the right (see [paintSwipeContentInset]) — so the band reads as
+/// centred on the screen. Its content, however, is inset by the dry end on the
+/// right only, which leaves it left of the box centre. [centerContent] gives the
+/// left the same inset, for a caller whose content has to share the axis of the
+/// centred elements below it.
 ///
 /// **Fit.** The whole stroke — fingers and splatter included — stays inside
 /// the widget's width, which is the opposite of the splash: a stroke cut off by
@@ -35,7 +47,8 @@ class BrushSwipe extends StatelessWidget {
     this.child,
     this.size = Size.zero,
     this.padding = const EdgeInsets.all(20),
-    this.endBand,
+    this.endInset,
+    this.centerContent = false,
     this.droplets,
     this.progress = 1,
   });
@@ -61,11 +74,21 @@ class BrushSwipe extends StatelessWidget {
   final EdgeInsets padding;
 
   /// The room kept to the right of the content for the frayed end and the
-  /// splatter. Null derives it from the box width with [paintSwipeEndBand].
+  /// splatter. Null derives it from the box width with
+  /// [paintSwipeContentInset], and either way it wins over `padding.right`
+  /// rather than being added to it.
   ///
   /// A caller that paints two bare strokes over each other (the hero) passes
   /// the same value to both, so the two silhouettes line up.
-  final double? endBand;
+  final double? endInset;
+
+  /// Insets the content by the same amount on the left as on the right, so it
+  /// sits on the centre of the box instead of on the centre of the safe rect.
+  ///
+  /// The login screen needs it: 「hima.」 and 「いま、ひま？」 sit above a centred
+  /// caption and button, and the right-only inset left them visibly off that
+  /// axis. The home hero keeps its content left-aligned, so it leaves this off.
+  final bool centerContent;
 
   /// Overrides the number of droplets flicked off the end. Null paints 16, the
   /// count the mock-up used.
@@ -85,14 +108,14 @@ class BrushSwipe extends StatelessWidget {
       return RepaintBoundary(
         child: CustomPaint(
           size: size,
-          // The end band is left to the painter here: a bare stroke may be
+          // The dry end is left to the painter here: a bare stroke may be
           // sized by its parent rather than by [size], and resolving it from
           // [size] would give a zero-width dry end.
           painter: _BrushSwipePainter(
             seed: seed,
             colors: colors,
             padding: padding,
-            endBand: endBand,
+            endInset: endInset,
             droplets: droplets,
             progress: t,
           ),
@@ -102,7 +125,15 @@ class BrushSwipe extends StatelessWidget {
     return RepaintBoundary(
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final band = endBand ?? paintSwipeEndBand(constraints.maxWidth);
+          final inset =
+              endInset ?? paintSwipeContentInset(constraints.maxWidth);
+          // The same rect the geometry uses for the safe rect: the content ends
+          // where the dry end begins. The inset is a floor on the caller's
+          // padding, not an addition to it.
+          final contentPadding = padding.copyWith(
+            left: centerContent ? math.max(padding.left, inset) : padding.left,
+            right: math.max(padding.right, inset),
+          );
           return Stack(
             children: [
               Positioned.fill(
@@ -110,19 +141,14 @@ class BrushSwipe extends StatelessWidget {
                   painter: _BrushSwipePainter(
                     seed: seed,
                     colors: colors,
-                    padding: padding,
-                    endBand: band,
+                    padding: contentPadding,
+                    endInset: inset,
                     droplets: droplets,
                     progress: t,
                   ),
                 ),
               ),
-              // The same inset the geometry uses for the safe rect: the content
-              // ends where the frayed end begins.
-              Padding(
-                padding: padding.add(EdgeInsets.only(right: band)),
-                child: childWidget,
-              ),
+              Padding(padding: contentPadding, child: childWidget),
             ],
           );
         },
@@ -136,7 +162,7 @@ class _BrushSwipePainter extends CustomPainter {
     required this.seed,
     required this.colors,
     required this.padding,
-    required this.endBand,
+    required this.endInset,
     required this.droplets,
     required this.progress,
   });
@@ -145,9 +171,9 @@ class _BrushSwipePainter extends CustomPainter {
   final List<Color> colors;
   final EdgeInsets padding;
 
-  /// Null derives the band from the size actually painted, which is what a bare
+  /// Null derives the inset from the size actually painted, which is what a bare
   /// stroke sized by its parent needs.
-  final double? endBand;
+  final double? endInset;
   final int? droplets;
   final double progress;
 
@@ -158,7 +184,7 @@ class _BrushSwipePainter extends CustomPainter {
       size: size,
       seed: seed,
       padding: padding,
-      endBand: endBand ?? paintSwipeEndBand(size.width),
+      contentInset: endInset ?? paintSwipeContentInset(size.width),
       droplets: droplets,
     );
     final fill = Paint();
@@ -249,7 +275,7 @@ class _BrushSwipePainter extends CustomPainter {
   bool shouldRepaint(_BrushSwipePainter oldDelegate) =>
       oldDelegate.seed != seed ||
       oldDelegate.padding != padding ||
-      oldDelegate.endBand != endBand ||
+      oldDelegate.endInset != endInset ||
       oldDelegate.droplets != droplets ||
       oldDelegate.progress != progress ||
       !listEquals(oldDelegate.colors, colors);

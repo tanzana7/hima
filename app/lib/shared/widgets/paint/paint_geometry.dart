@@ -1081,6 +1081,22 @@ Path paintSwashPath({
 /// its paint sideways, not in a ring.
 const double paintSwipeBleed = 18;
 
+/// The paper kept clear between the longest finger tip and the right edge of
+/// the box, in dp. The splatter lands in it.
+const double _swipeSplatterGap = 14;
+
+/// The longest finger, in dp, on a box wide enough for the full stroke.
+const double _swipeMaxFinger = 40;
+
+/// The width of the dry-streak stretch at the end of the body, in dp.
+const double _swipeStreakZone = 16;
+
+/// The box width at which the stroke gets its full finger reach, in dp.
+///
+/// Below it the fingers, the splatter and the content inset shrink together: a
+/// 40dp finger on a 200dp box would leave almost no body to paint.
+const double _swipeFullWidth = 360;
+
 /// A wide brush stroke: a blunt loaded start, a wobbling band that breaks into
 /// uneven fingers, dry streaks near the end and the splatter flicked off it.
 class PaintSwipe {
@@ -1119,18 +1135,30 @@ class PaintSwipe {
 
 final _swipeCache = PaintCache<PaintSwipe>();
 
-/// The room a swipe keeps to the right of its content for the frayed end and
-/// the splatter.
+/// The scale the dry end is drawn at: 1 on a box at least [_swipeFullWidth]
+/// wide, less on a narrower one.
+double _swipeReach(double width) =>
+    math.min(1.0, math.max(0.0, width) / _swipeFullWidth);
+
+/// The room a swipe keeps to the right of its content, in dp.
 ///
-/// It is a fraction of the box rather than a constant so the stroke keeps its
-/// proportions on a tablet, and it is capped so a narrow box still has a body.
+/// It is the splatter gap, the longest finger and the dry-streak stretch: the
+/// three things that live past the solid body. The loaded start is a fixed 4dp
+/// from the left edge, so pinning the dry end to the box this way is what makes
+/// the stroke read as centred in it. The old value only covered the fingers,
+/// which left the paint ending about 37dp short of the right edge and the whole
+/// band looking shifted left next to a full-width card below it.
+///
+/// It replaces the caller's `padding.right` rather than adding to it: the two
+/// used to be summed, which pushed the content left of the stroke's own centre.
 /// A caller that hands a child to `BrushSwipe` gets this inset for free; a
 /// caller that paints a bare stroke and places the content itself (the home
 /// hero, which stacks two strokes) insets by the same value so the two agree.
-double paintSwipeEndBand(double width) {
+double paintSwipeContentInset(double width) {
   if (width <= 0) return 0;
-  final wanted = (width * 0.16).clamp(28.0, 72.0);
-  return math.min(wanted, width * 0.38);
+  return _swipeSplatterGap +
+      _swipeMaxFinger * _swipeReach(width) +
+      _swipeStreakZone;
 }
 
 /// The part of a swipe's box painted so far, with a soft, wobbly right edge.
@@ -1182,10 +1210,18 @@ Path paintSwipeRevealPath({
 /// point, and the gaps cut back into the paint so the right end is never a
 /// near-vertical line.
 ///
-/// **Content safety.** [padding] plus [endBand] on the right is the rect the
-/// caller lays its content out in. The body covers all of it, and the streaks,
-/// the fingers and the splatter all start to its right, so no hole in the paint
-/// can run under a label.
+/// **Content safety.** The content rect is inset by [padding], and on the right
+/// by [contentInset] instead of `padding.right` — the larger of the two, never
+/// their sum. The body covers all of it, and the streaks, the fingers and the
+/// splatter all start to its right, so no hole in the paint can run under a
+/// label.
+///
+/// **Centring.** The loaded start sits a fixed 4dp from the left edge, so the
+/// dry end is pinned to the box: the longest finger stops [_swipeSplatterGap]
+/// short of the right edge and the splatter is scattered in the strip between
+/// the tips and that edge. Reserving paper on the right only — which is what
+/// the stroke used to do — left the paint ending well short of the right edge
+/// and made the band look shifted left against the full-width cards below it.
 ///
 /// **Fit.** Everything, splatter included, stays inside the box width. When the
 /// paper right of the content is short — wide content, 200% text — the finger
@@ -1195,17 +1231,17 @@ PaintSwipe paintSwipe({
   required Size size,
   required int seed,
   required EdgeInsets padding,
-  required double endBand,
+  required double contentInset,
   int? droplets,
 }) {
-  final key = (size, seed, padding, endBand, droplets);
+  final key = (size, seed, padding, contentInset, droplets);
   return _swipeCache.get(
     key,
     () => _buildSwipe(
       size: size,
       seed: seed,
       padding: padding,
-      endBand: endBand,
+      contentInset: contentInset,
       dropletCount: droplets,
     ),
   );
@@ -1215,7 +1251,7 @@ PaintSwipe _buildSwipe({
   required Size size,
   required int seed,
   required EdgeInsets padding,
-  required double endBand,
+  required double contentInset,
   required int? dropletCount,
 }) {
   final rng = math.Random(seed);
@@ -1259,20 +1295,23 @@ PaintSwipe _buildSwipe({
   final wobble = math.min(5.0, math.max(0.0, margin - 2.5));
   final jitter = math.min(2.0, math.max(0.0, margin - wobble - 1.5));
 
-  // The rect the caller lays its content out in (see [paintSwipe]).
-  final contentRight = math.max(padding.left, width - padding.right - endBand);
-  // The paper reserved to the right of the content: the last stretch of the
-  // body, where the paint runs dry, and then the fingers and the splatter.
-  final room = math.max(0.0, width - contentRight);
-  final streakZone = math.min(70.0, room * 0.22);
+  // The rect the caller lays its content out in (see [paintSwipe]). The right
+  // inset is the larger of the caller's padding and the paper the dry end
+  // needs, never their sum: summing them pushed the content left of the
+  // stroke's own centre.
+  final contentRight = math.max(
+    padding.left,
+    width - math.max(padding.right, contentInset),
+  );
+  // The dry end is pinned to the box: the longest finger stops
+  // [_swipeSplatterGap] short of the right edge, so the body ends one finger
+  // reach before that and the splatter lands in the strip after the tips.
+  final reach = _swipeReach(width);
+  final fingerReach = _swipeMaxFinger * reach;
   final bodyRight = math.max(
     contentRight,
-    math.min(width - 2, contentRight + streakZone),
+    width - _swipeSplatterGap - fingerReach,
   );
-  // The mock-up puts the first droplet 42dp past the body and reaches 40dp
-  // further, and its fingers reach 6–40dp. All three shrink together when the
-  // paper runs out, so nothing is ever cut off by the edge.
-  final reach = math.min(1.0, (width - bodyRight) / 90);
 
   const x0 = 4.0;
   final topStart = math.min(x0 + 20, bodyRight);
@@ -1323,8 +1362,10 @@ PaintSwipe _buildSwipe({
   var body = _catmullRomPath(points);
 
   // The dry streaks: paper-coloured slivers cut out of the last stretch of the
-  // body, never under the content.
-  final streakStart = math.max(contentRight, bodyRight - 70);
+  // body, never under the content. The stretch is the dry-streak zone and
+  // nothing more, so the paint only starts to break up where the content has
+  // already ended.
+  final streakStart = math.max(contentRight, bodyRight - _swipeStreakZone);
   final streakWidth = bodyRight - streakStart;
   if (streakWidth > 6 && bandHeight > 28) {
     for (var i = 0; i < 6; i++) {
@@ -1339,22 +1380,30 @@ PaintSwipe _buildSwipe({
     }
   }
 
-  // The splatter flicked off the end: scattered in a cone, not lined up in a
-  // column. A droplet that would not fit inside the box is dropped rather than
-  // clipped by the edge.
+  // The splatter flicked off the end: a cone that opens from the finger tips to
+  // the right edge of the box. It is spread over the strip the fingers leave
+  // instead of being stacked in one column — a column of dots reads as a dotted
+  // rule — and it is kept inside the box, because a droplet sliced by the edge
+  // reads as a cut shape.
   final droplets = <PaintDroplet>[];
   final dropCount = (dropletCount ?? 16).clamp(0, 24).toInt();
+  final splatterStart = bodyRight + fingerReach * 0.55;
+  final splatterSpan = math.max(0.0, width - 2 - splatterStart);
   for (var i = 0; i < dropCount; i++) {
-    final distance = 6 + rng.nextDouble() * 34;
-    final angle = (rng.nextDouble() - 0.5) * 1.6;
+    final t = rng.nextDouble();
+    final distance = splatterStart + splatterSpan * t;
+    // Size follows the position along the cone, not the raw distance: the strip
+    // is only about 30dp deep, so a distance-driven size would make every drop
+    // the same. The near ones stay 2–4dp and the far ones 0.8dp.
     final radius = math.max(
       0.8,
-      (4.5 - distance / 9) * (0.5 + rng.nextDouble() * 0.6),
+      (3.6 - 2.8 * t) * (0.55 + 0.45 * rng.nextDouble()),
     );
-    final center = Offset(
-      bodyRight + (42 + distance * math.cos(angle)) * reach,
-      mid + (rng.nextDouble() - 0.5) * bandHeight,
-    );
+    // The cone opens with the distance from the body: tight at the tips, and
+    // narrower than the band even at the far end so the drops never line up
+    // along its edges.
+    final half = bandHeight * (0.10 + 0.28 * t);
+    final center = Offset(distance, mid + (rng.nextDouble() - 0.5) * 2 * half);
     if (center.dx + radius > width - 1) continue;
     if (center.dy - radius < 0 || center.dy + radius > height) continue;
     droplets.add(PaintDroplet(center: center, radius: radius));
