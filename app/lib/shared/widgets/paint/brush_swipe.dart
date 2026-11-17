@@ -11,22 +11,22 @@ import 'paint_geometry.dart';
 /// onto a body that was still a box. A stroke has no growths: it is one band
 /// whose two ends say what happened at the two ends of the movement. The left
 /// end is rounded where the brush touched down loaded; the right end breaks into
-/// a few tapered strands and throws splatter where the paint ran out.
+/// uneven fingers with rounded tips and throws splatter where the paint ran out.
 ///
 /// **Content safety.** [child] is laid out inside [padding], and the widget
 /// additionally reserves [paintSwipeEndBand] on the right for the frayed end.
-/// The solid band therefore always covers the padded content, and the strands,
+/// The solid band therefore always covers the padded content, and the fingers,
 /// the dry streaks and the splatter all start to the right of it: no hole in
 /// the paint can run under a label.
 ///
-/// **Fit.** The whole stroke — strands and splatter included — stays inside
+/// **Fit.** The whole stroke — fingers and splatter included — stays inside
 /// the widget's width, which is the opposite of the splash: a stroke cut off by
-/// the screen edge reads as a rectangle again. On a narrow box the strands and
+/// the screen edge reads as a rectangle again. On a narrow box the fingers and
 /// the splatter get shorter instead of being clipped.
 ///
 /// **Motion.** [progress] reveals the stroke from left to right behind a soft,
-/// frayed leading edge, and the splatter arrives as the brush reaches the end.
-/// Reduced motion paints the finished stroke.
+/// frayed leading edge, and the splatter arrives once the brush has reached the
+/// end of the body. Reduced motion paints the finished stroke.
 class BrushSwipe extends StatelessWidget {
   const BrushSwipe({
     super.key,
@@ -36,7 +36,6 @@ class BrushSwipe extends StatelessWidget {
     this.size = Size.zero,
     this.padding = const EdgeInsets.all(20),
     this.endBand,
-    this.bristles,
     this.droplets,
     this.progress = 1,
   });
@@ -68,14 +67,8 @@ class BrushSwipe extends StatelessWidget {
   /// the same value to both, so the two silhouettes line up.
   final double? endBand;
 
-  /// Overrides the strand count. Null picks 5–7 from the seed.
-  ///
-  /// The dry end always has 5–7 strands whatever the band height: a taller band
-  /// gets thicker strands, not more of them, because more than seven even
-  /// strands read as a comb.
-  final int? bristles;
-
-  /// 10–16 droplets. Null picks 10–16 from the seed.
+  /// Overrides the number of droplets flicked off the end. Null paints 16, the
+  /// count the mock-up used.
   final int? droplets;
 
   /// 0 → 1 paint-in. Values above 1 are clamped.
@@ -100,7 +93,6 @@ class BrushSwipe extends StatelessWidget {
             colors: colors,
             padding: padding,
             endBand: endBand,
-            bristles: bristles,
             droplets: droplets,
             progress: t,
           ),
@@ -120,7 +112,6 @@ class BrushSwipe extends StatelessWidget {
                     colors: colors,
                     padding: padding,
                     endBand: band,
-                    bristles: bristles,
                     droplets: droplets,
                     progress: t,
                   ),
@@ -146,7 +137,6 @@ class _BrushSwipePainter extends CustomPainter {
     required this.colors,
     required this.padding,
     required this.endBand,
-    required this.bristles,
     required this.droplets,
     required this.progress,
   });
@@ -158,7 +148,6 @@ class _BrushSwipePainter extends CustomPainter {
   /// Null derives the band from the size actually painted, which is what a bare
   /// stroke sized by its parent needs.
   final double? endBand;
-  final int? bristles;
   final int? droplets;
   final double progress;
 
@@ -170,7 +159,6 @@ class _BrushSwipePainter extends CustomPainter {
       seed: seed,
       padding: padding,
       endBand: endBand ?? paintSwipeEndBand(size.width),
-      bristles: bristles,
       droplets: droplets,
     );
     final fill = Paint();
@@ -194,6 +182,9 @@ class _BrushSwipePainter extends CustomPainter {
         paintSwipeRevealPath(size: size, progress: t, seed: seed),
       );
     }
+    // The dry end is part of this path: the fingers are cut from the same
+    // outline, so the paint runs out along the stroke instead of a set of
+    // separate shapes being glued onto a hard edge.
     canvas.drawPath(swipe.body, fill);
     // The wet sheen: one faint lighter pass along the upper part of the band.
     // Paint is never one flat value, and without it a wide band looks printed.
@@ -227,33 +218,15 @@ class _BrushSwipePainter extends CustomPainter {
     );
     canvas.restore();
 
-    // The dry end. Each strand fades from the body's own colour at its root to
-    // almost nothing at its tip, so the paint runs dry along the stroke instead
-    // of stopping at a hard edge. The fade is per strand, which is why they are
-    // drawn separately instead of being unioned into the body.
-    for (final strand in swipe.strands) {
-      final root = _swipeColorAt(colors, size, strand.root);
-      final rect = Rect.fromLTRB(
-        strand.root.dx,
-        strand.root.dy - strand.half - 1,
-        strand.tip.dx,
-        strand.root.dy + strand.half + 1,
-      );
-      canvas.drawPath(
-        strand.path,
-        Paint()
-          ..shader = LinearGradient(
-            begin: Alignment.centerLeft,
-            end: Alignment.centerRight,
-            colors: [root, root.withValues(alpha: 0.35)],
-          ).createShader(rect),
-      );
-    }
     if (t < 1) canvas.restore();
 
-    // The splatter only exists once the brush has reached the end: paint cannot
-    // flick off a stroke that has not been painted yet.
-    final thrown = ((t - 0.72) / 0.28).clamp(0.0, 1.0).toDouble();
+    // The splatter only exists once the brush has reached the end of the body:
+    // paint cannot flick off a stroke that has not been painted yet.
+    final splatterAt = swipe.splatterAt;
+    final span = 1 - splatterAt;
+    final thrown = span <= 0
+        ? (t >= splatterAt ? 1.0 : 0.0)
+        : ((t - splatterAt) / span).clamp(0.0, 1.0).toDouble();
     if (thrown <= 0) return;
     final paint = Paint()..color = colors.last;
     for (var i = 0; i < swipe.droplets.length; i++) {
@@ -264,18 +237,11 @@ class _BrushSwipePainter extends CustomPainter {
         ((thrown - 0.04 * i) / 0.6).clamp(0.0, 1.0).toDouble(),
       );
       if (stagger <= 0) continue;
-      final radius = droplet.radius * (0.4 + 0.6 * stagger);
-      if (droplet.stretch > 0) {
-        // A filled egg, not a circle with a tail: the drop was travelling fast
-        // when it hit the paper.
-        canvas.save();
-        canvas.translate(droplet.center.dx, droplet.center.dy);
-        canvas.scale(1 + droplet.stretch, 1 - droplet.stretch * 0.35);
-        canvas.drawCircle(Offset.zero, radius, paint);
-        canvas.restore();
-        continue;
-      }
-      canvas.drawCircle(droplet.center, radius, paint);
+      canvas.drawCircle(
+        droplet.center,
+        droplet.radius * (0.4 + 0.6 * stagger),
+        paint,
+      );
     }
   }
 
@@ -284,29 +250,7 @@ class _BrushSwipePainter extends CustomPainter {
       oldDelegate.seed != seed ||
       oldDelegate.padding != padding ||
       oldDelegate.endBand != endBand ||
-      oldDelegate.bristles != bristles ||
       oldDelegate.droplets != droplets ||
       oldDelegate.progress != progress ||
       !listEquals(oldDelegate.colors, colors);
-}
-
-/// The colour of the body gradient at [point].
-///
-/// The strands fade from the colour the body has where they leave it, so the
-/// join has no colour step. Sampling the gradient is cheaper than clipping each
-/// strand to the body and keeps the fade independent of the body's shape.
-Color _swipeColorAt(List<Color> colors, Size size, Offset point) {
-  if (colors.length == 1) return colors.first;
-  final dx = size.width;
-  final dy = size.height;
-  final lengthSquared = dx * dx + dy * dy;
-  final t = lengthSquared <= 0
-      ? 0.0
-      : ((point.dx * dx + point.dy * dy) / lengthSquared)
-            .clamp(0.0, 1.0)
-            .toDouble();
-  final scaled = t * (colors.length - 1);
-  final index = scaled.floor().clamp(0, colors.length - 2).toInt();
-  return Color.lerp(colors[index], colors[index + 1], scaled - index) ??
-      colors.last;
 }
