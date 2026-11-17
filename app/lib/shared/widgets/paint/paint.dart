@@ -18,11 +18,16 @@
 ///   widget box on purpose; the caller gives them room (`Clip.none`, a gap in
 ///   the layout, a bleed off the screen edge). Shrinking the paint until it
 ///   fits puts the straight edges back.
+/// * **Wide strokes stay inside the box width.** [BrushSwipe] is the exception
+///   to the bleed rule: a stroke cut off by the screen edge reads as a
+///   rectangle again, so its frayed end and its splatter are paid for out of
+///   the space the caller reserves for them instead of out of the edge.
 /// * **Reduced motion.** The animated primitives take a `progress` and paint
 ///   the final state when `MediaQuery.disableAnimationsOf` is true.
 library;
 
 export 'brush_stroke.dart';
+export 'brush_swipe.dart';
 export 'paint_dab.dart';
 export 'paint_geometry.dart';
 export 'paint_mark.dart';
