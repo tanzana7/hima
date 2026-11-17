@@ -8,9 +8,10 @@ import '../../../app/theme/app_spacing.dart';
 import '../../../app/theme/app_text_styles.dart';
 import '../../../data/models/models.dart';
 import '../../../shared/haptics.dart';
+import '../../../shared/widgets/paint/paint.dart';
 import 'pickers.dart';
 
-/// The yellow 「ひまを宣言」 pill.
+/// The yellow 「ひまを宣言」 paint dab.
 ///
 /// Tap declares immediately with the last used mood (Design.md: the first
 /// declaration must not require answering a question). Long-press opens the
@@ -46,7 +47,13 @@ class DeclareButton extends StatefulWidget {
 
 class DeclareButtonState extends State<DeclareButton>
     with TickerProviderStateMixin {
-  static const _buttonHeight = 60.0;
+  /// Height of the button at the default text scale.
+  static const _minButtonHeight = 60.0;
+
+  /// Room the dab keeps above and below its label. The button height is derived
+  /// from it, so the two cannot drift apart.
+  static const _dabPaddingV = 10.0;
+
   static const _bubbleSize = 68.0;
   static const _arcRadius = 104.0;
 
@@ -326,13 +333,27 @@ class DeclareButtonState extends State<DeclareButton>
     ),
   );
 
+  /// The button height follows the text scale.
+  ///
+  /// A fixed 60dp box left only 40dp for the label once the dab's padding was
+  /// taken out, and a 19sp label at 200% needs 45.6dp, so it clipped. Growing
+  /// with the label keeps the CTA inside the hero at every scale.
+  double _buttonHeightFor(BuildContext context) {
+    final style = AppTextStyles.button;
+    final label =
+        MediaQuery.textScalerOf(context).scale(style.fontSize ?? 19) *
+        (style.height ?? 1.2);
+    return math.max(_minButtonHeight, label + _dabPaddingV * 2 + 2);
+  }
+
   @override
   Widget build(BuildContext context) {
+    final buttonHeight = _buttonHeightFor(context);
     return LayoutBuilder(
       builder: (context, constraints) {
-        _stackSize = Size(constraints.maxWidth, _buttonHeight);
+        _stackSize = Size(constraints.maxWidth, buttonHeight);
         return SizedBox(
-          height: _buttonHeight,
+          height: buttonHeight,
           child: Stack(
             clipBehavior: Clip.none,
             children: [
@@ -386,20 +407,17 @@ class DeclareButtonState extends State<DeclareButton>
     );
   }
 
-  Widget _buttonVisual(BuildContext context) => Container(
-    height: _buttonHeight,
-    padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s24),
-    decoration: BoxDecoration(
-      color: AppColors.yellow,
-      borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
-      boxShadow: [
-        BoxShadow(
-          color: AppColors.ink.withValues(alpha: 0.12),
-          blurRadius: 12,
-          offset: const Offset(0, 4),
-        ),
-      ],
+  /// The main CTA is a paint dab, not a stadium: a perfect pill was the
+  /// straightest thing left on the home screen. The padding matches
+  /// [_dabPaddingV] so the label always has room inside the paint.
+  Widget _buttonVisual(BuildContext context) => PaintDab(
+    seed: 4242,
+    color: AppColors.yellow,
+    padding: const EdgeInsets.symmetric(
+      horizontal: AppSpacing.s24,
+      vertical: _dabPaddingV,
     ),
+    wobble: 0.028,
     child: Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
@@ -476,29 +494,25 @@ class DeclareButtonState extends State<DeclareButton>
               // affordance that only exists mid-long-press, so a focusable
               // button here would be a dead end. The declare button exposes the
               // same choice as a custom action instead.
+              // A paint dab rather than a bordered circle: the mood bubbles
+              // are thrown at the paper too, and the ink stroke that used to
+              // outline them was the last hairline on the home screen.
               child: ExcludeSemantics(
-                child: Container(
-                  width: _bubbleSize,
-                  height: _bubbleSize,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: _moodTint(mood),
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: AppColors.ink,
-                      width: AppSpacing.borderWidth,
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: AppColors.ink.withValues(alpha: 0.14),
-                        blurRadius: 10,
-                        offset: const Offset(0, 3),
+                child: PaintDab(
+                  seed: 7000 + index,
+                  color: _moodTint(mood),
+                  padding: const EdgeInsets.all(10),
+                  wobble: 0.05,
+                  droplets: 2,
+                  child: SizedBox(
+                    width: _bubbleSize - 20,
+                    height: _bubbleSize - 20,
+                    child: Center(
+                      child: Text(
+                        mood.emoji,
+                        style: const TextStyle(fontSize: 24),
                       ),
-                    ],
-                  ),
-                  child: Text(
-                    mood.emoji,
-                    style: const TextStyle(fontSize: 24),
+                    ),
                   ),
                 ),
               ),
@@ -508,15 +522,11 @@ class DeclareButtonState extends State<DeclareButton>
             // bubble over the heading and was hard to read. It stays visible at
             // every text scale and wraps instead of being dropped.
             ExcludeSemantics(
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: AppSpacing.s4 + 2,
-                  vertical: 1,
-                ),
-                decoration: BoxDecoration(
-                  color: AppColors.surface,
-                  borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
-                ),
+              child: PaintDab(
+                seed: 7100 + index,
+                color: AppColors.surface,
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                wobble: 0.05,
                 child: Text(
                   _shortLabel(mood),
                   maxLines: 2,

@@ -4,12 +4,12 @@ import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_spacing.dart';
 import '../../../app/theme/app_text_styles.dart';
 import '../../../data/models/models.dart';
-import '../../../shared/widgets/doodles.dart';
 import '../../../shared/widgets/empty_state.dart';
+import '../../../shared/widgets/paint/paint.dart';
 import 'friend_status_card.dart';
 
-/// 「いまひまな友達」 with an icon, the lime count badge, a squiggle underline and
-/// a responsive grid.
+/// 「いまひまな友達」 with an icon, the lime count dab, a brush-stroke underline
+/// and a responsive grid.
 class FriendsSection extends StatelessWidget {
   const FriendsSection({
     super.key,
@@ -40,9 +40,9 @@ class FriendsSection extends StatelessWidget {
   static const _twoColumnMinWidth = 348.0;
 
   /// Only some cards get a mark, so the grid does not look gridded.
-  static DoodleKind? _doodleFor(int index) => switch (index % 4) {
-    1 => DoodleKind.heart,
-    3 => DoodleKind.star,
+  static PaintMarkKind? _markFor(int index) => switch (index % 4) {
+    1 => PaintMarkKind.heart,
+    3 => PaintMarkKind.star,
     _ => null,
   };
 
@@ -65,12 +65,12 @@ class FriendsSection extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: AppTextStyles.sectionTitle,
                 ),
-                Doodle(
-                  kind: DoodleKind.squiggle,
-                  size: const Size(120, 8),
-                  color: AppColors.purple.withValues(alpha: 0.65),
-                  strokeWidth: 2.5,
-                  delay: const Duration(milliseconds: 100),
+                // A brush stroke, not a thin squiggle: the underline is paint
+                // now, thick in the middle and tapering at both ends.
+                BrushStroke(
+                  seed: 31,
+                  size: const Size(120, 9),
+                  color: AppColors.purple.withValues(alpha: 0.55),
                 ),
               ],
             ),
@@ -78,12 +78,11 @@ class FriendsSection extends StatelessWidget {
           const SizedBox(width: AppSpacing.s8),
           _CountBadge(count: friends.length),
           const SizedBox(width: AppSpacing.s8),
-          const Doodle(
-            kind: DoodleKind.sparks,
-            size: Size(20, 16),
+          const SplatterDots(
+            seed: 47,
+            size: Size(22, 18),
             color: AppColors.coral,
-            tilt: 0.2,
-            delay: Duration(milliseconds: 180),
+            count: 5,
           ),
         ],
       ),
@@ -104,7 +103,7 @@ class FriendsSection extends StatelessWidget {
           builder: (context, constraints) {
             final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
             // Narrow screens and large text switch to one column so names, the
-            // remaining time and the さそう pill never overlap.
+            // remaining time and the さそう dab never overlap.
             final columns =
                 constraints.maxWidth < _twoColumnMinWidth || textScale > 1.3
                 ? 1
@@ -149,7 +148,7 @@ class FriendsSection extends StatelessWidget {
                         accepted: acceptedUserIds.contains(
                           friends[index].user.id,
                         ),
-                        doodle: _doodleFor(index),
+                        mark: _markFor(index),
                         onKnock: () => onKnock(friends[index]),
                       ),
                     ),
@@ -168,15 +167,11 @@ class _CountBadge extends StatelessWidget {
   final int count;
 
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(
-      horizontal: AppSpacing.s8,
-      vertical: 2,
-    ),
-    decoration: BoxDecoration(
-      color: AppColors.lime,
-      borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
-    ),
+  Widget build(BuildContext context) => PaintDab(
+    seed: 53,
+    color: AppColors.lime,
+    padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s8, vertical: 3),
+    wobble: 0.05,
     child: Text(
       '$count人',
       style: AppTextStyles.caption.copyWith(
