@@ -162,7 +162,7 @@ class FriendStatusCard extends StatelessWidget {
 }
 
 /// The avatar with the friend's mood on its corner, the same language as the
-/// hero so 「🔥」 means the same thing everywhere.
+/// hero so a mood reads the same everywhere.
 class _MoodAvatar extends StatelessWidget {
   const _MoodAvatar({required this.friend});
 
