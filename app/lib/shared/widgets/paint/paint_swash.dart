@@ -8,8 +8,8 @@ import 'paint_geometry.dart';
 /// the box, so only its top edge is visible.
 ///
 /// That edge is a seeded wobble rather than a straight line. Two or three
-/// overlapping layers give it the watercolour depth of [PaintWash], and a faint
-/// pooling line follows the top edge.
+/// overlapping layers give it watercolour depth, and a faint pooling line
+/// follows the top edge.
 ///
 /// The bottom navigation no longer uses it: a shape spanning the width reads as
 /// a bar however irregular its edge is, so the nav sits on plain paper with a
