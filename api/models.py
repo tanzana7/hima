@@ -30,7 +30,7 @@ class User(Base):
     avatar: Mapped[str | None] = mapped_column(String(255))
     auto_mode: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     auto_mood: Mapped[str] = mapped_column(String(10), default="ok", server_default="ok")
-    notify_on_hima: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    notify_on_hima: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
 
 
 class Guild(Base):

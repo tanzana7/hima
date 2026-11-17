@@ -195,13 +195,13 @@ class SuggestDeclareButton(ui.DynamicItem, template=r"atsumaro:suggest:declare")
 
 
 class WatchToggle(ui.DynamicItem, template=r"atsumaro:watchtoggle:(?P<state>[01])"):
-    """見守り ON/OFF トグル。custom_id に現在の状態を埋め込む。"""
+    """お知らせ ON/OFF トグル。custom_id に現在の状態を埋め込む（内部名 notify_on_hima は変更なし）。"""
 
     def __init__(self, state: bool, row: int | None = 0) -> None:
         self.state = bool(state)
         super().__init__(
             ui.Button(
-                label=f"見守り: {'ON' if state else 'OFF'}",
+                label=f"お知らせ: {'ON' if state else 'OFF'}",
                 style=discord.ButtonStyle.success if state else discord.ButtonStyle.secondary,
                 custom_id=f"atsumaro:watchtoggle:{1 if state else 0}",
                 row=row,
@@ -230,7 +230,7 @@ class WatchToggle(ui.DynamicItem, template=r"atsumaro:watchtoggle:(?P<state>[01]
 
 
 class BoardView(ui.View):
-    """個人用掲示板（ephemeral）。ヒマ宣言/ノック/ブロック/見守り/やめるのボタン＋受信箱の返答ボタン。"""
+    """個人用掲示板（ephemeral）。ヒマ宣言/ノック/ブロック/お知らせ/やめるのボタン＋受信箱の返答ボタン。"""
 
     def __init__(self, bot: "HimaBot", data: dict) -> None:
         super().__init__(timeout=None)
