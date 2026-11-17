@@ -11,7 +11,7 @@ from . import matching, notify
 from . import discord_rest as _discord_rest
 from .discord_rest import knock_reply_components
 from .db import SessionLocal
-from .models import HimaSession, Knock, User
+from .models import Guild, HimaSession, Knock, Membership, User
 from .push import send_push
 from .services import (
     active_session,
@@ -320,6 +320,13 @@ def _inbox_and_results(db, viewer_id: int, viewer_mood: str | None) -> tuple[lis
 
 def board_for_guild(db, *, guild_id: int, viewer_id: int) -> dict:
     """単一ギルドの掲示板（Bot 向け）。共有可視・ブロック除外・source 非表示。"""
+    # 契約（§2）: guild_id と user_id を含む Bot リクエストは membership を upsertする。
+    # 掲示板を見ただけのユーザーも membership が作られ、「お返事」が送れるようになる。
+    # 既存行の visible は上書きしない（非表示設定を尊重。last_seen_at のみ更新）。
+    if db.get(Guild, guild_id) is not None:  # 未登録ギルドは FK のため作れない（board 自体は参照可）
+        upsert_user(db, viewer_id)
+        upsert_membership(db, guild_id, viewer_id)
+        db.commit()
     viewer_active = active_session(db, viewer_id)
     viewer_mood = viewer_active.mood if viewer_active else None
     hidden = blocked_ids(db, viewer_id)

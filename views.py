@@ -30,6 +30,30 @@ CONNECTION_ERROR_TEXT = "APIサーバーに接続できませんでした。し�
 ERROR_FOLLOWUP_TEXT = "エラーが発生しました。しばらくしてからもう一度試してください。"
 TEMPLATE_NONE = "__none__"  # 「誘い文なし」の select value（Discord は value に 1〜100 文字を要求するため空文字は不可）
 
+# API detail（英語）をそのまま見せないための対応表（knock 系の既知エラー）
+DETAIL_TEXTS_JA = {
+    "no shared visible guild": "共通のサーバーで見える状態がないみたい。しばらくしてからもう一度試してね",
+    "target has no active session": "その人はいま募集していないみたい",
+    "invalid action": "返答の種類が正しくないみたい。もう一度試してね",
+}
+
+
+def friendly_api_detail(detail: str) -> str:
+    """API の英語 detail を日本語の案内に置き換える（既知外はそのまま）。"""
+    return DETAIL_TEXTS_JA.get(str(detail), str(detail))
+
+
+def sort_candidates_active_first(candidates: list[dict]) -> list[dict]:
+    """宛先候補を「募集中（有効な宣言がある）」人が先頭になるよう並べ替える。
+
+    active キーがないもの（掲示板の sessions 行＝宣言中のみ）は active 扱い。
+    それ以外の人は入力順（＝Discord のメンバー順）を維持する（安定ソート）。
+    """
+    return sorted(
+        candidates,
+        key=lambda s: (not s.get("active", True)),
+    )
+
 
 async def send_api_error(target, exc: Exception) -> None:
     """Show a friendly ephemeral message for API errors (never crash the flow)."""
@@ -42,7 +66,7 @@ async def send_api_error(target, exc: Exception) -> None:
         elif exc.status_code == 403:
             content = "その人には送れません。"
         else:
-            content = f"エラーが発生しました: {exc.detail}"
+            content = f"エラーが発生しました: {friendly_api_detail(exc.detail)}"
     else:
         content = "予期しないエラーが発生しました。しばらくしてからもう一度試してください。"
     if target.response.is_done():
@@ -307,7 +331,18 @@ class BoardView(ErrorFollowupView):
         except Exception as exc:  # noqa: BLE001
             await send_api_error(interaction, exc)
             return
-        candidates = [s for s in data.get("sessions", []) if s["user_id"] != interaction.user.id][:CANDIDATE_LIMIT]
+        # 募集中（宣言中）の人が先頭、それ以外の人（サーバーメンバー）が後続の宛先候補
+        sessions = [s for s in data.get("sessions", []) if s["user_id"] != interaction.user.id]
+        active_ids = {s["user_id"] for s in sessions}
+        others: list[dict] = []
+        try:
+            async for member in interaction.guild.fetch_members(limit=200):  # type: ignore[union-attr]
+                if member.bot or member.id == interaction.user.id or member.id in active_ids:
+                    continue
+                others.append({"user_id": member.id, "display_name": member.display_name, "active": False})
+        except Exception as exc:  # noqa: BLE001 - メンバー一覧が取れない場合は宣言中の人だけで構わない
+            log.warning("fetch_members failed (ignored): %r", exc)
+        candidates = [dict(s, active=True) for s in sessions] + others[:CANDIDATE_LIMIT]
         if not candidates:
             await interaction.followup.send(
                 "お返事できる人がいないよ。自分が募集してみよう！", ephemeral=True
@@ -550,17 +585,24 @@ class KnockSendView(ErrorFollowupView):
         self.bot = bot
         self.user = user
         self.template: str | None = None  # 誘い文なしでも送れる
+        # 募集中（有効な宣言がある）人が先頭。それ以外の人は入力順を維持
+        ordered = sort_candidates_active_first(list(candidates))[:CANDIDATE_LIMIT]
+        self.candidates_by_id = {str(s["user_id"]): s for s in ordered}
         self.user_select.options = [
             discord.SelectOption(
                 label=s["display_name"],
                 value=str(s["user_id"]),
-                description=f"{MOOD_EMOJI.get(s['mood'], '🙂')} {ACTIVITY_LABELS.get(s['activity'], s['activity'])}",
+                description=f"{MOOD_EMOJI.get(s['mood'], '🙂')} {ACTIVITY_LABELS.get(s['activity'], s['activity'])}"
+                if s.get("active", True)
+                else None,
             )
-            for s in candidates
+            for s in ordered
         ]
+        # max_values は選択肢数を超えられない
+        self.user_select.max_values = min(CANDIDATE_LIMIT, max(1, len(ordered)))
 
-    @ui.select(cls=ui.UserSelect, placeholder="誰にお返事する？（最大25人まで）", min_values=1, max_values=CANDIDATE_LIMIT, row=0)
-    async def user_select(self, interaction: discord.Interaction, select: ui.UserSelect) -> None:
+    @ui.select(placeholder="誰にお返事する？（最大25人まで）", min_values=1, max_values=CANDIDATE_LIMIT, row=0)
+    async def user_select(self, interaction: discord.Interaction, select: ui.Select) -> None:
         await interaction.response.defer()
 
     @ui.select(
@@ -580,22 +622,23 @@ class KnockSendView(ErrorFollowupView):
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
         parts = []
-        for member in self.user_select.values:
+        for uid in self.user_select.values:
+            name = self.candidates_by_id.get(str(uid), {}).get("display_name") or f"discord:{uid}"
             try:
                 await self.bot.api.create_knock(
-                    from_user=self.user.id, to_user=member.id, template=self.template
+                    from_user=self.user.id, to_user=int(uid), template=self.template
                 )
             except ApiHTTPError as exc:
                 if exc.status_code == 409:
-                    parts.append(f"⏳ {member.display_name}: さっき送ったばかりだよ")
+                    parts.append(f"⏳ {name}: さっき送ったばかりだよ")
                 elif exc.status_code == 403:
-                    parts.append(f"🚫 {member.display_name}: その人には送れません")
+                    parts.append(f"🚫 {name}: その人には送れません")
                 else:
-                    parts.append(f"⚠️ {member.display_name}: {exc.detail}")
+                    parts.append(f"⚠️ {name}: {friendly_api_detail(exc.detail)}")
             except ApiConnectionError:
-                parts.append(f"⚠️ {member.display_name}: {CONNECTION_ERROR_TEXT}")
+                parts.append(f"⚠️ {name}: {CONNECTION_ERROR_TEXT}")
             else:
-                parts.append(f"✅ {member.display_name}: 届けたよ！（相手の受信箱と DM に届くよ）")
+                parts.append(f"✅ {name}: 届けたよ！（相手の受信箱と DM に届くよ）")
         await interaction.followup.send("\n".join(parts), ephemeral=True)
 
 
@@ -617,7 +660,7 @@ class KnockTemplateView(ErrorFollowupView):
             elif exc.status_code == 403:
                 content = "🚫 その人には送れません。"
             else:
-                content = f"⚠️ {exc.detail}"
+                content = f"⚠️ {friendly_api_detail(exc.detail)}"
         except ApiConnectionError:
             content = f"⚠️ {CONNECTION_ERROR_TEXT}"
         else:

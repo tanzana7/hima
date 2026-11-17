@@ -111,7 +111,7 @@
 | POST | `/bot/guilds/{guild_id}/teardown` | list_message_id / panel_message_id が残っていればその2件を REST 削除（失敗は無視）して NULL 化。旧パネル掃除用 |
 | POST | `/bot/sessions` | ヒマ宣言（延長=同ID更新／新規は source=manual）。minutes は整数分（**5〜720 分を想定**。API は 1〜1440 にクランプ）。マッチング評価＋お知らせ（watch_queue）登録 |
 | DELETE | `/bot/sessions` | 有効セッション終了。宛ノックを expired に |
-| GET | `/bot/board?guild_id=&user_id=` | 閲覧者に見える有効セッション一覧（共有可視・ブロック除外・source非表示）＋受信したお返事（最大5件。**`to_moon` は宛先＝受信者が現在🌙の有効セッションを持つときのみ true**）＋未見結果。レスポンスに `viewer.notify_on_hima` を含む |
+| GET | `/bot/board?guild_id=&user_id=` | 閲覧者に見える有効セッション一覧（共有可視・ブロック除外・source非表示）＋受信したお返事（最大5件。**`to_moon` は宛先＝受信者が現在🌙の有効セッションを持つときのみ true**）＋未見結果。レスポンスに `viewer.notify_on_hima` を含む。**guilds に登録済みのサーバーであれば、閲覧者の membership を upsert する**（行が無ければ visible=true で作成。既存行の visible は変更しない・last_seen_at のみ更新）。「掲示板を見ただけのユーザー」もお返事を送れるようになるための upsert（契約 §2 の guild_id＋user_id を含むリクエストの規則どおり） |
 | POST | `/bot/knocks/results/seen` | 未見結果に `result_seen_at` を打つ |
 | POST | `/bot/knocks` | ノック作成（相手が有効セッション中・共有可視・非ブロック必須。5分クールダウンは 409） |
 | POST | `/bot/knocks/{id}/reply` | 返答（accept/later/pass）。`{user_id, action}`。to_user 本人のみ。status と responded_at を更新。**Bot 側は user_id 必須のまま（変更なし）** |
