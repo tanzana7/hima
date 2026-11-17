@@ -7,8 +7,15 @@ import '../../app/theme/app_text_styles.dart';
 import '../../data/models/models.dart';
 import '../../shared/haptics.dart';
 import '../../shared/widgets/avatar_view.dart';
+import '../../shared/widgets/paint/paint.dart';
+import '../../shared/widgets/paint_button.dart';
 import '../../shared/widgets/shake.dart';
 import '../../state/app_view_model.dart';
+
+/// Captions that sit directly on a [PaintWash]. [AppColors.muted] measures
+/// 4.2:1 once the wash layers overlap, so text on paint takes this darker tone
+/// instead (5.4:1).
+const _washMuted = Color(0xFF635B6F);
 
 /// Settings content shared by the プロフィール tab and the header gear route.
 class SettingsView extends StatefulWidget {
@@ -138,6 +145,8 @@ class _SettingsViewState extends State<SettingsView> {
       children: [
         if (settings != null) ...[
           _SectionCard(
+            seed: paintSeedOf('settings-auto'),
+            color: AppColors.purpleSoft,
             children: [
               _SavingControl<bool>(
                 value: settings.autoMode,
@@ -169,7 +178,6 @@ class _SettingsViewState extends State<SettingsView> {
                   ],
                 ),
               ),
-              const Divider(height: 1),
               _SavingControl<bool>(
                 value: settings.notifyOnHima,
                 onSave: (value) =>
@@ -186,10 +194,10 @@ class _SettingsViewState extends State<SettingsView> {
         ],
         const _SectionHeading('サーバーごとの表示'),
         _SectionCard(
+          seed: paintSeedOf('settings-guilds'),
+          color: AppColors.skySoft,
           children: [
-            for (var index = 0; index < viewModel.guilds.length; index++) ...[
-              if (index > 0)
-                const Divider(height: 1, indent: 16, endIndent: 16),
+            for (var index = 0; index < viewModel.guilds.length; index++)
               _SavingControl<bool>(
                 // Keyed so a guild leaving the list cannot hand its draft to the
                 // row that slides into its place.
@@ -206,9 +214,7 @@ class _SettingsViewState extends State<SettingsView> {
                   onChanged: onChanged,
                 ),
               ),
-            ],
-            if (viewModel.guilds.isEmpty)
-              const _SectionNote('共有サーバーはないよ'),
+            if (viewModel.guilds.isEmpty) const _SectionNote('共有サーバーはないよ'),
           ],
         ),
         const SizedBox(height: AppSpacing.s24),
@@ -221,6 +227,8 @@ class _SettingsViewState extends State<SettingsView> {
           ),
         ),
         _SectionCard(
+          seed: paintSeedOf('settings-blocks'),
+          color: AppColors.peachSoft,
           children: viewModel.blocks.isEmpty
               ? const [_SectionNote('設定した人はいないよ')]
               : [
@@ -256,6 +264,8 @@ class _SettingsViewState extends State<SettingsView> {
           ),
         ),
         _SectionCard(
+          seed: paintSeedOf('settings-slots'),
+          color: AppColors.mintSoft,
           children: viewModel.regularSlots.isEmpty
               ? const [_SectionNote('曜日と時間を登録できるよ')]
               : [
@@ -282,10 +292,13 @@ class _SettingsViewState extends State<SettingsView> {
         _detectionPlaceholder(context),
         if (widget.showLogout) ...[
           const SizedBox(height: AppSpacing.s24),
-          OutlinedButton.icon(
+          PaintButton(
+            seed: 991,
+            label: 'ログアウト',
+            icon: Icons.logout_rounded,
+            color: AppColors.purpleSoft,
+            foreground: AppColors.ink,
             onPressed: () => viewModel.logout(),
-            icon: const Icon(Icons.logout_rounded, size: 18),
-            label: const Text('ログアウト'),
           ),
         ],
       ],
@@ -293,6 +306,8 @@ class _SettingsViewState extends State<SettingsView> {
   }
 
   Widget _detectionPlaceholder(BuildContext context) => _SectionCard(
+    seed: paintSeedOf('settings-detection'),
+    color: AppColors.lemonSoft,
     children: [
       Padding(
         padding: const EdgeInsets.all(AppSpacing.s16),
@@ -312,7 +327,7 @@ class _SettingsViewState extends State<SettingsView> {
                   const SizedBox(height: AppSpacing.s4),
                   Text(
                     'Androidのみ。近日対応予定です。',
-                    style: AppTextStyles.caption,
+                    style: AppTextStyles.caption.copyWith(color: _washMuted),
                   ),
                   // TODO: The Android usage-detection task adds the
                   // usage-access flow here.
@@ -497,7 +512,10 @@ class _AutoMoodChips extends StatelessWidget {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text('自動宣言の温度感', style: AppTextStyles.caption),
+        Text(
+          '自動宣言の温度感',
+          style: AppTextStyles.caption.copyWith(color: _washMuted),
+        ),
         const SizedBox(height: AppSpacing.s8),
         _SavingControl<Mood>(
           value: mood,
@@ -581,24 +599,20 @@ class _MoodChip extends StatelessWidget {
     child: InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
-      child: AnimatedContainer(
-        duration: MediaQuery.disableAnimationsOf(context)
-            ? Duration.zero
-            : const Duration(milliseconds: 160),
-        curve: Curves.easeOut,
-        constraints: const BoxConstraints(minHeight: AppSpacing.minTapTarget),
+      child: PaintDab(
+        seed: paintSeedOf('mood-chip-${mood.name}'),
+        // The chosen chip is the saturated purple with white text, the others a
+        // soft tint with ink. The fill swaps in one step: a half-faded fill
+        // would drop the label below 4.5:1 for the length of the animation.
+        color: selected ? AppColors.purple : AppColors.purpleSoft,
+        // 14dp of vertical padding brings the dab to the 48dp tap target
+        // without a fixed height, so it still grows with the text.
         padding: const EdgeInsets.symmetric(
           horizontal: AppSpacing.s12,
-          vertical: AppSpacing.s8,
+          vertical: 14,
         ),
-        decoration: BoxDecoration(
-          color: selected ? AppColors.purpleSoft : AppColors.surface,
-          borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
-          border: Border.all(
-            color: selected ? AppColors.purple : AppColors.purpleSoft,
-            width: AppSpacing.borderWidth,
-          ),
-        ),
+        wobble: 0.045,
+        droplets: selected ? 2 : 0,
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -610,7 +624,7 @@ class _MoodChip extends StatelessWidget {
               style: AppTextStyles.body.copyWith(
                 fontSize: 14,
                 fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-                color: selected ? AppColors.ink : AppColors.muted,
+                color: selected ? AppColors.surface : AppColors.ink,
               ),
             ),
           ],
@@ -689,10 +703,23 @@ class _SectionHeading extends StatelessWidget {
     child: Row(
       children: [
         Expanded(
-          child: Text(
-            title,
-            maxLines: 2,
-            style: AppTextStyles.friendName.copyWith(fontSize: 17),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                title,
+                maxLines: 2,
+                style: AppTextStyles.friendName.copyWith(fontSize: 17),
+              ),
+              // A brush stroke under the heading, the same underline the home
+              // screen's sections carry.
+              BrushStroke(
+                seed: paintSeedOf('settings-heading-$title'),
+                size: const Size(96, 8),
+                color: AppColors.purple.withValues(alpha: 0.55),
+              ),
+            ],
           ),
         ),
         ?trailing,
@@ -701,23 +728,39 @@ class _SectionHeading extends StatelessWidget {
   );
 }
 
+/// A settings group: a soft wash instead of a bordered white box, with the rows
+/// separated by spacing rather than by dividers.
 class _SectionCard extends StatelessWidget {
-  const _SectionCard({required this.children});
+  const _SectionCard({
+    required this.seed,
+    required this.color,
+    required this.children,
+  });
 
+  final int seed;
+  final Color color;
   final List<Widget> children;
 
   @override
-  Widget build(BuildContext context) => Container(
-    decoration: BoxDecoration(
-      color: AppColors.surface,
-      borderRadius: BorderRadius.circular(AppSpacing.radiusCard),
-      border: Border.all(
-        color: AppColors.purpleSoft,
-        width: AppSpacing.borderWidth,
-      ),
+  Widget build(BuildContext context) => PaintWash(
+    seed: seed,
+    color: color,
+    padding: const EdgeInsets.symmetric(
+      horizontal: AppSpacing.s8,
+      vertical: AppSpacing.s8,
     ),
-    clipBehavior: Clip.antiAlias,
-    child: Column(children: children),
+    corner: AppSpacing.radiusCard,
+    child: Column(
+      // Stretch so a note fills the wash and reads left-aligned instead of
+      // floating in the middle of the paint.
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (var index = 0; index < children.length; index++) ...[
+          if (index > 0) const SizedBox(height: AppSpacing.s4),
+          children[index],
+        ],
+      ],
+    ),
   );
 }
 
@@ -729,6 +772,9 @@ class _SectionNote extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.all(AppSpacing.s16),
-    child: Text(message, style: AppTextStyles.caption),
+    child: Text(
+      message,
+      style: AppTextStyles.caption.copyWith(color: _washMuted),
+    ),
   );
 }

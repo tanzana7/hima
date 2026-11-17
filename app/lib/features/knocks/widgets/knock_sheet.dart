@@ -8,6 +8,8 @@ import '../../../data/api_client.dart';
 import '../../../data/models/models.dart';
 import '../../../shared/haptics.dart';
 import '../../../shared/widgets/avatar_view.dart';
+import '../../../shared/widgets/paint/paint.dart';
+import '../../../shared/widgets/paint_button.dart';
 import '../../../shared/widgets/shake.dart';
 import '../../../state/app_view_model.dart';
 
@@ -177,48 +179,56 @@ class _KnockSheetState extends State<KnockSheet>
           const SizedBox(height: AppSpacing.s24),
           Shake(
             key: _shakeKey,
-            child: SizedBox(
-              height: 56,
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  Positioned.fill(
-                    child: FilledButton(
-                      onPressed: _sending ? null : _send,
-                      child: const Text('さそう'),
-                    ),
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                // A big purple dab instead of a stadium button: the sheet's
+                // send action is the same paint as the home screen's primary.
+                // It has no fixed height, so the label still fits at 200% text
+                // scale.
+                PaintButton(
+                  seed: 5150,
+                  label: 'さそう',
+                  color: AppColors.purple,
+                  foreground: AppColors.surface,
+                  minHeight: 56,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.s24,
+                    vertical: AppSpacing.s16,
                   ),
-                  if (_flying)
-                    Positioned.fill(
-                      child: IgnorePointer(
-                        child: AnimatedBuilder(
-                          animation: _flight,
-                          builder: (context, child) {
-                            final t = _flight.value;
-                            return Align(
-                              alignment: Alignment(
-                                -0.4 + t * 2.2,
-                                -0.1 - t * 1.8,
+                  textStyle: AppTextStyles.button.copyWith(fontSize: 17),
+                  onPressed: _sending ? null : _send,
+                ),
+                if (_flying)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: AnimatedBuilder(
+                        animation: _flight,
+                        builder: (context, child) {
+                          final t = _flight.value;
+                          return Align(
+                            alignment: Alignment(
+                              -0.4 + t * 2.2,
+                              -0.1 - t * 1.8,
+                            ),
+                            child: Opacity(
+                              opacity: (1 - t).clamp(0.0, 1.0),
+                              child: Transform.rotate(
+                                angle: t * 1.1,
+                                child: child,
                               ),
-                              child: Opacity(
-                                opacity: (1 - t).clamp(0.0, 1.0),
-                                child: Transform.rotate(
-                                  angle: t * 1.1,
-                                  child: child,
-                                ),
-                              ),
-                            );
-                          },
-                          child: const Icon(
-                            Icons.send_rounded,
-                            size: 22,
-                            color: AppColors.purple,
-                          ),
+                            ),
+                          );
+                        },
+                        child: const Icon(
+                          Icons.send_rounded,
+                          size: 22,
+                          color: AppColors.purple,
                         ),
                       ),
                     ),
-                ],
-              ),
+                  ),
+              ],
             ),
           ),
         ],
@@ -227,6 +237,10 @@ class _KnockSheetState extends State<KnockSheet>
   }
 }
 
+/// One of the three fixed templates as a selectable dab: the chosen one is the
+/// saturated purple with white text, the others a soft tint with ink. The fill
+/// swaps in one step rather than tweening, because a half-faded fill would put
+/// the label below 4.5:1 for the length of the animation.
 class _TemplateChip extends StatelessWidget {
   const _TemplateChip({
     required this.template,
@@ -243,33 +257,30 @@ class _TemplateChip extends StatelessWidget {
     button: true,
     selected: selected,
     label: template.text,
+    // The child's semantics are excluded, so the wrapper has to carry the
+    // action itself or the chip cannot be activated by a screen reader.
+    onTap: onTap,
     excludeSemantics: true,
     child: InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
-      child: Container(
-        constraints: const BoxConstraints(
-          minHeight: AppSpacing.minTapTarget,
-        ),
+      child: PaintDab(
+        seed: paintSeedOf('knock-template-${template.name}'),
+        color: selected ? AppColors.purple : AppColors.purpleSoft,
+        // 14dp of vertical padding brings the dab to the 48dp tap target
+        // without a fixed height, so it still grows with the text.
         padding: const EdgeInsets.symmetric(
           horizontal: AppSpacing.s16,
-          vertical: AppSpacing.s8,
+          vertical: 14,
         ),
-        decoration: BoxDecoration(
-          color: selected ? AppColors.purpleSoft : AppColors.surface,
-          borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
-          border: Border.all(
-            color: selected ? AppColors.purple : AppColors.purpleSoft,
-            width: AppSpacing.borderWidth,
-          ),
-        ),
-        child: Center(
-          child: Text(
-            template.text,
-            style: AppTextStyles.body.copyWith(
-              fontSize: 14,
-              fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-            ),
+        wobble: 0.045,
+        droplets: selected ? 2 : 0,
+        child: Text(
+          template.text,
+          style: AppTextStyles.body.copyWith(
+            fontSize: 14,
+            fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+            color: selected ? AppColors.surface : AppColors.ink,
           ),
         ),
       ),

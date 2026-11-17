@@ -8,6 +8,8 @@ import '../data/api_client.dart';
 import '../data/app_config.dart';
 import '../data/discord_oauth.dart';
 import '../shared/widgets/hima_logo.dart';
+import '../shared/widgets/paint/paint.dart';
+import '../shared/widgets/paint_button.dart';
 import '../state/app_view_model.dart';
 
 class LoginScreen extends StatelessWidget {
@@ -68,34 +70,113 @@ class LoginScreen extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Center(
-                    child: MediaQuery.withNoTextScaling(
-                      child: const HimaLogo(fontSize: 56),
-                    ),
+                  // The logo and the headline sit on layered paint: a lavender
+                  // splash underneath and a lemon→coral one on top. Both keep
+                  // their content inside the safe rect, so the ink text is
+                  // always on colour and never on bare paper.
+                  Stack(
+                    // The column above stretches the stack to the full width,
+                    // so the splash is centred explicitly: the default
+                    // top-start would park it against the left edge whenever it
+                    // ends up narrower than the stack.
+                    alignment: Alignment.center,
+                    clipBehavior: Clip.none,
+                    children: [
+                      Positioned.fill(
+                        child: PaintSplat(
+                          seed: 8123,
+                          colors: const [
+                            AppColors.purpleSoft,
+                            AppColors.skySoft,
+                          ],
+                          padding: const EdgeInsets.all(AppSpacing.s24),
+                          corner: 56,
+                          wobble: 0.09,
+                          droplets: 8,
+                          drips: 1,
+                        ),
+                      ),
+                      PaintSplat(
+                        seed: 4211,
+                        colors: const [
+                          AppColors.lemonSoft,
+                          AppColors.coralLight,
+                        ],
+                        padding: const EdgeInsets.all(AppSpacing.s24),
+                        corner: 56,
+                        // A wide box with a small wobble reads as a rounded
+                        // rectangle, so the login splash leans on a stronger
+                        // one: it is the only shape on the screen and has to
+                        // carry the wet-paint look by itself.
+                        wobble: 0.085,
+                        droplets: 10,
+                        drips: 2,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            // The wordmark keeps its fixed size: it is a mark,
+                            // not body text, and the headline below carries the
+                            // message at every text scale.
+                            Center(
+                              child: MediaQuery.withNoTextScaling(
+                                child: const HimaLogo(fontSize: 56),
+                              ),
+                            ),
+                            const SizedBox(height: AppSpacing.s16),
+                            Text(
+                              'いま、ひま？',
+                              textAlign: TextAlign.center,
+                              style: AppTextStyles.heroTitle,
+                            ),
+                          ],
+                        ),
+                      ),
+                      // Droplets thrown clear of the paint, kept off the text.
+                      const Positioned(
+                        top: 0,
+                        left: 0,
+                        child: SplatterDots(
+                          seed: 91,
+                          size: Size(26, 22),
+                          color: AppColors.coral,
+                          count: 6,
+                        ),
+                      ),
+                      const Positioned(
+                        bottom: 4,
+                        right: 0,
+                        child: SplatterDots(
+                          seed: 93,
+                          size: Size(24, 20),
+                          color: AppColors.purple,
+                          count: 5,
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: AppSpacing.s24),
-                  Text(
-                    'いま、ひま？',
-                    textAlign: TextAlign.center,
-                    style: AppTextStyles.heroTitle,
-                  ),
-                  const SizedBox(height: AppSpacing.s8),
                   Text(
                     'ひまなら友達に知らせよう',
                     textAlign: TextAlign.center,
                     style: AppTextStyles.body.copyWith(color: AppColors.muted),
                   ),
                   const SizedBox(height: AppSpacing.s32),
-                  FilledButton(
+                  // A big lemon dab with ink text, the same primary as the home
+                  // screen's 「ひまを宣言」.
+                  PaintButton(
+                    seed: 3301,
+                    label: 'Discordでログイン',
+                    color: AppColors.yellow,
+                    foreground: AppColors.ink,
+                    minHeight: 56,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.s24,
+                      vertical: AppSpacing.s16,
+                    ),
+                    textStyle: AppTextStyles.button.copyWith(fontSize: 17),
                     onPressed: viewModel.isBusy
                         ? null
                         : () => _login(context, viewModel),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: AppColors.yellow,
-                      foregroundColor: AppColors.ink,
-                      minimumSize: const Size.fromHeight(56),
-                    ),
-                    child: const Text('Discordでログイン'),
                   ),
                 ],
               ),

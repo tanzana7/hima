@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -11,7 +12,14 @@ import '../../shared/haptics.dart';
 import '../../shared/widgets/avatar_view.dart';
 import '../../shared/widgets/confetti_burst.dart';
 import '../../shared/widgets/empty_state.dart';
+import '../../shared/widgets/paint/paint.dart';
+import '../../shared/widgets/paint_button.dart';
 import '../../state/app_view_model.dart';
+
+/// Captions that sit directly on a [PaintWash]. [AppColors.muted] measures
+/// 4.2:1 once the wash layers overlap, so text on paint takes this darker tone
+/// instead (5.4:1).
+const _washMuted = Color(0xFF635B6F);
 
 /// Knocks inbox and sent list, reached from the header bell.
 class KnocksScreen extends StatefulWidget {
@@ -181,6 +189,9 @@ class _KnocksScreenState extends State<KnocksScreen> {
   }
 }
 
+/// 受信 / 送信. There is no pale track and no white pill: the selected segment
+/// gets a purple dab that splashes in, and the other one is plain text on the
+/// paper.
 class _Toggle extends StatelessWidget {
   const _Toggle({required this.showSent, required this.onChanged});
 
@@ -188,30 +199,23 @@ class _Toggle extends StatelessWidget {
   final ValueChanged<bool> onChanged;
 
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(AppSpacing.s4),
-    decoration: BoxDecoration(
-      color: AppColors.purpleSoft.withValues(alpha: 0.5),
-      borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
-    ),
-    child: Row(
-      children: [
-        Expanded(
-          child: _ToggleItem(
-            label: '受信',
-            selected: !showSent,
-            onTap: () => onChanged(false),
-          ),
+  Widget build(BuildContext context) => Row(
+    children: [
+      Expanded(
+        child: _ToggleItem(
+          label: '受信',
+          selected: !showSent,
+          onTap: () => onChanged(false),
         ),
-        Expanded(
-          child: _ToggleItem(
-            label: '送信',
-            selected: showSent,
-            onTap: () => onChanged(true),
-          ),
+      ),
+      Expanded(
+        child: _ToggleItem(
+          label: '送信',
+          selected: showSent,
+          onTap: () => onChanged(true),
         ),
-      ],
-    ),
+      ),
+    ],
   );
 }
 
@@ -226,33 +230,67 @@ class _ToggleItem extends StatelessWidget {
   final bool selected;
   final VoidCallback onTap;
 
+  /// The label's box, shared by both states so the text does not shift when the
+  /// dab moves between the segments.
+  static const _labelPadding = EdgeInsets.symmetric(
+    horizontal: AppSpacing.s24,
+    vertical: AppSpacing.s8,
+  );
+
   @override
   Widget build(BuildContext context) => Semantics(
     button: true,
     selected: selected,
     label: label,
+    // The child's semantics are excluded, so the wrapper has to carry the
+    // action itself or the segment cannot be activated by a screen reader.
+    onTap: onTap,
     excludeSemantics: true,
     child: InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
-      child: AnimatedContainer(
-        duration: MediaQuery.disableAnimationsOf(context)
-            ? Duration.zero
-            : const Duration(milliseconds: 180),
-        constraints: const BoxConstraints(
-          minHeight: AppSpacing.minTapTarget,
-        ),
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: selected ? AppColors.surface : Colors.transparent,
-          borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
-        ),
-        child: Text(
-          label,
-          style: AppTextStyles.body.copyWith(
-            fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-            color: selected ? AppColors.ink : AppColors.muted,
-          ),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: AppSpacing.minTapTarget),
+        child: Center(
+          child: selected
+              ? TweenAnimationBuilder<double>(
+                  // The dab lands with a small overshoot. It only ever grows
+                  // past its resting size, so the white label never leaves the
+                  // paint while it settles.
+                  tween: Tween(begin: 0, end: 1),
+                  duration: MediaQuery.disableAnimationsOf(context)
+                      ? Duration.zero
+                      : const Duration(milliseconds: 320),
+                  curve: Curves.easeOut,
+                  builder: (context, t, child) => Transform.scale(
+                    scale: 1 + 0.06 * math.sin(math.pi * t),
+                    child: child,
+                  ),
+                  child: PaintDab(
+                    seed: paintSeedOf('knocks-tab-$label'),
+                    color: AppColors.purple,
+                    padding: _labelPadding,
+                    wobble: 0.04,
+                    droplets: 2,
+                    child: Text(
+                      label,
+                      style: AppTextStyles.body.copyWith(
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.surface,
+                      ),
+                    ),
+                  ),
+                )
+              : Padding(
+                  padding: _labelPadding,
+                  child: Text(
+                    label,
+                    style: AppTextStyles.body.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.muted,
+                    ),
+                  ),
+                ),
         ),
       ),
     ),
@@ -288,16 +326,15 @@ class _KnockCard extends StatelessWidget {
         : knock.status == KnockStatus.pending
         ? _relativeTime(knock.createdAt, DateTime.now())
         : _answeredLabel(knock.status);
-    return Container(
+    // A wash instead of a bordered white box: the paint is the card's edge, so
+    // there is no hairline to separate it from the page. A new reply keeps the
+    // peach tint and the 新着 dab rather than a coral border, because a coral
+    // wash would drop the caption text below 4.5:1.
+    return PaintWash(
+      seed: paintSeedOf('knock-${knock.id}'),
+      color: isNew ? AppColors.peachSoft : AppColors.purpleSoft,
       padding: const EdgeInsets.all(AppSpacing.s16),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(AppSpacing.radiusCard),
-        border: Border.all(
-          color: isNew ? AppColors.coral : AppColors.purpleSoft,
-          width: AppSpacing.borderWidth,
-        ),
-      ),
+      corner: AppSpacing.radiusCard,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -322,7 +359,7 @@ class _KnockCard extends StatelessWidget {
                     Text(
                       knock.template.text,
                       maxLines: 2,
-                      style: AppTextStyles.caption,
+                      style: AppTextStyles.caption.copyWith(color: _washMuted),
                     ),
                   ],
                 ),
@@ -332,17 +369,14 @@ class _KnockCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   if (isNew)
-                    Container(
+                    PaintDab(
+                      seed: paintSeedOf('knock-new-${knock.id}'),
+                      color: AppColors.coral,
                       padding: const EdgeInsets.symmetric(
                         horizontal: AppSpacing.s8,
-                        vertical: 2,
+                        vertical: 3,
                       ),
-                      decoration: BoxDecoration(
-                        color: AppColors.coral,
-                        borderRadius: BorderRadius.circular(
-                          AppSpacing.radiusPill,
-                        ),
-                      ),
+                      wobble: 0.05,
                       child: Text(
                         '新着',
                         style: AppTextStyles.caption.copyWith(
@@ -354,7 +388,7 @@ class _KnockCard extends StatelessWidget {
                   Text(
                     statusText,
                     style: AppTextStyles.caption.copyWith(
-                      color: isNew ? AppColors.ink : AppColors.muted,
+                      color: isNew ? AppColors.ink : _washMuted,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
@@ -364,7 +398,10 @@ class _KnockCard extends StatelessWidget {
           ),
           if (!sent && knock.recipientNote != null) ...[
             const SizedBox(height: AppSpacing.s8),
-            Text(knock.recipientNote!, style: AppTextStyles.caption),
+            Text(
+              knock.recipientNote!,
+              style: AppTextStyles.caption.copyWith(color: _washMuted),
+            ),
           ],
           if (!sent && knock.status == KnockStatus.pending) ...[
             const SizedBox(height: AppSpacing.s12),
@@ -448,27 +485,24 @@ class _ReplyButtons extends StatelessWidget {
   );
 
   Widget _button(KnockStatus status, String label, {bool filled = false}) {
-    // Equal thirds of a card are narrow, so the theme's wide button padding and
-    // larger label are trimmed back for these three.
-    final style = ButtonStyle(
-      padding: const WidgetStatePropertyAll(
-        EdgeInsets.symmetric(horizontal: AppSpacing.s8),
+    // Equal thirds of a card are narrow, so the dab's padding and label are
+    // trimmed back for these three. 「いいよ！」 is the primary answer and takes
+    // the purple dab with white text; the other two are a soft tint with ink.
+    // The tint is sky, not the card's own lavender or peach: a dab of the wash's
+    // hue disappears into it, and mint is already the colour of an accepted
+    // knock.
+    final style = AppTextStyles.button.copyWith(fontSize: _labelSize);
+    return PaintButton(
+      seed: paintSeedOf('knock-reply-${status.name}'),
+      label: label,
+      color: filled ? AppColors.purple : AppColors.skySoft,
+      foreground: filled ? AppColors.surface : AppColors.ink,
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.s8,
+        vertical: AppSpacing.s12,
       ),
-      textStyle: WidgetStatePropertyAll(
-        AppTextStyles.button.copyWith(fontSize: _labelSize),
-      ),
+      textStyle: style,
+      onPressed: () => onRespond(status),
     );
-    void respond() => onRespond(status);
-    return filled
-        ? FilledButton(
-            onPressed: respond,
-            style: style,
-            child: Text(label, maxLines: 1),
-          )
-        : OutlinedButton(
-            onPressed: respond,
-            style: style,
-            child: Text(label, maxLines: 1),
-          );
   }
 }

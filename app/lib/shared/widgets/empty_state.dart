@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../app/theme/app_colors.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_text_styles.dart';
+import 'paint/paint.dart';
 
 /// Quiet placeholder for empty and error states of a list.
 class EmptyState extends StatelessWidget {
@@ -25,7 +26,28 @@ class EmptyState extends StatelessWidget {
     ),
     child: Column(
       children: [
-        Icon(icon, size: 30, color: AppColors.muted),
+        // The icon stays the message's anchor; the star is a flick of paint
+        // beside it, so an empty list still belongs to the painted screens.
+        SizedBox(
+          width: 30,
+          height: 30,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Icon(icon, size: 30, color: AppColors.muted),
+              const Positioned(
+                top: -4,
+                right: -7,
+                child: PaintMark(
+                  kind: PaintMarkKind.star,
+                  seed: 23,
+                  color: AppColors.yellow,
+                  size: 14,
+                ),
+              ),
+            ],
+          ),
+        ),
         const SizedBox(height: AppSpacing.s8),
         Text(
           message,
