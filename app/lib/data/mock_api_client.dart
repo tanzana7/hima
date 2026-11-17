@@ -5,9 +5,10 @@ import 'models/models.dart';
 
 /// In-memory stand-in for the shared API server.
 ///
-/// The data is shaped so the demo flow works end to end: the default mood is
-/// `ok`, so a one-tap declare matches けんた (ok × ok), and a knock to him is
-/// answered with 「いいよ！」 a few seconds later without a push service.
+/// It answers the same snapshots as the real server so the app runs offline and
+/// the demo flow works end to end: the default mood is `ok`, so a one-tap
+/// declare matches けんた (ok × ok), and a knock to him is answered with
+/// 「いいよ！」 a few seconds later without a push service.
 class MockApiClient implements ApiClient {
   MockApiClient() {
     final now = DateTime.now().toUtc();
@@ -95,12 +96,11 @@ class MockApiClient implements ApiClient {
     _addMember('111111111111111110', 'かんた', '222222222222222203');
     // Seeded so the 「マッチングしない人」 list is not empty in the demo.
     _blockedIds.add('111111111111111106');
-    final me = _summary(_myId, _myName);
     _inbox = [
       Knock(
         id: 'knock-in-1',
         sender: _friends[1].user,
-        recipient: me,
+        recipient: _summary(_myId, _myName),
         template: KnockTemplate.game,
         status: KnockStatus.pending,
         createdAt: now.subtract(const Duration(minutes: 2)),
@@ -121,9 +121,6 @@ class MockApiClient implements ApiClient {
   late List<Knock> _inbox;
   final List<Knock> _sent = [];
 
-  /// First time each session pair was matched, so the same pair is not
-  /// re-notified after a mood or activity change.
-  final Map<String, DateTime> _matchCreatedAt = {};
   final List<_MockMember> _members = [];
   final Set<String> _blockedIds = {};
   final List<RegularSlot> _regularSlots = [];
@@ -135,6 +132,10 @@ class MockApiClient implements ApiClient {
   HimaSession? _myHima;
   int _sessionSequence = 0;
   int _knockSequence = 0;
+  int _slotSequence = 0;
+
+  @override
+  void Function()? onUnauthorized;
 
   static UserSummary _summary(String id, String name) =>
       UserSummary(id: id, displayName: name);
@@ -186,26 +187,37 @@ class MockApiClient implements ApiClient {
       UserProfile(id: _myId, displayName: _myName, settings: _settings);
 
   @override
-  Future<UserProfile> loginWithDiscord(DiscordAuthRequest? request) async =>
-      _profile;
+  Future<bool> restoreToken() async => false;
+
+  @override
+  Future<void> loginWithDiscord(DiscordAuthRequest? request) async {}
 
   @override
   Future<void> logout() async {}
 
   @override
-  Future<UserProfile> getMe() async => _profile;
+  Future<MeSnapshot> getMe() async => MeSnapshot(
+    profile: _profile,
+    session: _activeHima,
+    guilds: List.unmodifiable(_guilds),
+  );
 
   @override
-  Future<UserSettings> updateSettings(UserSettings settings) async {
-    _settings = settings;
+  Future<UserSettings> updateSettings({
+    bool? autoMode,
+    Mood? autoMood,
+    bool? notifyOnHima,
+  }) async {
+    _settings = _settings.copyWith(
+      autoMode: autoMode,
+      autoMood: autoMood,
+      notifyOnHima: notifyOnHima,
+    );
     return _settings;
   }
 
   @override
-  Future<List<Guild>> getGuilds() async => List.unmodifiable(_guilds);
-
-  @override
-  Future<Guild> updateGuildVisibility(String guildId, bool visible) async {
+  Future<bool> updateGuildVisibility(String guildId, bool visible) async {
     final index = _guilds.indexWhere((guild) => guild.id == guildId);
     if (index < 0) {
       throw const ApiException(
@@ -214,17 +226,9 @@ class MockApiClient implements ApiClient {
         message: 'サーバーが見つかりません。',
       );
     }
-    final updated = Guild(
-      id: guildId,
-      name: _guilds[index].name,
-      visible: visible,
-    );
-    _guilds[index] = updated;
-    return updated;
+    _guilds[index] = _guilds[index].withVisibility(visible);
+    return visible;
   }
-
-  @override
-  Future<HimaSession?> getMyHima() async => _activeHima;
 
   HimaSession? get _activeHima {
     final declaration = _myHima;
@@ -236,7 +240,7 @@ class MockApiClient implements ApiClient {
   }
 
   @override
-  Future<HimaSession> putMyHima(HimaDeclaration declaration) async {
+  Future<void> declareHima(HimaDeclaration declaration) async {
     if (!himaDurationChoices.contains(declaration.durationMin)) {
       throw const ApiException(
         statusCode: 400,
@@ -248,41 +252,29 @@ class MockApiClient implements ApiClient {
     final current = _activeHima;
     final isNewSession = current == null;
     if (isNewSession) _sessionSequence++;
-    final session = HimaSession(
+    _myHima = HimaSession(
       sessionId: current?.sessionId ?? 'session-me-$_sessionSequence',
       user: _summary(_myId, _myName),
       mood: declaration.mood,
       activity: declaration.activity,
       note: declaration.note,
+      // An extend keeps the original start, like the server does.
       startedAt: current?.startedAt ?? now,
       expiresAt: now.add(Duration(minutes: declaration.durationMin)),
       durationMin: declaration.durationMin,
       source: current?.source ?? declaration.source,
     );
-    _myHima = session;
-    // Matches are derived from the current moods in getMatches, so a mood
-    // change on the same session takes effect immediately.
-    return session;
   }
 
-  /// fire × fire and ok × ok match both sides, fire × ok only the fire side,
-  /// and quiet never matches.
-  MatchKind? _matchKindFor(Mood mine, Mood other) => switch ((mine, other)) {
-    (Mood.fire, Mood.fire) => MatchKind.fireFire,
-    (Mood.fire, Mood.ok) => MatchKind.fireOk,
-    (Mood.ok, Mood.ok) => MatchKind.okOk,
-    _ => null,
-  };
-
   @override
-  Future<void> deleteMyHima() async {
+  Future<void> endHima() async {
     _myHima = null;
   }
 
   @override
-  Future<List<HimaSession>> getHima() async {
+  Future<BoardSnapshot> getBoard() async {
     final now = DateTime.now().toUtc();
-    final visible = _friends
+    final sessions = _friends
         .where(
           (friend) =>
               !_isBlocked(friend.user.id) &&
@@ -290,21 +282,29 @@ class MockApiClient implements ApiClient {
               friend.expiresAt.isAfter(now),
         )
         .toList();
-    final mine = _activeHima?.activity;
-    visible.sort((a, b) {
-      final byActivity = activityMatchRank(
-        mine,
-        a.activity,
-      ).compareTo(activityMatchRank(mine, b.activity));
-      return byActivity == 0
-          ? a.user.displayName.compareTo(b.user.displayName)
-          : byActivity;
-    });
-    return List.unmodifiable(visible);
+    return BoardSnapshot(
+      sessions: List.unmodifiable(sessions),
+      inbox: List.unmodifiable(
+        _inbox
+            .where((knock) => !_isBlocked(knock.sender?.id ?? ''))
+            .toList()
+          ..sort((a, b) => b.createdAt.compareTo(a.createdAt)),
+      ),
+      results: List.unmodifiable(
+        _sent
+            .where(
+              (knock) =>
+                  knock.status != KnockStatus.pending &&
+                  knock.resultSeenAt == null &&
+                  !_isBlocked(knock.recipient?.id ?? ''),
+            )
+            .toList(),
+      ),
+    );
   }
 
   @override
-  Future<List<FriendServer>> getFriends() async {
+  Future<List<FriendServer>?> getMembers() async {
     final now = DateTime.now().toUtc();
     return _guilds.map((guild) {
       final members =
@@ -336,66 +336,18 @@ class MockApiClient implements ApiClient {
   }
 
   @override
-  Future<List<MatchRecord>> getMatches({DateTime? since}) async {
-    final mine = _activeHima;
-    if (mine == null) return const [];
-    final now = DateTime.now().toUtc();
-    final matches = <MatchRecord>[];
-    for (final friend in _friends) {
-      if (_isBlocked(friend.user.id) || !_isVisible(friend.user.id)) continue;
-      if (!friend.expiresAt.isAfter(now)) continue;
-      // Derived from the current moods, so changing the mood of a live session
-      // adds or removes its match cards immediately.
-      final kind = _matchKindFor(mine.mood, friend.mood);
-      if (kind == null) continue;
-      final createdAt = _matchCreatedAt.putIfAbsent(
-        '${mine.sessionId}:${friend.sessionId}',
-        () => now,
-      );
-      if (since != null && !createdAt.isAfter(since.toUtc())) continue;
-      matches.add(
-        MatchRecord(
-          mySessionId: mine.sessionId,
-          otherSessionId: friend.sessionId,
-          kind: kind,
-          otherUser: friend.user,
-          otherHima: MatchedHima(
-            mood: friend.mood,
-            activity: friend.activity,
-            note: friend.note,
-            expiresAt: friend.expiresAt,
-          ),
-          createdAt: createdAt,
-        ),
-      );
-    }
-    matches.sort((a, b) {
-      int rank(MatchRecord match) {
-        final friend = _friends
-            .where((session) => session.sessionId == match.otherSessionId)
-            .firstOrNull;
-        return activityMatchRank(mine.activity, friend?.activity);
-      }
-
-      final byActivity = rank(a).compareTo(rank(b));
-      return byActivity == 0
-          ? b.createdAt.compareTo(a.createdAt)
-          : byActivity;
-    });
-    return List.unmodifiable(matches);
-  }
-
-  @override
   Future<Knock> createKnock({
-    required String userId,
+    required UserSummary to,
     required KnockTemplate template,
   }) async {
-    final friend = _friends.where((item) => item.user.id == userId).firstOrNull;
+    final friend = _friends
+        .where((item) => item.user.id == to.id)
+        .firstOrNull;
     // The contract only allows knocking someone who is hima right now; a friend
     // whose declaration expired after the list was fetched is rejected too.
     if (friend == null ||
-        _isBlocked(userId) ||
-        !_isVisible(userId) ||
+        _isBlocked(to.id) ||
+        !_isVisible(to.id) ||
         !friend.expiresAt.isAfter(DateTime.now().toUtc())) {
       throw const ApiException(
         statusCode: 404,
@@ -403,24 +355,17 @@ class MockApiClient implements ApiClient {
         message: 'この人にはノックできません。',
       );
     }
-    final guildId = _guildOf(userId);
+    final guildId = _guildOf(to.id);
     final guild = _guilds.where((item) => item.id == guildId).firstOrNull;
-    if (guild == null) {
-      throw const ApiException(
-        statusCode: 404,
-        code: 'guild_not_found',
-        message: 'サーバーが見つかりません。',
-      );
-    }
     _knockSequence++;
     final knock = Knock(
       id: 'knock-out-$_knockSequence',
       sender: _summary(_myId, _myName),
-      recipient: friend.user,
+      recipient: to,
       template: template,
       status: KnockStatus.pending,
       createdAt: DateTime.now().toUtc(),
-      guild: GuildSummary(id: guild.id, name: guild.name),
+      guild: guild == null ? null : GuildSummary(id: guild.id, name: guild.name),
       message: template.text,
       recipientNote: friend.mood == Mood.quiet ? 'スルーしてOK' : null,
     );
@@ -429,8 +374,7 @@ class MockApiClient implements ApiClient {
     Timer(const Duration(seconds: 3), () {
       final index = _sent.indexWhere((item) => item.id == knock.id);
       if (index < 0 || _sent[index].status != KnockStatus.pending) return;
-      _sent[index] = _copyKnock(
-        _sent[index],
+      _sent[index] = _sent[index].copyWith(
         status: KnockStatus.accepted,
         respondedAt: DateTime.now().toUtc(),
       );
@@ -438,41 +382,15 @@ class MockApiClient implements ApiClient {
     return knock;
   }
 
-  Knock _copyKnock(
-    Knock knock, {
-    KnockStatus? status,
-    DateTime? respondedAt,
-    DateTime? resultSeenAt,
-    bool clearSeenAt = false,
-  }) => Knock(
-    id: knock.id,
-    sender: knock.sender,
-    recipient: knock.recipient,
-    template: knock.template,
-    status: status ?? knock.status,
-    createdAt: knock.createdAt,
-    guild: knock.guild,
-    message: knock.message,
-    respondedAt: respondedAt ?? knock.respondedAt,
-    recipientNote: knock.recipientNote,
-    resultSeenAt: clearSeenAt ? null : resultSeenAt ?? knock.resultSeenAt,
-  );
-
   @override
-  Future<List<Knock>> getKnockInbox() async => List.unmodifiable(
-    _inbox.where((knock) => !_isBlocked(knock.sender?.id ?? '')).toList()
-      ..sort((a, b) => b.createdAt.compareTo(a.createdAt)),
-  );
-
-  @override
-  Future<List<Knock>> getKnockSent() async => List.unmodifiable(
+  Future<List<Knock>?> getSentKnocks() async => List.unmodifiable(
     _sent.where((knock) => !_isBlocked(knock.recipient?.id ?? '')).toList()
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt)),
   );
 
   @override
   Future<void> respondToKnock(String knockId, KnockStatus response) async {
-    if (response == KnockStatus.pending) {
+    if (response == KnockStatus.pending || response == KnockStatus.expired) {
       throw const FormatException(
         'A reply must be accepted, later, or passed.',
       );
@@ -485,42 +403,32 @@ class MockApiClient implements ApiClient {
         message: 'ノックが見つかりません。',
       );
     }
-    _inbox[index] = _copyKnock(
-      _inbox[index],
+    _inbox[index] = _inbox[index].copyWith(
       status: response,
       respondedAt: DateTime.now().toUtc(),
     );
   }
 
   @override
-  Future<DateTime?> markKnockResultSeen(String knockId) async {
-    final index = _sent.indexWhere((knock) => knock.id == knockId);
-    if (index < 0 || _isBlocked(_sent[index].recipient?.id ?? '')) {
-      throw const ApiException(
-        statusCode: 404,
-        code: 'knock_not_found',
-        message: 'ノックが見つかりません。',
+  Future<void> markKnockResultsSeen() async {
+    for (var index = 0; index < _sent.length; index++) {
+      if (_sent[index].status == KnockStatus.pending) continue;
+      if (_sent[index].resultSeenAt != null) continue;
+      _sent[index] = _sent[index].copyWith(
+        resultSeenAt: DateTime.now().toUtc(),
       );
     }
-    final seenAt = DateTime.now().toUtc();
-    _sent[index] = _copyKnock(_sent[index], resultSeenAt: seenAt);
-    return seenAt;
   }
 
   @override
   Future<List<BlockedUser>> getBlocks() async => _blockedIds
       .map((id) => _members.where((member) => member.user.id == id).firstOrNull)
       .whereType<_MockMember>()
-      .map(
-        (member) => BlockedUser(
-          user: member.user,
-          createdAt: DateTime.now().toUtc(),
-        ),
-      )
+      .map((member) => BlockedUser(user: member.user))
       .toList(growable: false);
 
   @override
-  Future<BlockedUser> createBlock(String userId) async {
+  Future<void> createBlock(String userId) async {
     final member = _members
         .where((item) => item.user.id == userId)
         .firstOrNull;
@@ -540,7 +448,6 @@ class MockApiClient implements ApiClient {
       (knock) =>
           knock.status == KnockStatus.pending && knock.sender?.id == userId,
     );
-    return BlockedUser(user: member.user, createdAt: DateTime.now().toUtc());
   }
 
   @override
@@ -552,21 +459,48 @@ class MockApiClient implements ApiClient {
   Future<void> putDevice(DeviceRegistration registration) async {}
 
   @override
+  Future<void> deleteDevice(String fcmToken) async {}
+
+  @override
   Future<List<RegularSlot>> getRegularSlots() async =>
       List.unmodifiable(_regularSlots);
 
   @override
-  Future<List<RegularSlot>> putRegularSlots(List<RegularSlot> slots) async {
-    _regularSlots
-      ..clear()
-      ..addAll(slots);
-    return List.unmodifiable(_regularSlots);
+  Future<RegularSlot> addRegularSlot(RegularSlot slot) async {
+    _slotSequence++;
+    final saved = RegularSlot(
+      id: 'slot-$_slotSequence',
+      weekday: slot.weekday,
+      startMin: slot.startMin,
+      endMin: slot.endMin,
+    );
+    _regularSlots.add(saved);
+    return saved;
   }
 
   @override
-  Future<List<HimaTimeSuggestion>> getHimaTimeSuggestions() async => const [
-    HimaTimeSuggestion(weekday: 5, hour: 20, likelihood: 0.78),
-    HimaTimeSuggestion(weekday: 6, hour: 14, likelihood: 0.64),
+  Future<void> deleteRegularSlot(String slotId) async {
+    _regularSlots.removeWhere((slot) => slot.id == slotId);
+  }
+
+  @override
+  Future<List<HimaTimeSuggestion>> getForecast() async => const [
+    HimaTimeSuggestion(
+      weekday: 5,
+      startMin: 20 * 60,
+      endMin: 21 * 60 + 30,
+      basis: 'history',
+      score: 0.78,
+      days: 6,
+    ),
+    HimaTimeSuggestion(
+      weekday: 6,
+      startMin: 14 * 60,
+      endMin: 15 * 60,
+      basis: 'manual',
+      score: 0,
+      days: 0,
+    ),
   ];
 }
 

@@ -34,6 +34,11 @@ dependencies:
   http: ^1.6.0
   provider: ^6.1.5+1
 
+  # Discord OAuth2 PKCE round-trip (browser + custom-scheme callback) and the
+  # keychain/keystore storage for the app JWT.
+  flutter_web_auth_2: ^5.1.0
+  flutter_secure_storage: ^11.2.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

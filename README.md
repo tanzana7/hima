@@ -85,19 +85,39 @@
 
 ## Flutterアプリ
 
-`app/` に Android / iOS 向け Flutter アプリ（表示名 `hima.`）があります。API サーバーが未稼働の間は、複数サーバーのメンバーとヒマ状態を含むモックデータで動作します。見た目と操作の仕様は [デザイン仕様](docs/design/Design.md) を参照してください。
+`app/` に Android / iOS 向け Flutter アプリ（表示名 `hima.`）があります。見た目と操作の仕様は [デザイン仕様](docs/design/Design.md)、API の契約は [API 契約書](docs/api-contract.md) を参照してください。
+
+### モックで動かす
+
+`--dart-define` を付けなければ、通信はすべてアプリ内のモックが返します（サーバー不要）。
 
 ```bash
 cd app
 flutter run
 ```
 
-実 API を使う場合は API のベース URL を指定して起動します。
+### 実 API につなぐ
+
+`API_BASE_URL`（サーバーのルート）と `DISCORD_CLIENT_ID` を渡します。
 
 ```bash
-flutter run --dart-define=API_BASE_URL=https://api.example.com
+# Android エミュレータ（ホストの localhost は 10.0.2.2）
+flutter run \
+  --dart-define=API_BASE_URL=http://10.0.2.2:8000 \
+  --dart-define=DISCORD_CLIENT_ID=123456789012345678
+
+# 実機（同じネットワークの PC かトンネル URL を指定）
+flutter run \
+  --dart-define=API_BASE_URL=https://xxxx.ngrok-free.app \
+  --dart-define=DISCORD_CLIENT_ID=123456789012345678
 ```
 
-見出し用フォント M PLUS Rounded 1c（SIL OFL 1.1）は `app/assets/fonts/` に同梱しており、実行時のフォント取得は行いません。ライセンスは同ディレクトリの `OFL.txt` です。
+ログインは Discord の認可コード + PKCE（S256）です。Developer Portal の OAuth2 > Redirects に次の URL を登録してください（`<CLIENT_ID>` は自分のクライアント ID）。
 
-API のエンドポイントと JSON 形式は [API 契約案](docs/api-contract.md) を参照してください。
+```
+discord-<CLIENT_ID>:/authorize/callback
+```
+
+Android のコールバック用スキームは Gradle が `DISCORD_CLIENT_ID` から埋め込みます（`android/app/build.gradle.kts` の manifest placeholder）。iOS は `flutter_web_auth_2` が `ASWebAuthenticationSession` を使うため Info.plist への追加は不要です。取得したトークンは `flutter_secure_storage` に保存し、次回起動時に `/app/me` が通ればそのままメイン画面を開きます。
+
+見出し用フォント M PLUS Rounded 1c（SIL OFL 1.1）は `app/assets/fonts/` に同梱しており、実行時のフォント取得は行いません。ライセンスは同ディレクトリの `OFL.txt` です。

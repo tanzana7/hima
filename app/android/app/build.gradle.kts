@@ -1,9 +1,37 @@
+import java.util.Base64
+
 plugins {
     id("com.android.application")
     id("kotlin-android")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
+
+// Discord's mobile redirect URI is `discord-<client id>:/authorize/callback`, so
+// the intent filter needs the client id at build time. Flutter passes
+// `--dart-define` values to Gradle as base64 encoded `-Pdart-defines=...`, so the
+// same DISCORD_CLIENT_ID the Dart code reads is reused here; a `discordClientId`
+// Gradle property works as an override.
+val dartDefines: Map<String, String> =
+    (project.findProperty("dart-defines") as String?)
+        ?.split(",")
+        ?.filter { it.isNotBlank() }
+        ?.mapNotNull { entry ->
+            val decoded = String(Base64.getDecoder().decode(entry))
+            val separator = decoded.indexOf('=')
+            if (separator <= 0) {
+                null
+            } else {
+                decoded.substring(0, separator) to decoded.substring(separator + 1)
+            }
+        }
+        ?.toMap()
+        .orEmpty()
+
+val discordClientId: String =
+    (project.findProperty("discordClientId") as String?)
+        ?: dartDefines["DISCORD_CLIENT_ID"]
+        ?: ""
 
 android {
     namespace = "jp.atsumaro.atsumaro"
@@ -28,6 +56,14 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        // `discord-unset` keeps a build without a client id (the mock demo)
+        // working; the browser callback simply cannot come back to the app.
+        manifestPlaceholders["discordCallbackScheme"] =
+            if (discordClientId.isEmpty()) {
+                "discord-unset"
+            } else {
+                "discord-$discordClientId"
+            }
     }
 
     buildTypes {

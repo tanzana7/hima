@@ -393,6 +393,9 @@ String _answeredLabel(KnockStatus status) => switch (status) {
   KnockStatus.accepted => 'いいよ！した',
   KnockStatus.later => 'あとで返した',
   KnockStatus.passed => 'パスした',
+  // An unanswered knock expires instead of being answered, so this only shows
+  // the status name.
+  KnockStatus.expired => KnockStatus.expired.label,
   KnockStatus.pending => KnockStatus.pending.label,
 };
 

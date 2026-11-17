@@ -213,6 +213,7 @@ class _KnockResultOverlay extends StatelessWidget {
       KnockStatus.accepted => '$nameから いいよ！',
       KnockStatus.later => '$nameは あとでだって',
       KnockStatus.passed => '$nameは 今回はパスだって',
+      KnockStatus.expired => '$nameは いまはひまじゃないみたい',
       KnockStatus.pending => '$nameに さそった',
     };
   }
