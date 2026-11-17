@@ -108,7 +108,7 @@ class FriendStatusCard extends StatelessWidget {
                     horizontal: AppSpacing.s8,
                     vertical: 4,
                   ),
-                  wobble: 0.04,
+                  wobble: 0.12,
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [

@@ -80,13 +80,21 @@ class MyStatusHero extends StatefulWidget {
 class _MyStatusHeroState extends State<MyStatusHero>
     with SingleTickerProviderStateMixin {
   /// The band the paint spills into. Everything the user can read or tap stays
-  /// inside the rect this leaves, so the droplets and drips can never cover it.
+  /// inside the rect this leaves, so the arms, droplets and drips can never
+  /// cover it.
   static const _padding = 20.0;
 
   /// Fixed seeds: the hero's two splashes must not change shape between
   /// rebuilds, and the declared one has to sit over the idle one every time.
   static const _idleSeed = 20261117;
   static const _declaredSeed = 71119;
+
+  /// Arm length as a fraction of the hero's short side. The hero is wide, so
+  /// its short side is the height: 0.10 puts the tips about 20dp out, which is
+  /// far enough to read as an arm and short enough that, with the 32dp gap the
+  /// home screen keeps around the card, they land on paper instead of on the
+  /// header or the match card.
+  static const _armLength = 0.10;
 
   late final AnimationController _burstController;
   bool _bursting = false;
@@ -134,15 +142,22 @@ class _MyStatusHeroState extends State<MyStatusHero>
         // white heading is always on coral, and the lavender only survives as a
         // thin halo in the padding band — which is what layered paint looks
         // like.
+        //
+        // Both splashes are drawn in the full box and their arms and droplets
+        // leave it; the home screen keeps a 32dp gap around the hero so they
+        // land on paper instead of on the next card.
         Positioned.fill(
           child: PaintSplat(
             seed: _idleSeed,
             colors: const [AppColors.heroIdleTop, AppColors.heroIdleBottom],
             padding: const EdgeInsets.all(_padding),
             corner: 40,
-            wobble: 0.05,
-            droplets: 5,
-            drips: 1,
+            wobble: 0.055,
+            // The idle state is a quieter wash: fewer arms and no drip.
+            arms: 4,
+            armLength: _armLength,
+            droplets: 6,
+            drips: 0,
           ),
         ),
         if (declared) ...[
@@ -159,20 +174,23 @@ class _MyStatusHeroState extends State<MyStatusHero>
               ],
               padding: const EdgeInsets.all(_padding),
               corner: 40,
-              wobble: 0.05,
-              droplets: 8,
-              drips: 2,
+              wobble: 0.055,
+              arms: 5,
+              armLength: _armLength,
+              droplets: 9,
+              drips: 1,
               grow: 1.03,
             ),
           ),
           // The ビチャ itself: a deeper body of the same silhouette that flies
-          // in from 55% over the paint, overshoots, and settles into it while
-          // the droplets fly out and the drips extend. It is decoration on top
+          // in from 35% over the paint, anchored at the declare button's place
+          // in the card, overshoots, and settles into it while the arms shoot
+          // out, the droplets fly and the drips extend. It is decoration on top
           // of the opaque paint, so it can shrink without exposing the text.
           //
           // It is *darker* than the paint, not lighter: a lighter body under
-          // the white heading would drop it to about 3.5:1 at the moment it
-          // lands, while a deeper one only raises the contrast.
+          // the white heading would drop it below 3:1 at the moment it lands,
+          // while a deeper one only raises the contrast.
           if (_bursting)
             Positioned.fill(
               child: AnimatedBuilder(
@@ -196,11 +214,19 @@ class _MyStatusHeroState extends State<MyStatusHero>
                     ],
                     padding: const EdgeInsets.all(_padding),
                     corner: 40,
-                    wobble: 0.05,
-                    droplets: 8,
+                    wobble: 0.055,
+                    // A bigger splash than the resting one: two more arms,
+                    // longer, and more droplets to throw.
+                    arms: 7,
+                    armLength: 0.13,
+                    droplets: 11,
                     drips: 2,
                     grow: 1.03,
-                    minScale: 0.55,
+                    minScale: 0.35,
+                    // The button is in the lower half of the card, so the paint
+                    // appears to be thrown from there instead of the card
+                    // inflating from its centre.
+                    origin: const Alignment(0, 0.55),
                     progress: t,
                   );
                 },
@@ -215,25 +241,25 @@ class _MyStatusHeroState extends State<MyStatusHero>
         // Keyed on the phase so they reappear when the hero switches state:
         // a declaration is the moment worth celebrating.
         Positioned(
-          top: 6,
-          right: 6,
+          top: 4,
+          right: 4,
           child: SplatterDots(
             key: ValueKey('hero-dots-$declared'),
             seed: declared ? 41 : 17,
             color: declared ? AppColors.yellow : AppColors.purple,
-            size: const Size(26, 20),
-            count: 5,
+            size: const Size(30, 24),
+            count: 7,
           ),
         ),
         Positioned(
-          bottom: 6,
-          left: 6,
+          bottom: 4,
+          left: 4,
           child: PaintMark(
             key: ValueKey('hero-star-$declared'),
             kind: PaintMarkKind.star,
             seed: 9,
             color: AppColors.yellow,
-            size: 15,
+            size: 16,
           ),
         ),
         Padding(
@@ -307,9 +333,10 @@ class _MyStatusHeroState extends State<MyStatusHero>
                           style: AppTextStyles.heroTitle.copyWith(
                             fontSize: 34,
                             color: declared ? AppColors.surface : AppColors.ink,
-                            // White on coral is large bold text, so the shadow
-                            // is there to hold the edge on the lighter part of
-                            // the gradient rather than to decorate.
+                            // 34sp bold is WCAG large text, so white needs
+                            // 3:1 here, not 4.5:1. The coral stops are chosen
+                            // for that (3.8:1 and 3.4:1); the shadow only holds
+                            // the edge on the lighter end of the gradient.
                             shadows: declared
                                 ? const [
                                     Shadow(
@@ -414,16 +441,23 @@ class _MyStatusHeroState extends State<MyStatusHero>
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        const Icon(
+                        // Ink at 72%, not [AppColors.muted]: muted is 4.18:1 on
+                        // the lavender stop of the idle wash and stays under
+                        // 4.5:1 across most of the gradient, which is not enough
+                        // for a 13sp caption. This pair is about 6:1 on both
+                        // stops, and it matches the supporting copy above.
+                        Icon(
                           Icons.touch_app_outlined,
                           size: 14,
-                          color: AppColors.muted,
+                          color: AppColors.ink.withValues(alpha: 0.72),
                         ),
                         const SizedBox(width: AppSpacing.s4),
                         Flexible(
                           child: Text(
                             '長押しで温度感を選べるよ',
-                            style: AppTextStyles.caption,
+                            style: AppTextStyles.caption.copyWith(
+                              color: AppColors.ink.withValues(alpha: 0.72),
+                            ),
                           ),
                         ),
                       ],
@@ -549,7 +583,9 @@ class _HeroPill extends StatelessWidget {
           seed: seed,
           color: AppColors.surface.withValues(alpha: 0.92),
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 11),
-          wobble: 0.03,
+          // The dab is only ~40dp tall, so the wobble has to be a larger
+          // fraction of the short side than a card's to show at all.
+          wobble: 0.09,
           child: child,
         ),
       ),
@@ -704,7 +740,7 @@ class _EndPill extends StatelessWidget {
             seed: 63,
             color: AppColors.surface.withValues(alpha: 0.6),
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-            wobble: 0.035,
+            wobble: 0.10,
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [

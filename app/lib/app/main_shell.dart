@@ -168,6 +168,14 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     return Stack(
       children: [
         Scaffold(
+          // The navigation is not a bar any more: it is painted straight onto
+          // the paper, so the scaffold background has to be the paper colour
+          // and nothing may be tinted behind it. The body is *not* extended
+          // under it — the three tabs scroll with a fixed bottom padding, and
+          // extending the body would hide the end of each list behind the nav.
+          // The nav's own transparent-to-paper fade is what keeps that seam
+          // soft if a screen ever does extend the body.
+          backgroundColor: AppColors.background,
           body: SafeArea(bottom: false, child: page),
           bottomNavigationBar: AppBottomNavigation(
             selectedIndex: _selectedIndex,

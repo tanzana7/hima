@@ -123,7 +123,7 @@ class _ActivityChipState extends State<_ActivityChip> {
               // 14dp of vertical padding brings the dab to the 48dp tap target
               // without a fixed height, so it still grows with the text.
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-              wobble: 0.045,
+              wobble: 0.09,
               droplets: widget.selected ? 2 : 0,
               child: Row(
                 mainAxisSize: MainAxisSize.min,

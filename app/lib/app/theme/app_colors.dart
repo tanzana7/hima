@@ -38,18 +38,21 @@ abstract final class AppColors {
   static const blue = Color(0xFF1F6FB2);
   static const orange = Color(0xFFB4551A);
 
-  /// Hero backdrops. The declared hero is a deep coral→rose wash; the idle one a
-  /// quiet lilac→blush, so the two states read differently without the idle
-  /// state looking like a warning.
+  /// Hero backdrops. The declared hero is a bright coral→pink splash; the idle
+  /// one a quiet lavender→lemon wash, so the two states read differently
+  /// without the idle state looking like a warning.
   ///
-  /// The declared stops have to carry the white heading, so they are dark
-  /// enough for it: white on [heroDeclaredTop] is 6.1:1 and on
-  /// [heroDeclaredBottom] 4.9:1. The earlier `#FF4A78 → #FF9FB4` pair measured
-  /// 3.2:1 and 1.9:1, which failed WCAG AA across the whole gradient.
-  static const heroDeclaredTop = Color(0xFFC2143F);
-  static const heroDeclaredBottom = Color(0xFFD0305A);
-  static const heroIdleTop = Color(0xFFF2E6FF);
-  static const heroIdleBottom = Color(0xFFFFEFF6);
+  /// **Contrast.** The only text directly on the declared paint is the heading:
+  /// 34sp, weight 800, i.e. WCAG *large* text, whose threshold is **3:1** rather
+  /// than 4.5:1. Every small label in the hero sits on a white paint dab. So the
+  /// stops only have to clear 3:1, and they do: white on [heroDeclaredTop] is
+  /// 3.8:1 and on [heroDeclaredBottom] 3.4:1. An earlier version darkened the
+  /// paint to `#C2143F` to reach 4.5:1 for text that does not need it, which
+  /// turned the brand's happy coral into a dark crimson.
+  static const heroDeclaredTop = Color(0xFFEE3F6A);
+  static const heroDeclaredBottom = Color(0xFFF0507A);
+  static const heroIdleTop = Color(0xFFF1E6FF);
+  static const heroIdleBottom = Color(0xFFFFF3C4);
 
   /// Friend card tints. Rotated per card; the color has no meaning.
   static const List<Color> friendTints = [

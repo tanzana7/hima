@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
@@ -9,6 +10,20 @@ import 'package:flutter/material.dart';
 /// rebuilds, foreground polls and scrolling, and the same friend always gets
 /// the same splash. The generated paths are cached per (seed, size, config) so
 /// a scrolling list does not re-sample an outline on every frame.
+///
+/// **Anatomy of a splash.** A body, arms and droplets:
+///
+/// * The **body** is a rounded-rectangle centre line with four uneven corner
+///   radii, displaced by a low-frequency wobble of 4–10% of the short side, so
+///   no side stays straight and no two corners match.
+/// * The **arms** are tapered lobes that shoot out of the body edge and end in
+///   a round tip, sometimes with a bead. They are filled shapes joined to the
+///   body, never strokes and never thin necks.
+/// * The **droplets** are detached, of two sizes, clustered along the direction
+///   of an arm and getting smaller with distance.
+///
+/// Nothing here draws a line: a splash that is outlined or joined by a stroke
+/// reads as a vector icon, which is exactly what the paint look replaces.
 
 /// A stable seed for a name, id or section label.
 ///
@@ -56,22 +71,57 @@ Color paintTone(Color base, double amount) {
   return Color.lerp(base, target, amount.abs().clamp(0.0, 1.0)) ?? base;
 }
 
+/// One arm of a splash: a tapered lobe that shoots out of the body edge.
+///
+/// The lobe is wide where it joins the body and narrows to a round tip, which
+/// is how a thrown splash of paint spreads. It is a filled shape that overlaps
+/// the body, so the join has no seam and there is no stroked outline anywhere.
+class PaintArm {
+  const PaintArm({
+    required this.path,
+    required this.base,
+    required this.tip,
+    required this.direction,
+    required this.bead,
+  });
+
+  /// The filled lobe, in the same coordinates as [PaintBlob.path].
+  final Path path;
+
+  /// The point on the body edge the lobe grows out of.
+  final Offset base;
+
+  /// The centre of the round tip.
+  final Offset tip;
+
+  /// Unit vector from [base] to [tip]. The painter scales along this axis to
+  /// make the arm shoot out during the splash.
+  final Offset direction;
+
+  /// Radius of the bead sitting on the tip, or 0 when the tip is plain.
+  final double bead;
+}
+
 /// One satellite droplet thrown off a splash.
 class PaintDroplet {
   const PaintDroplet({
     required this.center,
     required this.radius,
-    this.neckFrom,
-    this.neckWidth = 1.6,
+    this.direction = Offset.zero,
+    this.stretch = 0,
   });
 
   final Offset center;
   final double radius;
 
-  /// Where the thin neck joins the main blob, when this droplet has one. The
-  /// neck is what reads as a splash instead of a scatter of dots.
-  final Offset? neckFrom;
-  final double neckWidth;
+  /// Direction the droplet was travelling in. Only used together with
+  /// [stretch]; a droplet is never connected back to the body by a neck.
+  final Offset direction;
+
+  /// 0 paints a circle, 1 an egg stretched along [direction]. The big droplets
+  /// are slightly stretched because a fast drop is not a perfect sphere, but
+  /// the shape stays a filled blob: no tail, no line.
+  final double stretch;
 }
 
 /// A tongue of paint hanging off the bottom edge, ending in a round bead.
@@ -89,36 +139,70 @@ class PaintDrip {
   final double bead;
 }
 
-/// A splash silhouette plus its droplets and drips.
+/// A splash silhouette plus its arms, droplets and drips.
 class PaintBlob {
   const PaintBlob({
     required this.path,
     required this.center,
+    required this.arms,
     required this.droplets,
     required this.drips,
   });
 
   final Path path;
   final Offset center;
+  final List<PaintArm> arms;
   final List<PaintDroplet> droplets;
   final List<PaintDrip> drips;
 }
 
 final _blobCache = PaintCache<PaintBlob>();
+final _silhouetteCache = PaintCache<Path>();
 final _brushCache = PaintCache<Path>();
 final _swashCache = PaintCache<Path>();
 
+/// The furthest any splash reaches past its own box, in dp.
+///
+/// The wobble, the arms, the beads and the droplets are all capped so that this
+/// is a hard bound rather than a typical value: a caller that wants the paint
+/// to land on paper instead of on the widget below reserves exactly this much
+/// and does not have to measure the shape. The home screen uses it as the gap
+/// around the hero.
+///
+/// The bound holds for the *painted* result: [paintBlob]'s `grow` scales the
+/// whole splash about its centre after it is built, and a stretched droplet is
+/// an egg rather than a circle, so both are folded into the clamp instead of
+/// being applied on top of it.
+const double paintMaxBleed = 40;
+
+/// How the [paintMaxBleed] budget is spent: the edge wobble takes the first
+/// slice, the bead on an arm tip the last, and the arms get what is left.
+const double _bleedWobble = 12;
+const double _bleedBead = 7;
+
 /// Builds (or returns the cached) splash for one box.
 ///
-/// The outline is a rounded rectangle expressed in polar coordinates: for every
-/// angle the radius is the distance from the centre to the rounded-rectangle
-/// edge, multiplied by a sum of two to four sine harmonics with seeded phases.
-/// Polar form is what keeps the edge continuous — there is no list of corner
-/// points to show through — and the harmonics give the slow lobes and the fine
-/// ripples that read as paint rather than as a vector shape.
+/// **Geometry.** The body starts from a rounded-rectangle *centre line* with a
+/// different radius on each corner, sampled evenly along its perimeter. Every
+/// sample is then displaced along its own radius by a sum of two or three low
+/// harmonics of the arc length (seeded phase and amplitude). Because the
+/// harmonics are periodic over the perimeter the outline closes without a seam,
+/// and because they are low frequency the edge bulges and dents in big slow
+/// lobes instead of turning into noise.
 ///
-/// The wobble only ever pushes the outline *outward*, so the padded content
-/// rect is always inside the paint however the harmonics land.
+/// The displacement is measured against the *short side* rather than against
+/// the radius: on a wide card a radius-relative wobble is invisible along the
+/// long edges, which is how the first version ended up looking like a rounded
+/// rectangle.
+///
+/// **Content safety.** The inward half of the wobble is clamped to the padded
+/// content rect, so however the harmonics land the label is always on paint.
+/// The outward half is free to leave the widget box: the caller gives the paint
+/// room (a `Stack` with `Clip.none`, a gap in the layout) rather than the
+/// geometry shrinking the wobble until it disappears.
+///
+/// [arms] is the number of lobes; null picks 3–7 from the seed, 0 draws none.
+/// [armLength] is the lobe length as a fraction of the short side.
 PaintBlob paintBlob({
   required Size size,
   required int seed,
@@ -130,6 +214,8 @@ PaintBlob paintBlob({
   double grow = 1,
   int lobes = 0,
   bool circleBase = false,
+  int? arms,
+  double armLength = 0.16,
 }) {
   final key = (
     size,
@@ -142,6 +228,8 @@ PaintBlob paintBlob({
     grow,
     lobes,
     circleBase,
+    arms,
+    armLength,
   );
   return _blobCache.get(
     key,
@@ -156,8 +244,48 @@ PaintBlob paintBlob({
       grow: grow,
       lobes: lobes,
       circleBase: circleBase,
+      arms: arms,
+      armLength: armLength,
     ),
   );
+}
+
+/// The body and its arms unioned into a single path.
+///
+/// A wash is translucent, so drawing the arms as separate overlapping shapes
+/// would show every join as a darker patch. The union keeps one layer one flat
+/// value, which is what a wet wash looks like. The result is cached like the
+/// blob itself.
+Path paintSilhouette({
+  required Size size,
+  required int seed,
+  required EdgeInsets padding,
+  required double corner,
+  required double wobble,
+  double grow = 1,
+  int? arms,
+  double armLength = 0.16,
+}) {
+  final key = (size, seed, padding, corner, wobble, grow, arms, armLength);
+  return _silhouetteCache.get(key, () {
+    final blob = paintBlob(
+      size: size,
+      seed: seed,
+      padding: padding,
+      corner: corner,
+      wobble: wobble,
+      dropletCount: 0,
+      dripCount: 0,
+      grow: grow,
+      arms: arms,
+      armLength: armLength,
+    );
+    var path = blob.path;
+    for (final arm in blob.arms) {
+      path = Path.combine(PathOperation.union, path, arm.path);
+    }
+    return path;
+  });
 }
 
 PaintBlob _buildBlob({
@@ -171,118 +299,544 @@ PaintBlob _buildBlob({
   required double grow,
   required int lobes,
   required bool circleBase,
+  required int? arms,
+  required double armLength,
 }) {
   final rng = math.Random(seed);
   final halfW = size.width / 2;
   final halfH = size.height / 2;
   final center = Offset(halfW, halfH);
-  // A circle base is for the small lobed marks, which carry no content and so
-  // do not have to keep a safe rect.
-  final rc = circleBase
+  final shortSide = math.min(size.width, size.height);
+  // 4–10% of the short side is what reads as paint at arm's length; below that
+  // the edge still looks ruled, above it the shape turns into a star. The
+  // absolute cap keeps the outline inside the [paintMaxBleed] budget on a very
+  // large box, where a percentage would spill far past the widget.
+  final amplitude = math.min(
+    wobble.clamp(0.0, 0.14) * shortSide,
+    _bleedWobble,
+  );
+
+  final outline = lobes > 0
+      ? _starOutline(shortSide, lobes, wobble, rng)
+      : _bodyOutline(
+          halfW: halfW,
+          halfH: halfH,
+          padding: padding,
+          corner: corner,
+          circleBase: circleBase,
+          amplitude: amplitude,
+          rng: rng,
+        );
+  final points = [for (final point in outline) center + point];
+
+  final builtArms = <PaintArm>[];
+  final armCount = arms ?? (lobes > 0 ? 0 : 3 + rng.nextInt(5));
+  if (armCount > 0 && points.length > 8) {
+    _buildArms(
+      into: builtArms,
+      points: points,
+      center: center,
+      shortSide: shortSide,
+      grow: grow,
+      count: armCount,
+      lengthFraction: armLength,
+      rng: rng,
+    );
+  }
+
+  final droplets = _buildDroplets(
+    points: points,
+    center: center,
+    shortSide: shortSide,
+    grow: grow,
+    arms: builtArms,
+    count: dropletCount,
+    rng: rng,
+  );
+
+  final drips = _buildDrips(
+    points: points,
+    center: center,
+    halfH: halfH,
+    grow: grow,
+    count: dripCount,
+    rng: rng,
+  );
+
+  return _scaled(
+    PaintBlob(
+      path: smoothClosedPath(points),
+      center: center,
+      arms: builtArms,
+      droplets: droplets,
+      drips: drips,
+    ),
+    center,
+    grow,
+  );
+}
+
+/// The body outline, relative to the centre of the box.
+///
+/// A rounded rectangle with four different corner radii is already not a
+/// rectangle: one corner stays fat and round while the opposite one is pinched
+/// almost square. The wobble on top of that is what removes the straight sides.
+List<Offset> _bodyOutline({
+  required double halfW,
+  required double halfH,
+  required EdgeInsets padding,
+  required double corner,
+  required bool circleBase,
+  required double amplitude,
+  required math.Random rng,
+}) {
+  final cap = circleBase
       ? math.min(halfW, halfH)
       : paintCornerRadius(halfW, halfH, padding, corner);
-  final amplitude = wobble.clamp(0.0, 0.5);
+  // A smaller radius only ever moves the outline further out, so the padded
+  // content rect stays inside every corner however the radii land.
+  final radii = circleBase
+      ? [cap, cap, cap, cap]
+      : [for (var i = 0; i < 4; i++) cap * (0.55 + 0.45 * rng.nextDouble())];
 
-  // A lobed mark (the star dab) uses one strong harmonic; a splash uses two to
-  // four so no two cards share a silhouette.
-  //
-  // The frequencies must be integers. The wobble is a function of the angle
-  // returned by `atan2`, which wraps from +π to -π across the left edge; a
-  // fractional frequency is not periodic over that wrap, so the radius would
-  // jump there and leave a visible seam in the outline.
-  final count = lobes > 0 ? 1 : 2 + rng.nextInt(3);
-  final phases = <double>[];
+  final perimeter = _roundedRectPerimeter(halfW, halfH, radii);
+  final steps = perimeter.length;
+  if (steps == 0) return const [];
+
+  // Two or three harmonics of the arc length. The frequencies must be integers:
+  // the wobble is a function of the position along the perimeter, which wraps
+  // from the last sample back to the first, and a fractional frequency would
+  // not close and would leave a step in the outline.
+  final count = 2 + rng.nextInt(2);
   final freqs = <double>[];
+  final phases = <double>[];
   final amps = <double>[];
   for (var i = 0; i < count; i++) {
+    freqs.add((3 + i * 2 + rng.nextInt(2)).toDouble());
     phases.add(rng.nextDouble() * math.pi * 2);
-    freqs.add(
-      lobes > 0 ? lobes.toDouble() : (2 + i * 2 + rng.nextInt(2)).toDouble(),
-    );
-    amps.add(lobes > 0 ? 1.0 : 0.45 + rng.nextDouble() * 0.55);
+    amps.add(0.5 + rng.nextDouble() * 0.5);
   }
   final ampSum = amps.fold(0.0, (sum, value) => sum + value);
 
-  // The base outline is the rounded rectangle sampled evenly along its
-  // perimeter, and each sample is then pushed out along its own radius. A polar
-  // formula `r = a / cos θ` is only correct for a plain rectangle and collapses
-  // into a lens once the corner radius is folded in; walking the perimeter keeps
-  // the shape exact, which is what makes the padded content rect safe.
-  const steps = 120;
-  final perimeter = _roundedRectPerimeter(halfW, halfH, rc, steps);
-  // Normalised so the largest radius stays inside the box: the paint never
-  // spills past its own box, so a card can never paint over its neighbour.
-  // [grow] is the one deliberate exception, used to lay the declared hero's
-  // splash over the idle one.
-  final normalise = 1 + amplitude;
   final points = <Offset>[];
-  for (final point in perimeter) {
-    // The perimeter is generated around the origin, so it is already relative
-    // to the shape's centre: scaling it scales about that centre.
+  for (var i = 0; i < steps; i++) {
+    final point = perimeter[i];
     final distance = point.distance;
     if (distance <= 0) continue;
-    final theta = math.atan2(point.dy, point.dx);
+    final s = i / steps;
     var h = 0.0;
     for (var k = 0; k < count; k++) {
-      h += amps[k] * (0.5 + 0.5 * math.sin(freqs[k] * theta + phases[k]));
+      h += amps[k] * math.sin(2 * math.pi * freqs[k] * s + phases[k]);
     }
     h /= ampSum;
-    // The 0.35 floor keeps a minimum outward push even where every harmonic
-    // happens to be low, which covers the tiny loss from smoothing.
-    final factor = ((1 + amplitude * (0.35 + 0.65 * h)) / normalise) * grow;
-    points.add(center + point * factor);
+    final direction = point / distance;
+    // The floor keeps the padded content rect covered even where every
+    // harmonic happens to pull inward at once.
+    final floor =
+        _safeRadius(math.atan2(point.dy, point.dx), halfW, halfH, padding) +
+        0.75;
+    points.add(direction * math.max(floor, distance + amplitude * h));
   }
+  return points;
+}
 
+/// A lobed mark (the star): a circle whose radius is modulated by one harmonic.
+///
+/// It carries no content, so it does not need a safe rect and can spend the
+/// whole box on the lobed silhouette.
+List<Offset> _starOutline(
+  double shortSide,
+  int lobes,
+  double wobble,
+  math.Random rng,
+) {
+  const steps = 96;
+  final radius = shortSide / 2;
+  final phase = rng.nextDouble() * math.pi * 2;
+  final amount = wobble.clamp(0.0, 0.6);
+  final points = <Offset>[];
+  for (var i = 0; i < steps; i++) {
+    final theta = 2 * math.pi * i / steps;
+    final r = radius * (1 + amount * math.sin(lobes * theta + phase)) /
+        (1 + amount);
+    points.add(Offset(math.cos(theta) * r, math.sin(theta) * r));
+  }
+  return points;
+}
+
+/// Adds [count] tapered lobes around the body edge.
+///
+/// The arms are spread around the perimeter with a seeded jitter rather than
+/// evenly: an even ring of arms reads as a gear, an uneven one as a splash.
+///
+/// Each arm is capped so that, after [grow] has scaled it about the centre, its
+/// tip plus the bead on it still lands inside [paintMaxBleed] of the box edge.
+void _buildArms({
+  required List<PaintArm> into,
+  required List<Offset> points,
+  required Offset center,
+  required double shortSide,
+  required double grow,
+  required int count,
+  required double lengthFraction,
+  required math.Random rng,
+}) {
+  final n = points.length;
+  final step = n / count;
+  for (var i = 0; i < count; i++) {
+    final index =
+        (step * i + step * 0.5 * (rng.nextDouble() - 0.5)).round() % n;
+    final base = points[index];
+    final previous = points[(index - 2 + n) % n];
+    final next = points[(index + 2) % n];
+    final raw = next - previous;
+    if (raw.distance < 0.01) continue;
+    final tangent = raw / raw.distance;
+    var normal = Offset(-tangent.dy, tangent.dx);
+    // Point the lobe away from the centre, whichever way the tangent ran.
+    if (normal.dx * (base.dx - center.dx) + normal.dy * (base.dy - center.dy) <
+        0) {
+      normal = -normal;
+    }
+
+    // The tip sits `length` past the base along the edge normal, and the base
+    // is already out on the wobbled outline, so the room left for the lobe is
+    // measured from where this arm actually starts.
+    final maxLength = _maxArmLength(base, normal, center, grow);
+    final length = math.min(
+      lengthFraction * shortSide * (0.8 + 0.4 * rng.nextDouble()),
+      maxLength,
+    );
+    if (length < 1.5) continue;
+    // A fat base and a narrow tip is what makes the lobe read as paint spread
+    // by an impact; a constant-width lobe reads as a spoke. The base has to be
+    // a large fraction of the length, because the widest part sits inside the
+    // body and only the tapered outer half is visible.
+    final halfBase = math.max(2.2, length * (0.45 + 0.25 * rng.nextDouble()));
+    final tipRadius = math.max(
+      1.4,
+      halfBase * (0.45 + 0.25 * rng.nextDouble()),
+    );
+    // The lobe starts inside the body so the join is a fill-over-fill overlap
+    // with no seam to trace. It is kept short: a deep overlap hides most of the
+    // taper and leaves a spike.
+    final overlap = math.min(halfBase * 0.55, 7.0);
+    final bead = rng.nextDouble() < 0.45
+        ? math.min(tipRadius * (1.15 + 0.5 * rng.nextDouble()), _bleedBead)
+        : 0.0;
+    into.add(
+      PaintArm(
+        path: smoothClosedPath(
+          _armPoints(
+            base,
+            normal,
+            tangent,
+            length,
+            halfBase,
+            tipRadius,
+            overlap,
+          ),
+        ),
+        base: base,
+        tip: base + normal * length,
+        direction: normal,
+        bead: bead,
+      ),
+    );
+  }
+}
+
+/// The point ring of one arm, in the local frame of its base point.
+///
+/// The two sides are the same taper mirrored, and the tip is a half circle, so
+/// the lobe is a filled teardrop: wide at the body, round at the end.
+List<Offset> _armPoints(
+  Offset base,
+  Offset direction,
+  Offset tangent,
+  double length,
+  double halfBase,
+  double tipRadius,
+  double overlap,
+) {
+  const side = 9;
+  const cap = 7;
+  final spine = overlap + length - tipRadius;
+  final capCenter = base + direction * (length - tipRadius);
+  final points = <Offset>[];
+  for (var i = 0; i <= side; i++) {
+    final s = i / side;
+    final width =
+        tipRadius + (halfBase - tipRadius) * math.pow(1 - s, 0.7).toDouble();
+    points.add(base + direction * (-overlap + spine * s) + tangent * width);
+  }
+  for (var i = 1; i < cap; i++) {
+    final phi = math.pi * i / cap;
+    points.add(
+      capCenter +
+          tangent * (tipRadius * math.cos(phi)) +
+          direction * (tipRadius * math.sin(phi)),
+    );
+  }
+  for (var i = side; i >= 0; i--) {
+    final s = i / side;
+    final width =
+        tipRadius + (halfBase - tipRadius) * math.pow(1 - s, 0.7).toDouble();
+    points.add(base + direction * (-overlap + spine * s) - tangent * width);
+  }
+  return points;
+}
+
+/// Detached droplets, clustered along the arms and getting smaller with
+/// distance.
+///
+/// A droplet is never joined to the body: the thin neck the first version drew
+/// from the edge to each drop was a straight line, which is the one thing the
+/// paint look has to avoid.
+///
+/// Every droplet is pulled back to the [paintMaxBleed] budget, so a droplet on
+/// a long arm cannot end up further out than the room the caller reserved.
+List<PaintDroplet> _buildDroplets({
+  required List<Offset> points,
+  required Offset center,
+  required double shortSide,
+  required double grow,
+  required List<PaintArm> arms,
+  required int count,
+  required math.Random rng,
+}) {
+  if (count <= 0) return const [];
+  final big = (shortSide * 0.030).clamp(2.4, 7.0);
+  final small = (shortSide * 0.012).clamp(1.0, 2.6);
+  final clustered = arms.isEmpty ? 0 : (count * 0.75).ceil();
   final droplets = <PaintDroplet>[];
-  // Droplets scale with the box and are clamped: on a 48dp chip an absolute
-  // 12dp droplet would land on the next chip, and on a 300dp hero a relative
-  // one would be invisible.
-  final unit = math.min(size.width, size.height);
-  for (var i = 0; i < dropletCount; i++) {
+
+  for (var i = 0; i < count; i++) {
+    if (i < clustered) {
+      final arm = arms[i % arms.length];
+      final rank = i ~/ arms.length;
+      final radius = rank == 0 ? big * (0.8 + 0.2 * rng.nextDouble()) : small;
+      final gap = shortSide * (0.02 + 0.03 * rng.nextDouble()) * (rank + 1);
+      final lateral =
+          (rng.nextDouble() - 0.5) * (radius * 2.4 + shortSide * 0.03);
+      final tangent = Offset(-arm.direction.dy, arm.direction.dx);
+      // Only the big first drops are stretched; a stretched dot on the far end
+      // of the cluster reads as a smear. The stretch still counts towards the
+      // painted extent, so the clamp uses the egg's long axis.
+      final stretch = rank == 0 ? 0.22 : 0.0;
+      droplets.add(
+        PaintDroplet(
+          center: _clampToBleed(
+            arm.tip + arm.direction * (gap + radius) + tangent * lateral,
+            center,
+            radius * (1 + stretch),
+            grow,
+          ),
+          radius: radius,
+          direction: arm.direction,
+          stretch: stretch,
+        ),
+      );
+      continue;
+    }
     final edge = points[rng.nextInt(points.length)];
     final outward = edge - center;
     final distance = outward.distance;
     if (distance <= 0) continue;
     final direction = outward / distance;
-    final gap = (unit * (0.02 + rng.nextDouble() * 0.05)).clamp(2.0, 7.0);
-    final radius = (unit * (0.012 + rng.nextDouble() * 0.02)).clamp(1.4, 4.0);
-    // Roughly half the droplets keep a neck back to the blob; the rest are
-    // flung clear, which is what a real splash looks like.
-    final connected = rng.nextDouble() < 0.5;
+    final radius = small * (0.7 + 0.5 * rng.nextDouble());
+    final gap = shortSide * (0.015 + 0.035 * rng.nextDouble());
     droplets.add(
       PaintDroplet(
-        center: edge + direction * (gap + radius),
+        center: _clampToBleed(
+          edge + direction * (gap + radius),
+          center,
+          radius,
+          grow,
+        ),
         radius: radius,
-        neckFrom: connected ? edge - direction * 1.5 : null,
-        neckWidth: 1.0 + rng.nextDouble() * 1.4,
+        direction: direction,
       ),
     );
   }
+  return droplets;
+}
 
-  // Drips hang off the bottom edge only: paint runs down, it does not climb.
+/// The longest arm that keeps its tip, plus the bead on it, inside the
+/// [paintMaxBleed] budget.
+///
+/// The budget is measured along the direction the tip ends up in, and that
+/// direction depends on the length, so this solves it in two passes: the first
+/// uses the edge normal, the second the direction the first tip actually
+/// landed in. The two differ by a fraction of a degree, but on a wide box that
+/// is enough for the tip to slip past the budget by a dp if it is not
+/// corrected.
+double _maxArmLength(
+  Offset base,
+  Offset normal,
+  Offset center,
+  double grow,
+) {
+  final offset = base - center;
+  final rBase = offset.distance;
+  var length =
+      _bleedLimit(_boxRadius(normal, center), grow) - rBase - _bleedBead;
+  if (length <= 0) return length;
+  final tip = offset + normal * length;
+  final rTip = tip.distance;
+  if (rTip > 0) {
+    length = _bleedLimit(_boxRadius(tip / rTip, center), grow) -
+        rBase -
+        _bleedBead;
+  }
+  return length;
+}
+
+/// The distance from the centre of the box to its edge along [direction].
+double _boxRadius(Offset direction, Offset center) {
+  final dx = direction.dx.abs();
+  final dy = direction.dy.abs();
+  final rx = dx <= 1e-6 ? double.infinity : center.dx / dx;
+  final ry = dy <= 1e-6 ? double.infinity : center.dy / dy;
+  return math.min(rx, ry);
+}
+
+/// How far from the centre an outward element may sit, given the box radius
+/// along its direction and the [grow] the whole splash is scaled by afterwards.
+///
+/// A point at distance `d` is painted at `d * grow`, and the box does not grow
+/// with it, so the budget has to be solved in the scaled world:
+/// `(d * grow) - boxRadius <= paintMaxBleed`.
+double _bleedLimit(double boxRadius, double grow) =>
+    (paintMaxBleed + boxRadius) / grow;
+
+/// Pulls [point] back until the shape of [radius] around it stays inside the
+/// [paintMaxBleed] budget once the splash has been scaled by [grow].
+///
+/// [radius] is the element's own painted extent, not just its nominal radius: a
+/// stretched droplet is an egg whose long axis is `radius * (1 + stretch)`, so
+/// passing the plain radius would let its tip out of the budget.
+Offset _clampToBleed(
+  Offset point,
+  Offset center,
+  double radius,
+  double grow,
+) {
+  final delta = point - center;
+  final distance = delta.distance;
+  if (distance <= 0) return point;
+  final direction = delta / distance;
+  final limit = _bleedLimit(_boxRadius(direction, center), grow) - radius - 1;
+  if (distance <= limit) return point;
+  return center + direction * limit;
+}
+
+/// Drips hang off the bottom edge only: paint runs down, it does not climb.
+List<PaintDrip> _buildDrips({
+  required List<Offset> points,
+  required Offset center,
+  required double halfH,
+  required double grow,
+  required int count,
+  required math.Random rng,
+}) {
+  if (count <= 0) return const [];
   final bottom = points
       .where((point) => point.dy > center.dy + halfH * 0.55)
       .toList();
+  if (bottom.isEmpty) return const [];
   final drips = <PaintDrip>[];
-  for (var i = 0; i < dripCount && bottom.isNotEmpty; i++) {
+  for (var i = 0; i < count; i++) {
     final edge = bottom[rng.nextInt(bottom.length)];
-    final length = 6 + rng.nextDouble() * 6;
+    final length = 9 + rng.nextDouble() * 6;
+    final bead = 3.6 + rng.nextDouble() * 2.4;
     drips.add(
       PaintDrip(
-        start: edge - const Offset(0, 1.5),
-        end: Offset(edge.dx + (rng.nextDouble() - 0.5) * 5, edge.dy + length),
-        width: 1.8 + rng.nextDouble() * 2.2,
-        bead: 1.8 + rng.nextDouble() * 1.8,
+        // The tongue starts inside the body so its widest part is hidden and
+        // the join has no seam.
+        start: edge - const Offset(0, 4),
+        end: _clampToBleed(
+          Offset(edge.dx + (rng.nextDouble() - 0.5) * 5, edge.dy + length),
+          center,
+          bead,
+          grow,
+        ),
+        // A drip is a tongue of paint, not a thread: a 2dp width with a bead
+        // on the end is a pin, which is exactly the shape the splash must not
+        // have.
+        width: 9 + rng.nextDouble() * 4,
+        bead: bead,
       ),
     );
   }
+  return drips;
+}
 
+/// [grow] scales the whole splash about its centre, used to lay one splash over
+/// another. Everything is scaled together so the arms and droplets keep their
+/// relationship to the body.
+PaintBlob _scaled(PaintBlob blob, Offset center, double grow) {
+  if (grow == 1) return blob;
+  final storage = Float64List(16)
+    ..[0] = grow
+    ..[5] = grow
+    ..[10] = 1
+    ..[15] = 1
+    ..[12] = center.dx * (1 - grow)
+    ..[13] = center.dy * (1 - grow);
+  Offset scalePoint(Offset point) => center + (point - center) * grow;
   return PaintBlob(
-    path: smoothClosedPath(points),
+    path: blob.path.transform(storage),
     center: center,
-    droplets: droplets,
-    drips: drips,
+    arms: [
+      for (final arm in blob.arms)
+        PaintArm(
+          path: arm.path.transform(storage),
+          base: scalePoint(arm.base),
+          tip: scalePoint(arm.tip),
+          direction: arm.direction,
+          bead: arm.bead * grow,
+        ),
+    ],
+    droplets: [
+      for (final droplet in blob.droplets)
+        PaintDroplet(
+          center: scalePoint(droplet.center),
+          radius: droplet.radius * grow,
+          direction: droplet.direction,
+          stretch: droplet.stretch,
+        ),
+    ],
+    drips: [
+      for (final drip in blob.drips)
+        PaintDrip(
+          start: scalePoint(drip.start),
+          end: scalePoint(drip.end),
+          width: drip.width * grow,
+          bead: drip.bead * grow,
+        ),
+    ],
   );
+}
+
+/// The distance from the centre to the padded content rect along [theta].
+///
+/// The padded rect is star-shaped about the centre, so clamping every outline
+/// sample to at least this radius is enough to keep the content on paint.
+double _safeRadius(
+  double theta,
+  double halfW,
+  double halfH,
+  EdgeInsets padding,
+) {
+  final hw = halfW - math.max(padding.left, padding.right);
+  final hh = halfH - math.max(padding.top, padding.bottom);
+  if (hw <= 0 || hh <= 0) return 0;
+  final cos = math.cos(theta).abs();
+  final sin = math.sin(theta).abs();
+  final rx = cos <= 1e-6 ? double.infinity : hw / cos;
+  final ry = sin <= 1e-6 ? double.infinity : hh / sin;
+  return math.min(rx, ry);
 }
 
 /// The largest corner radius whose rounded rectangle still contains the rect
@@ -307,65 +861,83 @@ double paintCornerRadius(
 }
 
 /// Points evenly spaced along the perimeter of a rounded rectangle centred on
-/// the origin.
+/// the origin, with one radius per corner.
 ///
 /// Spacing is by arc length rather than by angle, so the smoothing below gets
-/// the same sample density on a long edge and on a small corner arc. Sampling
-/// by angle would bunch samples at the corners of a wide, short box and leave
-/// the long edges nearly straight.
+/// the same sample density on a long edge and on a small corner arc. That also
+/// makes the wobble — which is a function of the arc-length position — the same
+/// spatial frequency everywhere, so a wide card does not end up with one slow
+/// bulge along its long side and a ripple along its short one.
 List<Offset> _roundedRectPerimeter(
   double halfW,
   double halfH,
-  double rc,
-  int steps,
+  List<double> radii,
 ) {
-  final ax = math.max(0.0, halfW - rc);
-  final ay = math.max(0.0, halfH - rc);
-  final arc = math.pi * rc / 2;
+  final tl = radii[0];
+  final tr = radii[1];
+  final br = radii[2];
+  final bl = radii[3];
+  final arcTl = math.pi * tl / 2;
+  final arcTr = math.pi * tr / 2;
+  final arcBr = math.pi * br / 2;
+  final arcBl = math.pi * bl / 2;
+  final top = math.max(0.0, 2 * halfW - tl - tr);
+  final right = math.max(0.0, 2 * halfH - tr - br);
+  final bottom = math.max(0.0, 2 * halfW - br - bl);
+  final left = math.max(0.0, 2 * halfH - bl - tl);
+  final total = top + right + bottom + left + arcTl + arcTr + arcBr + arcBl;
+  if (total <= 0) return const [];
+  // Roughly one sample every 3.5dp: enough for the harmonics and for the
+  // midpoint smoothing to hide the sampling, cheap enough to cache.
+  final steps = (total / 3.5).round().clamp(72, 260).toInt();
+
   final segments = <(double, Offset Function(double))>[
-    // Top edge, left to right.
-    (2 * ax, (t) => Offset(-ax + 2 * ax * t, -halfH)),
-    // Top-right corner arc.
+    (top, (t) => Offset(-halfW + tl + top * t, -halfH)),
     (
-      arc,
-      (t) => Offset(
-        ax + rc * math.sin(t * math.pi / 2),
-        -ay - rc * math.cos(t * math.pi / 2),
-      ),
+      arcTr,
+      (t) {
+        final angle = -math.pi / 2 + t * math.pi / 2;
+        return Offset(
+          halfW - tr + tr * math.cos(angle),
+          -halfH + tr + tr * math.sin(angle),
+        );
+      },
     ),
-    // Right edge, top to bottom.
-    (2 * ay, (t) => Offset(halfW, -ay + 2 * ay * t)),
-    // Bottom-right corner arc.
+    (right, (t) => Offset(halfW, -halfH + tr + right * t)),
     (
-      arc,
-      (t) => Offset(
-        ax + rc * math.cos(t * math.pi / 2),
-        ay + rc * math.sin(t * math.pi / 2),
-      ),
+      arcBr,
+      (t) {
+        final angle = t * math.pi / 2;
+        return Offset(
+          halfW - br + br * math.cos(angle),
+          halfH - br + br * math.sin(angle),
+        );
+      },
     ),
-    // Bottom edge, right to left.
-    (2 * ax, (t) => Offset(ax - 2 * ax * t, halfH)),
-    // Bottom-left corner arc.
+    (bottom, (t) => Offset(halfW - br - bottom * t, halfH)),
     (
-      arc,
-      (t) => Offset(
-        -ax - rc * math.sin(t * math.pi / 2),
-        ay + rc * math.cos(t * math.pi / 2),
-      ),
+      arcBl,
+      (t) {
+        final angle = math.pi / 2 + t * math.pi / 2;
+        return Offset(
+          -halfW + bl + bl * math.cos(angle),
+          halfH - bl + bl * math.sin(angle),
+        );
+      },
     ),
-    // Left edge, bottom to top.
-    (2 * ay, (t) => Offset(-halfW, ay - 2 * ay * t)),
-    // Top-left corner arc.
+    (left, (t) => Offset(-halfW, halfH - bl - left * t)),
     (
-      arc,
-      (t) => Offset(
-        -ax - rc * math.cos(t * math.pi / 2),
-        -ay - rc * math.sin(t * math.pi / 2),
-      ),
+      arcTl,
+      (t) {
+        final angle = math.pi + t * math.pi / 2;
+        return Offset(
+          -halfW + tl + tl * math.cos(angle),
+          -halfH + tl + tl * math.sin(angle),
+        );
+      },
     ),
   ];
-  final total = segments.fold(0.0, (sum, segment) => sum + segment.$1);
-  if (total <= 0) return const [];
+
   final points = <Offset>[];
   for (var i = 0; i < steps; i++) {
     var remaining = total * i / steps;
@@ -450,7 +1022,7 @@ Path _buildBrushPath(Size size, int seed) {
   return path;
 }
 
-/// The irregular top edge of the bottom-navigation swash.
+/// The irregular top edge of a wide, shallow wash.
 ///
 /// The wash spans the full width and runs off the bottom of the box, so only
 /// its top edge is visible: a horizontal wobble that never reaches the straight

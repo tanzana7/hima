@@ -354,7 +354,7 @@ class _MoreBadge extends StatelessWidget {
           seed: 71,
           color: AppColors.surface.withValues(alpha: 0.94),
           padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s8, vertical: 6),
-          wobble: 0.05,
+          wobble: 0.11,
           child: Text(
             '+$count',
             maxLines: 1,

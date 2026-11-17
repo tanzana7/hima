@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 
 import 'paint_geometry.dart';
 
-/// The main splash: an irregular blob with satellite droplets and drips.
+/// The main splash: an irregular body with arms, satellite droplets and drips.
 ///
 /// It is the shape the hero and the selected bottom-navigation tab sit on. The
 /// outline comes from [paintBlob], so it is seeded and cached rather than
@@ -13,14 +13,18 @@ import 'paint_geometry.dart';
 ///
 /// **Content safety.** [child] is laid out inside the inner rect left by
 /// [padding]; the paint is drawn in the full box and spills into that band. The
-/// droplets and drips are placed on the *outside* of the outline, so they can
-/// never land on a label or a tap target however the seed falls.
+/// arms, droplets and drips are placed on the *outside* of the outline, so they
+/// can never land on a label or a tap target however the seed falls. The paint
+/// is allowed to leave the widget box: a `Stack` with `Clip.none`, or a gap in
+/// the surrounding layout, gives it room. Shrinking the wobble until it fits
+/// instead would put the straight edges back.
 ///
-/// **Motion.** [progress] runs the 「ビチャ」 splash: the blob overshoots its
-/// resting size and settles, the droplets fly out from the edge to their
-/// resting spots, and the drips extend afterwards. The blob never scales below
-/// 1, so the content is on paint for the whole animation. Reduced motion paints
-/// the final state with no motion at all.
+/// **Motion.** [progress] runs the 「ビチャ」 splash: the body overshoots its
+/// resting size and settles, the arms shoot out of the edge, the droplets fly
+/// out to their resting spots and the drips extend afterwards. The body never
+/// scales below [minScale], so content-carrying splashes keep their safe rect
+/// covered for the whole animation. Reduced motion paints the final state with
+/// no motion at all.
 class PaintSplat extends StatelessWidget {
   const PaintSplat({
     super.key,
@@ -36,6 +40,9 @@ class PaintSplat extends StatelessWidget {
     this.grow = 1,
     this.progress = 1,
     this.minScale = 1,
+    this.arms,
+    this.armLength = 0.16,
+    this.origin,
   });
 
   /// Keeps the silhouette stable for a given card, friend or section.
@@ -53,15 +60,17 @@ class PaintSplat extends StatelessWidget {
   /// child's size.
   final Size size;
 
-  /// The safe rect inset. Droplets, drips and the wobbling edge live in this
-  /// band.
+  /// The safe rect inset. Arms, droplets, drips and the wobbling edge live in
+  /// this band.
   final EdgeInsets padding;
 
   /// Requested corner radius of the underlying rounded rectangle. It is capped
   /// by [padding] so the paint can never cut into the safe rect.
   final double corner;
 
-  /// How far the outline may wander outward, as a fraction of the radius.
+  /// How far the outline wanders in and out, as a fraction of the short side.
+  /// 0.04–0.10 is the range that reads as paint; below it the edge still looks
+  /// ruled.
   final double wobble;
 
   /// 3–10 reads as a splash; more turns into noise.
@@ -70,7 +79,7 @@ class PaintSplat extends StatelessWidget {
   /// 0–2. Each drip hangs off the bottom edge.
   final int drips;
 
-  /// Multiplies the outline, used to lay a second splash over the first.
+  /// Multiplies the whole splash, used to lay a second splash over the first.
   final double grow;
 
   /// 0 → 1 splash-in. Values above 1 are clamped.
@@ -85,6 +94,19 @@ class PaintSplat extends StatelessWidget {
   /// only use it for a decorative splash painted *over* another one.
   final double minScale;
 
+  /// Number of arms. Null picks 3–7 from the seed, 0 draws none.
+  final int? arms;
+
+  /// Arm length as a fraction of the short side. Wide content passes a smaller
+  /// value so the tips land in the gap around the card instead of on the
+  /// neighbouring one.
+  final double armLength;
+
+  /// Where the splash grows from, in the box's own alignment. Null grows from
+  /// the centre. A declaration bursts from the button, so it passes the button's
+  /// alignment and the paint appears to be thrown from there.
+  final Alignment? origin;
+
   @override
   Widget build(BuildContext context) {
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
@@ -98,6 +120,9 @@ class PaintSplat extends StatelessWidget {
       drips: drips,
       grow: grow,
       minScale: minScale,
+      arms: arms,
+      armLength: armLength,
+      origin: origin,
       progress: reduceMotion ? 1 : progress.clamp(0.0, 1.0),
     );
     final childWidget = child;
@@ -128,6 +153,9 @@ class _PaintSplatPainter extends CustomPainter {
     required this.drips,
     required this.grow,
     required this.minScale,
+    required this.arms,
+    required this.armLength,
+    required this.origin,
     required this.progress,
   });
 
@@ -140,6 +168,9 @@ class _PaintSplatPainter extends CustomPainter {
   final int drips;
   final double grow;
   final double minScale;
+  final int? arms;
+  final double armLength;
+  final Alignment? origin;
   final double progress;
 
   @override
@@ -154,6 +185,8 @@ class _PaintSplatPainter extends CustomPainter {
       dropletCount: droplets,
       dripCount: drips,
       grow: grow,
+      arms: arms,
+      armLength: armLength,
     );
     final t = progress;
     // The body flies in from [minScale] and lands with an overshoot, so a
@@ -167,10 +200,19 @@ class _PaintSplatPainter extends CustomPainter {
     final scale =
         minScale + (1 - minScale) * ramp + overshoot * math.sin(math.pi * t);
 
+    // Growing from [origin] instead of the centre is what makes a declaration
+    // read as paint thrown from the button rather than as a card inflating.
+    final anchor = switch (origin) {
+      final Alignment value => Offset(
+        size.width * (value.x + 1) / 2,
+        size.height * (value.y + 1) / 2,
+      ),
+      null => blob.center,
+    };
     canvas.save();
-    canvas.translate(blob.center.dx, blob.center.dy);
+    canvas.translate(anchor.dx, anchor.dy);
     canvas.scale(scale, scale);
-    canvas.translate(-blob.center.dx, -blob.center.dy);
+    canvas.translate(-anchor.dx, -anchor.dy);
 
     final fill = Paint();
     if (colors.length > 1) {
@@ -184,6 +226,15 @@ class _PaintSplatPainter extends CustomPainter {
     }
     canvas.drawPath(blob.path, fill);
 
+    // The arms are separate filled shapes that overlap the body by a few dp.
+    // The gradient shader lives in canvas space, so the overlap is invisible and
+    // the arm still reads as part of the same splash. Drawing them separately is
+    // what lets each one shoot out on its own instead of the whole body being
+    // scaled.
+    for (var i = 0; i < blob.arms.length; i++) {
+      _paintArm(canvas, fill, blob.arms[i], t, i);
+    }
+
     // Droplets and drips take the darker end of the gradient so they read as
     // the same paint thrown off the body rather than as separate dots.
     final thrown = Paint()..color = colors.last;
@@ -194,6 +245,36 @@ class _PaintSplatPainter extends CustomPainter {
       _paintDroplet(canvas, thrown, blob.droplets[i], blob.center, t, i);
     }
     canvas.restore();
+  }
+
+  /// Draws one arm, scaled along its own axis so it grows out of the body.
+  void _paintArm(Canvas canvas, Paint paint, PaintArm arm, double t, int index) {
+    // Staggered so the arms land one after another, the way a splash spreads.
+    final ramp = Curves.easeOutCubic.transform(
+      ((t - 0.03 * index) / 0.55).clamp(0.0, 1.0),
+    );
+    if (ramp <= 0) return;
+    // A small overshoot at the end of the travel: the lobe stretches past its
+    // resting length and settles back.
+    final reach = 0.2 + 0.8 * ramp + 0.08 * math.sin(math.pi * ramp);
+    final angle = math.atan2(arm.direction.dy, arm.direction.dx);
+    canvas.save();
+    canvas.translate(arm.base.dx, arm.base.dy);
+    canvas.rotate(angle);
+    canvas.scale(reach, 1);
+    canvas.rotate(-angle);
+    canvas.translate(-arm.base.dx, -arm.base.dy);
+    canvas.drawPath(arm.path, paint);
+    canvas.restore();
+
+    if (arm.bead > 0) {
+      final length = (arm.tip - arm.base).distance;
+      canvas.drawCircle(
+        arm.base + arm.direction * (length * reach),
+        arm.bead * (0.35 + 0.65 * ramp),
+        paint,
+      );
+    }
   }
 
   void _paintDrip(Canvas canvas, Paint paint, PaintDrip drip, double t) {
@@ -210,14 +291,23 @@ class _PaintSplatPainter extends CustomPainter {
     final normal = Offset(-direction.dy, direction.dx);
     final half = drip.width * 0.5;
     final tip = drip.width * 0.22;
+    // A filled tongue, wider at the edge and pinched at the end, with the bead
+    // on top. A stroke here would be a straight line hanging off the splash.
     final path = Path()
       ..moveTo(
         drip.start.dx + normal.dx * half,
         drip.start.dy + normal.dy * half,
       )
-      ..lineTo(end.dx + normal.dx * tip, end.dy + normal.dy * tip)
+      ..quadraticBezierTo(
+        drip.start.dx + delta.dx * 0.55 + normal.dx * half * 0.9,
+        drip.start.dy + delta.dy * 0.55 + normal.dy * half * 0.9,
+        end.dx + normal.dx * tip,
+        end.dy + normal.dy * tip,
+      )
       ..lineTo(end.dx - normal.dx * tip, end.dy - normal.dy * tip)
-      ..lineTo(
+      ..quadraticBezierTo(
+        drip.start.dx + delta.dx * 0.55 - normal.dx * half * 0.9,
+        drip.start.dy + delta.dy * 0.55 - normal.dy * half * 0.9,
         drip.start.dx - normal.dx * half,
         drip.start.dy - normal.dy * half,
       )
@@ -234,39 +324,26 @@ class _PaintSplatPainter extends CustomPainter {
     double t,
     int index,
   ) {
-    // Staggered so the ring of droplets leaves the blob in sequence instead of
-    // popping out as one ring.
+    // Staggered so the droplets leave the splash in sequence instead of popping
+    // out as one ring.
     final stagger = Curves.easeOutCubic.transform(
-      ((t - 0.08 * index) / 0.55).clamp(0.0, 1.0),
+      ((t - 0.06 * index) / 0.55).clamp(0.0, 1.0),
     );
     if (stagger <= 0) return;
     final fly = 0.35 + 0.65 * stagger;
     final position = center + (droplet.center - center) * fly;
     final radius = droplet.radius * (0.45 + 0.55 * stagger);
-    final neckFrom = droplet.neckFrom;
-    if (neckFrom != null && stagger > 0.5) {
-      final from = center + (neckFrom - center) * fly;
-      final delta = position - from;
-      final length = delta.distance;
-      if (length > 0.5) {
-        final direction = delta / length;
-        final normal = Offset(-direction.dy, direction.dx);
-        final wide = droplet.neckWidth;
-        final narrow = droplet.neckWidth * 0.4;
-        final path = Path()
-          ..moveTo(from.dx + normal.dx * wide, from.dy + normal.dy * wide)
-          ..lineTo(
-            position.dx + normal.dx * narrow,
-            position.dy + normal.dy * narrow,
-          )
-          ..lineTo(
-            position.dx - normal.dx * narrow,
-            position.dy - normal.dy * narrow,
-          )
-          ..lineTo(from.dx - normal.dx * wide, from.dy - normal.dy * wide)
-          ..close();
-        canvas.drawPath(path, paint);
-      }
+    if (droplet.stretch > 0) {
+      // A filled egg, not a circle with a tail: the droplet was travelling fast
+      // when it hit the paper.
+      final angle = math.atan2(droplet.direction.dy, droplet.direction.dx);
+      canvas.save();
+      canvas.translate(position.dx, position.dy);
+      canvas.rotate(angle);
+      canvas.scale(1 + droplet.stretch, 1 - droplet.stretch * 0.35);
+      canvas.drawCircle(Offset.zero, radius, paint);
+      canvas.restore();
+      return;
     }
     canvas.drawCircle(position, radius, paint);
   }
@@ -280,6 +357,9 @@ class _PaintSplatPainter extends CustomPainter {
       oldDelegate.drips != drips ||
       oldDelegate.grow != grow ||
       oldDelegate.minScale != minScale ||
+      oldDelegate.arms != arms ||
+      oldDelegate.armLength != armLength ||
+      oldDelegate.origin != origin ||
       oldDelegate.progress != progress ||
       oldDelegate.padding != padding ||
       !listEquals(oldDelegate.colors, colors);
