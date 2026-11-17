@@ -11,6 +11,12 @@ import 'package:flutter/material.dart';
 /// the same splash. The generated paths are cached per (seed, size, config) so
 /// a scrolling list does not re-sample an outline on every frame.
 ///
+/// **Anatomy of a swipe.** A wide band painted with one sideways movement: a
+/// blunt loaded start, a band whose edges wobble, a frayed bristle end and the
+/// splatter flicked off it. It is the opposite of a splash — nothing grows out
+/// of it — and it is the only primitive that keeps its whole silhouette inside
+/// the box width. See [paintSwipe].
+///
 /// **Anatomy of a splash.** A body, arms and droplets:
 ///
 /// * The **body** is a rounded-rectangle centre line with four uneven corner
@@ -1060,4 +1066,546 @@ Path paintSwashPath({
     path.close();
     return path;
   });
+}
+// ---------------------------------------------------------------------------
+// Brush swipe
+// ---------------------------------------------------------------------------
+
+/// How far a swipe's bristles may reach past its solid band, in dp.
+///
+/// The bristles are what makes the dry end read as a brush running out of
+/// paint, so they are the first thing to shorten when the box is narrow: unlike
+/// the splash, a stroke keeps its whole silhouette inside the box, because one
+/// cut off by the screen edge reads as a rectangle again.
+const double paintSwipeMaxBristle = 50;
+
+/// How far the splatter may fly past the swipe's box, in dp.
+///
+/// The droplets fan out wider than the band, so a caller that puts a swipe next
+/// to text reserves this much paper around it. It is much smaller than
+/// [paintMaxBleed]: a stroke throws its paint sideways, not in a ring.
+const double paintSwipeBleed = 18;
+
+/// A wide brush stroke: a blunt loaded start, a wobbling band, a frayed bristle
+/// end, dry streaks and the splatter flicked off the end.
+class PaintSwipe {
+  const PaintSwipe({
+    required this.body,
+    required this.droplets,
+    required this.band,
+    required this.bodyRight,
+    required this.tipRight,
+  });
+
+  /// The band and its bristles unioned into one path, with the dry streaks cut
+  /// out of it.
+  ///
+  /// One path means one fill, so there is no seam where a bristle leaves the
+  /// band, and the streaks are real holes: whatever is behind the stroke (paper,
+  /// or the idle wash the hero paints over) shows through them instead of a
+  /// paper-coloured dash being painted on top of it.
+  final Path body;
+
+  /// Droplets flicked off the frayed end, in the stroke direction.
+  final List<PaintDroplet> droplets;
+
+  /// The vertical extent of the band inside the box.
+  final Rect band;
+
+  /// Where the solid part of the band ends and the bristles take over.
+  final double bodyRight;
+
+  /// The furthest the bristles reach. The splatter starts here.
+  final double tipRight;
+}
+
+final _swipeCache = PaintCache<PaintSwipe>();
+
+/// The room a swipe keeps to the right of its content for the frayed end and
+/// the splatter.
+///
+/// It is a fraction of the box rather than a constant so the stroke keeps its
+/// proportions on a tablet, and it is capped so a narrow box still has a body.
+/// A caller that hands a child to `BrushSwipe` gets this inset for free; a
+/// caller that paints a bare stroke and places the content itself (the home
+/// hero, which stacks two strokes) insets by the same value so the two agree.
+double paintSwipeEndBand(double width) {
+  if (width <= 0) return 0;
+  final wanted = (width * 0.16).clamp(28.0, 72.0);
+  return math.min(wanted, width * 0.38);
+}
+
+/// The part of a swipe's box painted so far, with a soft, wobbly right edge.
+///
+/// The painter clips the stroke with it. A caller that draws text *on* the
+/// stroke clips the text with the same path, which is what lets a stroke paint
+/// itself in without the text appearing ahead of the paint: the label is then
+/// only ever drawn where the paint has already arrived.
+///
+/// The edge is seeded so it does not shimmer between frames, and it wanders by
+/// a few dp so the front reads as paint rather than as a wipe.
+Path paintSwipeRevealPath({
+  required Size size,
+  required double progress,
+  required int seed,
+}) {
+  final t = progress.clamp(0.0, 1.0);
+  final rng = math.Random(seed ^ 0x5f3a);
+  final phaseA = rng.nextDouble() * math.pi * 2;
+  final phaseB = rng.nextDouble() * math.pi * 2;
+  final x = -2 + (size.width + 4) * t;
+  const steps = 14;
+  final path = Path()..moveTo(-2, -2);
+  for (var i = 0; i <= steps; i++) {
+    final s = i / steps;
+    final wobble =
+        5 * math.sin(2 * math.pi * 1.5 * s + phaseA) +
+        3 * math.sin(2 * math.pi * 3.2 * s + phaseB);
+    path.lineTo(x + wobble, -2 + (size.height + 4) * s);
+  }
+  path.lineTo(-2, size.height + 2);
+  path.close();
+  return path;
+}
+
+/// Builds (or returns the cached) swipe for one box.
+///
+/// **Geometry.** The band is a closed outline sampled along the stroke: a half
+/// ellipse at the left (the brush touching down loaded and blunt), a top edge
+/// and a bottom edge that each carry two low harmonics of their own, and a
+/// ragged right edge hidden under the bristles. The thickness falls off along
+/// the stroke, so the start is fatter than the dry end — a constant thickness
+/// reads as a rectangle however wobbly its edges are.
+///
+/// **The dry end.** The paint breaks into bristles of varied thickness and
+/// length, separated by thin gaps. The bristles overlap the band, so the gaps
+/// cut *back into* the solid paint: that is what a brush running dry leaves,
+/// and it is why the end is not a comb glued onto a rectangle. The bristles
+/// have to cover the band's dry end, so their *count* follows the band's
+/// height while each one stays inside the specified 6–20dp: a band that grows
+/// with the text scale gets more hairs, not fatter ones.
+///
+/// **Content safety.** [padding] plus [endBand] on the right is the rect the
+/// caller lays its content out in. The solid band covers all of it, and the
+/// bristles, the gaps, the dry streaks and the splatter all start to its right,
+/// so no hole in the paint can run under a label.
+///
+/// **Fit.** Everything, splatter included, is clamped to the box width. The
+/// bristles and the splatter get shorter on a narrow box instead of being cut
+/// off. Only the splatter is allowed past the box, vertically, by
+/// [paintSwipeBleed].
+PaintSwipe paintSwipe({
+  required Size size,
+  required int seed,
+  required EdgeInsets padding,
+  required double endBand,
+  int? bristles,
+  int? droplets,
+}) {
+  final key = (size, seed, padding, endBand, bristles, droplets);
+  return _swipeCache.get(
+    key,
+    () => _buildSwipe(
+      size: size,
+      seed: seed,
+      padding: padding,
+      endBand: endBand,
+      bristleCount: bristles,
+      dropletCount: droplets,
+    ),
+  );
+}
+
+PaintSwipe _buildSwipe({
+  required Size size,
+  required int seed,
+  required EdgeInsets padding,
+  required double endBand,
+  required int? bristleCount,
+  required int? dropletCount,
+}) {
+  final rng = math.Random(seed);
+  final width = size.width;
+  final height = size.height;
+  if (width < 12 || height < 12) {
+    return PaintSwipe(
+      body: Path(),
+      droplets: const [],
+      band: Offset.zero & size,
+      bodyRight: width,
+      tipRight: width,
+    );
+  }
+
+  // The paper margin above and below the band. It gives the splatter cone room
+  // to fly a little wider than the band, and it is capped under the content
+  // padding so the band still covers the content at every text scale.
+  final bandInset = math.min(
+    math.min(padding.top, padding.bottom) * 0.5,
+    math.min(12.0, height * 0.08),
+  );
+  final band = Rect.fromLTRB(0, bandInset, width, height - bandInset);
+  final centerY = band.center.dy;
+  final halfH = band.height * 0.5;
+
+  // How much paper the band leaves between its own edge and the content edge.
+  // The wobble and the taper both spend it, and neither may spend more: a band
+  // that dips inside the content rect puts a hole in the paint under a label.
+  final contentHalf = math.max(
+    centerY - padding.top,
+    height - padding.bottom - centerY,
+  );
+  final margin = math.max(0.0, halfH - contentHalf);
+
+  // The rect the caller lays its content out in (see [paintSwipe]).
+  final contentRight = math.max(padding.left, width - padding.right - endBand);
+
+  // The dry end is laid out from the right. The splatter takes the last slice,
+  // the bristles reach into the slice before it, and the gaps between them
+  // start *after* the content — a gap or a streak under a label would read as a
+  // strike-through. The notch the gaps cut back into the band is limited by the
+  // content's own right padding for the same reason.
+  final splatRoom = endBand * 0.30;
+  final tipRight = math.max(contentRight, width - splatRoom);
+  final notchDepth = math.min(padding.right * 0.6, endBand * 0.24);
+  final strandRoot = math.max(
+    contentRight + notchDepth + 3,
+    width - endBand - notchDepth,
+  );
+  final bodyRight = math.min(width, strandRoot + 2);
+  final bristleRoom = math.max(0.0, tipRight - strandRoot);
+
+  // The wobble is a few dp of slow movement, not the splash's 4–10% of the
+  // short side: a stroke has a direction, and a big wobble turns it into a
+  // blob. It is capped by the paper margin so the edge never reaches the
+  // content, and by the band inset so it never leaves the box.
+  final amp = math.min(
+    math.min(4.0, band.height * 0.035),
+    math.min(bandInset, math.max(0.0, margin - 2)),
+  );
+  // A hand-painted band is never level. A couple of dp of drift across the
+  // whole stroke is what stops it reading as a rectangle.
+  final drift = (rng.nextDouble() - 0.5) * 5;
+  final capRx = math.min(
+    math.min(26.0, band.height * 0.24),
+    math.max(4.0, padding.left),
+  );
+  // The brush touched down at a slight angle, so the blunt start is not
+  // symmetric about the centre line.
+  final capSlant = (rng.nextDouble() - 0.5) * 0.35;
+  // Two harmonics per edge, with independent seeded phases: the top and the
+  // bottom wander separately, so the band never pinches into a lens.
+  final topFreq = [1.3 + rng.nextDouble() * 0.9, 3.0 + rng.nextDouble() * 1.5];
+  final topPhase = [
+    rng.nextDouble() * math.pi * 2,
+    rng.nextDouble() * math.pi * 2,
+  ];
+  final bottomFreq = [
+    1.2 + rng.nextDouble() * 1.0,
+    2.8 + rng.nextDouble() * 1.7,
+  ];
+  final bottomPhase = [
+    rng.nextDouble() * math.pi * 2,
+    rng.nextDouble() * math.pi * 2,
+  ];
+
+  double edge(double t, List<double> freq, List<double> phase) =>
+      amp *
+      (0.6 * math.sin(2 * math.pi * freq[0] * t + phase[0]) +
+          0.4 * math.sin(2 * math.pi * freq[1] * t + phase[1]));
+  double driftAt(double t) => drift * (t - 0.5);
+
+  // The loaded start is fatter than the dry end: the brush still had paint in
+  // it when it touched down. The taper may only spend the margin the wobble
+  // leaves, so the band never dips inside the content rect.
+  final minHalf = math.min(halfH, contentHalf + amp + 2);
+  double halfAt(double t) => halfH - (halfH - minHalf) * t;
+
+  // --- bristle layout -----------------------------------------------------
+  // Laid out before the band, because the band's right edge is scalloped by the
+  // gaps: the dry end has to break up *inside* the paint, not start at a ruled
+  // line and grow teeth out of it.
+  //
+  // The hairs have to cover the band's dry end, so their *total* height follows
+  // the band. Their individual thickness must not: it is fixed at 6–20dp, and a
+  // band that grows with the text scale would otherwise turn nine hairs into
+  // fat fingers (a 260dp dry end gave 27dp hairs). The count follows the height
+  // instead — 5–9 hairs on a normal band, more on a tall one — and every hair
+  // is sized inside the range.
+  final span = 2 * minHalf;
+  final count = (bristleCount ?? (span / 15).round()).clamp(3, 24);
+  final gapWeights = [
+    for (var i = 0; i < count - 1; i++) 0.6 + rng.nextDouble() * 1.4,
+  ];
+  final gapWeightSum = gapWeights.fold(0.0, (sum, value) => sum + value);
+  // Thin gaps: wide enough to read as a break, narrow enough that the end still
+  // looks like paint rather than like a comb. They open towards the tips
+  // because the bristles taper.
+  final gapTotal = math.min(span * 0.16, 1.8 * (count - 1));
+  final meanThickness = (span - gapTotal) / count;
+  // How far one hair may stray from the mean before it would leave 6–20dp. The
+  // spread narrows as the mean approaches either end of the range, so the
+  // seeded variation can never push a hair out of the specified thickness.
+  final spread = math
+      .min(0.22, math.min(20 / meanThickness - 1, 1 - 6 / meanThickness))
+      .clamp(0.0, 0.22);
+  final thicknessWeights = [
+    for (var i = 0; i < count; i++) 1 + spread * (rng.nextDouble() * 2 - 1),
+  ];
+  final thicknessWeightSum = thicknessWeights.fold(
+    0.0,
+    (sum, value) => sum + value,
+  );
+  final thicknesses = [
+    for (final weight in thicknessWeights)
+      (meanThickness * weight * count / thicknessWeightSum).clamp(6.0, 20.0),
+  ];
+  // The height the frayed end actually covers, measured from the hairs rather
+  // than assumed from the band: that is what keeps the two decoupled.
+  final fraySpan =
+      thicknesses.fold(0.0, (sum, value) => sum + value) + gapTotal;
+  final bristles =
+      <({double centerY, double half, double reach, double wander})>[];
+  var y = centerY - fraySpan / 2;
+  for (var i = 0; i < count; i++) {
+    final thickness = thicknesses[i];
+    final gap = i < count - 1 ? gapTotal * gapWeights[i] / gapWeightSum : 0.0;
+    // A brush running dry leaves a few long hairs and many short ones; equal
+    // lengths are what makes the end read as a comb.
+    final reach = math.min(
+      paintSwipeMaxBristle,
+      bristleRoom * (0.1 + 0.9 * math.pow(rng.nextDouble(), 1.7).toDouble()),
+    );
+    bristles.add((
+      centerY: y + thickness / 2,
+      half: thickness / 2,
+      reach: reach,
+      wander: (rng.nextDouble() - 0.5) * 1.6,
+    ));
+    y += thickness + gap;
+  }
+
+  // --- band ---------------------------------------------------------------
+  final points = <Offset>[];
+  // Loaded start: a blunt, round cap rather than a ruled vertical edge.
+  const capSteps = 8;
+  for (var i = 0; i <= capSteps; i++) {
+    final a = math.pi / 2 + math.pi * i / capSteps;
+    points.add(
+      Offset(
+        capRx + capRx * math.cos(a),
+        centerY +
+            driftAt(0) +
+            halfH * math.sin(a) +
+            capSlant * capRx * math.cos(a),
+      ),
+    );
+  }
+  // Top edge, left to right.
+  final steps = math.max(10, (bodyRight / 5).round());
+  for (var i = 0; i <= steps; i++) {
+    final t = i / steps;
+    points.add(
+      Offset(
+        capRx + (bodyRight - capRx) * t,
+        centerY +
+            driftAt(t) -
+            halfAt(t) +
+            edge(t, topFreq, topPhase) +
+            _jitter(rng),
+      ),
+    );
+  }
+  // Scalloped right edge: out at every bristle, back in at every gap, so each
+  // gap has its own depth and the dry end never stops on a ruled line.
+  for (var i = 0; i < bristles.length; i++) {
+    points.add(Offset(bodyRight, bristles[i].centerY));
+    if (i < bristles.length - 1) {
+      final gapY =
+          (bristles[i].centerY +
+              bristles[i].half +
+              bristles[i + 1].centerY -
+              bristles[i + 1].half) /
+          2;
+      points.add(
+        Offset(
+          bodyRight - notchDepth * (0.3 + 0.7 * rng.nextDouble()),
+          gapY + (rng.nextDouble() - 0.5) * 1.5,
+        ),
+      );
+    }
+  }
+  // Bottom edge, right to left.
+  for (var i = steps; i >= 0; i--) {
+    final t = i / steps;
+    points.add(
+      Offset(
+        capRx + (bodyRight - capRx) * t,
+        centerY +
+            driftAt(t) +
+            halfAt(t) +
+            edge(t, bottomFreq, bottomPhase) +
+            _jitter(rng),
+      ),
+    );
+  }
+  var body = smoothClosedPath(points);
+
+  // The bristles overlap the band by a few dp, so the gaps between them cut
+  // back into the solid paint instead of being glued onto its edge.
+  for (final bristle in bristles) {
+    body = Path.combine(
+      PathOperation.union,
+      body,
+      _bristlePath(
+        x0: strandRoot - 10,
+        x1: strandRoot + bristle.reach,
+        centerY: bristle.centerY,
+        half: bristle.half,
+        wander: bristle.wander,
+      ),
+    );
+  }
+
+  // --- dry streaks --------------------------------------------------------
+  // Holes rather than painted dashes, and never under the content: they are
+  // concentrated in the last quarter of the stroke, where the paint is running
+  // out, and they start after the content's right edge.
+  final streakStart = math.max(contentRight + 2, width * 0.72);
+  final streakEnd = math.max(streakStart + 4, tipRight);
+  final streakZone = streakEnd - streakStart;
+  final streakCount = 3 + rng.nextInt(3);
+  for (var i = 0; i < streakCount; i++) {
+    final length = streakZone * (0.3 + 0.45 * rng.nextDouble());
+    final x0 = streakStart + (streakZone - length) * rng.nextDouble();
+    body = Path.combine(
+      PathOperation.difference,
+      body,
+      _streakPath(
+        x0,
+        x0 + length,
+        centerY + (rng.nextDouble() - 0.5) * band.height * 0.62,
+        0.5 + rng.nextDouble() * 0.5,
+        rng,
+      ),
+    );
+  }
+
+  // --- splatter -----------------------------------------------------------
+  // Droplets flicked off the frayed end, in the stroke direction. They leave
+  // from the dry end and fan out *outside* the band: a drop that lands on the
+  // stroke is invisible, so the cone starts at the band's edge and opens with
+  // distance, and the drops shrink as they travel. The x range overlaps the
+  // bristles on purpose — the droplets fly above and below them, not through
+  // them, and sharing the space is what gives the spray room to spread.
+  final droplets = <PaintDroplet>[];
+  final dropCount = (dropletCount ?? (10 + rng.nextInt(9))).clamp(0, 24);
+  final from = bodyRight + 2;
+  final room = math.max(0.0, width - 2 - from);
+  if (dropCount > 0 && room > 3) {
+    final big = (band.height * 0.055).clamp(2.6, 7.5);
+    final small = (band.height * 0.018).clamp(1.0, 2.4);
+    final coneRoom = paintSwipeBleed * 0.75;
+    for (var i = 0; i < dropCount; i++) {
+      final t = (i + 1) / dropCount;
+      final travel = room * (0.05 + 0.95 * t) * (0.65 + 0.5 * rng.nextDouble());
+      final radius = (big + (small - big) * t) * (0.7 + 0.5 * rng.nextDouble());
+      final side = rng.nextBool() ? 1.0 : -1.0;
+      final lateral =
+          side *
+          (halfH + 1 + (bandInset * 0.5 + coneRoom * t) * rng.nextDouble());
+      droplets.add(
+        PaintDroplet(
+          // Clamped to the box width: the splatter is the one part of the
+          // stroke that could otherwise reach the screen edge. Vertically it
+          // may use the [paintSwipeBleed] band the caller reserves.
+          center: Offset(
+            (from + travel).clamp(radius + 1, width - radius - 2),
+            (centerY + lateral).clamp(
+              radius + 1 - paintSwipeBleed,
+              height - radius - 1 + paintSwipeBleed,
+            ),
+          ),
+          radius: radius,
+          direction: const Offset(1, 0),
+          stretch: t < 0.35 ? 0.22 : 0,
+        ),
+      );
+    }
+  }
+
+  return PaintSwipe(
+    body: body,
+    droplets: droplets,
+    band: band,
+    bodyRight: bodyRight,
+    tipRight: tipRight,
+  );
+}
+
+/// A little seeded roughness on the band edge.
+///
+/// The harmonics alone are too smooth to read as paint at arm's length; a
+/// sub-dp jitter on every sample is what breaks the edge up without turning it
+/// into noise.
+double _jitter(math.Random rng) => (rng.nextDouble() - 0.5) * 0.9;
+
+/// One bristle: a strand that thins towards a round tip and drifts a little.
+///
+/// The taper and the drift are what separate a brush running dry from a comb: a
+/// tooth of constant width and a straight edge reads as a tool, not as paint.
+Path _bristlePath({
+  required double x0,
+  required double x1,
+  required double centerY,
+  required double half,
+  required double wander,
+}) {
+  const steps = 6;
+  final top = <Offset>[];
+  final bottom = <Offset>[];
+  for (var i = 0; i <= steps; i++) {
+    final t = i / steps;
+    // The taper is concentrated at the very tip: a bristle stays almost
+    // parallel for most of its length and rounds off where the paint runs out,
+    // so the gaps between bristles stay thin lines instead of opening into
+    // slots. A linear taper is what makes the end read as a comb.
+    final taper = 1 - 0.3 * math.pow(t, 5).toDouble();
+    final y = centerY + wander * t;
+    final x = x0 + (x1 - x0) * t;
+    top.add(Offset(x, y - half * taper));
+    bottom.add(Offset(x, y + half * taper));
+  }
+  final tipHalf = math.max(0.6, half * 0.7);
+  final tipY = centerY + wander;
+  final points = <Offset>[...top];
+  const capSteps = 6;
+  for (var i = 1; i < capSteps; i++) {
+    final a = -math.pi / 2 + math.pi * i / capSteps;
+    points.add(
+      Offset(x1 + tipHalf * math.cos(a), tipY + tipHalf * math.sin(a)),
+    );
+  }
+  points.addAll(bottom.reversed);
+  return smoothClosedPath(points);
+}
+
+/// A thin lens with tapered ends: one dry streak.
+///
+/// A streak that stopped square would read as a slit cut with a knife; a brush
+/// running out of paint leaves a mark that fades at both ends.
+Path _streakPath(double x0, double x1, double y, double half, math.Random rng) {
+  const steps = 6;
+  final phase = rng.nextDouble() * math.pi * 2;
+  final top = <Offset>[];
+  final bottom = <Offset>[];
+  for (var i = 0; i <= steps; i++) {
+    final t = i / steps;
+    final taper = math.pow(math.sin(math.pi * t), 0.6).toDouble();
+    final wobble = math.sin(2 * math.pi * 1.6 * t + phase) * 0.6;
+    final x = x0 + (x1 - x0) * t;
+    top.add(Offset(x, y + wobble - half * taper));
+    bottom.add(Offset(x, y + wobble + half * taper));
+  }
+  return smoothClosedPath([...top, ...bottom.reversed]);
 }

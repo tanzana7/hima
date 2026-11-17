@@ -70,65 +70,68 @@ class LoginScreen extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // The logo and the headline sit on layered paint: a lavender
-                  // splash underneath and a lemon→coral one on top. Both keep
-                  // their content inside the safe rect, so the ink text is
-                  // always on colour and never on bare paper.
+                  // The logo and the headline sit on two brush passes: a lemon
+                  // stroke that went down first, tilted, and the coral one that
+                  // landed across it. A stroke is what the rest of the app is
+                  // painted with; the splash that used to be here read as a
+                  // wide rectangle with drips hanging off it.
                   Stack(
                     // The column above stretches the stack to the full width,
-                    // so the splash is centred explicitly: the default
+                    // so the stroke is centred explicitly: the default
                     // top-start would park it against the left edge whenever it
                     // ends up narrower than the stack.
                     alignment: Alignment.center,
                     clipBehavior: Clip.none,
                     children: [
                       Positioned.fill(
-                        child: PaintSplat(
-                          seed: 8123,
-                          colors: const [
-                            AppColors.purpleSoft,
-                            AppColors.skySoft,
-                          ],
-                          padding: const EdgeInsets.all(AppSpacing.s24),
-                          corner: 56,
-                          wobble: 0.09,
-                          droplets: 8,
-                          drips: 1,
+                        child: Transform.rotate(
+                          // A couple of degrees is enough to read as a second
+                          // pass of the brush instead of a second layer.
+                          angle: -0.035,
+                          child: BrushSwipe(
+                            seed: 8123,
+                            colors: const [
+                              AppColors.lemonSoft,
+                              AppColors.skySoft,
+                            ],
+                            padding: const EdgeInsets.all(AppSpacing.s24),
+                            droplets: 12,
+                          ),
                         ),
                       ),
-                      PaintSplat(
-                        seed: 4211,
-                        colors: const [
-                          AppColors.lemonSoft,
-                          AppColors.coralLight,
-                        ],
-                        padding: const EdgeInsets.all(AppSpacing.s24),
-                        corner: 56,
-                        // A wide box with a small wobble reads as a rounded
-                        // rectangle, so the login splash leans on a stronger
-                        // one: it is the only shape on the screen and has to
-                        // carry the wet-paint look by itself.
-                        wobble: 0.085,
-                        droplets: 10,
-                        drips: 2,
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            // The wordmark keeps its fixed size: it is a mark,
-                            // not body text, and the headline below carries the
-                            // message at every text scale.
-                            Center(
-                              child: MediaQuery.withNoTextScaling(
-                                child: const HimaLogo(fontSize: 56),
-                              ),
-                            ),
-                            const SizedBox(height: AppSpacing.s16),
-                            Text(
-                              'いま、ひま？',
-                              textAlign: TextAlign.center,
-                              style: AppTextStyles.heroTitle,
-                            ),
+                      // The width is forced: a Stack sizes to its largest
+                      // non-positioned child, and without this the stroke would
+                      // shrink to the logo's intrinsic width while the tilted
+                      // pass behind it kept the full width.
+                      SizedBox(
+                        width: double.infinity,
+                        child: BrushSwipe(
+                          seed: 4211,
+                          colors: const [
+                            AppColors.lemonSoft,
+                            AppColors.coralLight,
                           ],
+                          padding: const EdgeInsets.all(AppSpacing.s24),
+                          droplets: 16,
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              // The wordmark keeps its fixed size: it is a mark,
+                              // not body text, and the headline below carries
+                              // the message at every text scale.
+                              Center(
+                                child: MediaQuery.withNoTextScaling(
+                                  child: const HimaLogo(fontSize: 56),
+                                ),
+                              ),
+                              const SizedBox(height: AppSpacing.s16),
+                              Text(
+                                'いま、ひま？',
+                                textAlign: TextAlign.center,
+                                style: AppTextStyles.heroTitle,
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                       // Droplets thrown clear of the paint, kept off the text.
@@ -154,12 +157,11 @@ class LoginScreen extends StatelessWidget {
                       ),
                     ],
                   ),
-                  // The splash throws arms and drips up to `paintMaxBleed` past
-                  // its box, and the left drip used to run into the subtitle.
-                  // Reserving exactly that band is the only gap that holds for
-                  // every seed and text scale: a fixed 24dp put the drip
-                  // through 「ひまなら友達に知らせよう」.
-                  const SizedBox(height: paintMaxBleed + AppSpacing.s8),
+                  // The stroke throws its splatter up to `paintSwipeBleed`
+                  // past its box and the lemon pass is tilted a couple of
+                  // degrees on top of that, so the gap covers both: the
+                  // splatter used to run into 「ひまなら友達に知らせよう」.
+                  const SizedBox(height: AppSpacing.s32),
                   Text(
                     'ひまなら友達に知らせよう',
                     textAlign: TextAlign.center,

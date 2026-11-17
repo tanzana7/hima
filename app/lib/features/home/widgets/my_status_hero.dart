@@ -79,22 +79,15 @@ class MyStatusHero extends StatefulWidget {
 
 class _MyStatusHeroState extends State<MyStatusHero>
     with SingleTickerProviderStateMixin {
-  /// The band the paint spills into. Everything the user can read or tap stays
-  /// inside the rect this leaves, so the arms, droplets and drips can never
-  /// cover it.
+  /// The band the paint keeps clear of the content. Everything the user can
+  /// read or tap stays inside the rect this leaves, so the bristles, the dry
+  /// streaks and the splatter can never cover it.
   static const _padding = 20.0;
 
-  /// Fixed seeds: the hero's two splashes must not change shape between
+  /// Fixed seeds: the hero's two strokes must not change shape between
   /// rebuilds, and the declared one has to sit over the idle one every time.
   static const _idleSeed = 20261117;
   static const _declaredSeed = 71119;
-
-  /// Arm length as a fraction of the hero's short side. The hero is wide, so
-  /// its short side is the height: 0.10 puts the tips about 20dp out, which is
-  /// far enough to read as an arm and short enough that, with the 32dp gap the
-  /// home screen keeps around the card, they land on paper instead of on the
-  /// header or the match card.
-  static const _armLength = 0.10;
 
   late final AnimationController _burstController;
   bool _bursting = false;
@@ -134,149 +127,137 @@ class _MyStatusHeroState extends State<MyStatusHero>
     final declared = state.isDeclared;
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
 
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        // The idle wash. When declared it fades out instead of staying
-        // underneath: the coral splash covers the safe rect but not the idle
-        // arms and droplets, so lavender and lemon bits kept peeking out around
-        // the coral as a leftover layer.
-        //
-        // The fade runs while the coral paint is already at its full size, so
-        // the white heading never sits on the pale wash for a frame. Reduced
-        // motion drops the fade and switches the wash off at once.
-        //
-        // Both splashes are drawn in the full box and their arms and droplets
-        // leave it; the home screen keeps a 32dp gap around the hero so they
-        // land on paper instead of on the next card.
-        Positioned.fill(
-          child: AnimatedOpacity(
-            opacity: declared ? 0 : 1,
-            duration: reduceMotion
-                ? Duration.zero
-                : const Duration(milliseconds: 260),
-            curve: Curves.easeOut,
-            child: PaintSplat(
-              seed: _idleSeed,
-              colors: const [AppColors.heroIdleTop, AppColors.heroIdleBottom],
-              padding: const EdgeInsets.all(_padding),
-              corner: 40,
-              wobble: 0.055,
-              // The idle state is a quieter wash: fewer arms and no drip.
-              arms: 4,
-              armLength: _armLength,
-              droplets: 6,
-              drips: 0,
-            ),
-          ),
-        ),
-        if (declared) ...[
-          // The final paint, drawn at full size from the first frame. It has to
-          // be there immediately: the heading is white, and a body that grew
-          // from nothing would leave the white text on the pale idle wash for
-          // the length of the animation.
-          Positioned.fill(
-            child: PaintSplat(
-              seed: _declaredSeed,
-              colors: const [
-                AppColors.heroDeclaredTop,
-                AppColors.heroDeclaredBottom,
-              ],
-              padding: const EdgeInsets.all(_padding),
-              corner: 40,
-              wobble: 0.055,
-              arms: 5,
-              armLength: _armLength,
-              droplets: 9,
-              drips: 1,
-              grow: 1.03,
-            ),
-          ),
-          // The ビチャ itself: a deeper body of the same silhouette that flies
-          // in from 35% over the paint, anchored at the declare button's place
-          // in the card, overshoots, and settles into it while the arms shoot
-          // out, the droplets fly and the drips extend. It is decoration on top
-          // of the opaque paint, so it can shrink without exposing the text.
-          //
-          // It is *darker* than the paint, not lighter: a lighter body under
-          // the white heading would drop it below 3:1 at the moment it lands,
-          // while a deeper one only raises the contrast.
-          if (_bursting)
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // The frayed end and its splatter are paid for out of the card's own
+        // width, not out of the screen: the content is inset by exactly the
+        // band the stroke keeps for its dry end, so nothing is ever cut off by
+        // the edge. Both strokes get the same band so their silhouettes line
+        // up.
+        final endBand = paintSwipeEndBand(constraints.maxWidth);
+        return Stack(
+          clipBehavior: Clip.none,
+          children: [
+            // The idle stroke. It stays visible while the coral paints itself
+            // in over it, and fades out once the coral has landed: the coral
+            // covers the content rect but not the idle bristles, so a stroke
+            // left underneath would keep lavender and lemon strands peeking out
+            // around it as a leftover layer.
+            //
+            // Reduced motion drops the fade and switches it off at once.
             Positioned.fill(
-              child: AnimatedBuilder(
-                animation: _burstController,
-                builder: (context, _) {
-                  final t = _burstController.value;
-                  // Fades into the paint it lands on, so the resting hero is
-                  // exactly the declared colour.
-                  final fade = (1 - t).clamp(0.0, 1.0);
-                  return PaintSplat(
-                    seed: _declaredSeed,
-                    colors: [
-                      paintTone(
-                        AppColors.heroDeclaredTop,
-                        -0.22,
-                      ).withValues(alpha: fade),
-                      paintTone(
-                        AppColors.heroDeclaredBottom,
-                        -0.18,
-                      ).withValues(alpha: fade),
-                    ],
-                    padding: const EdgeInsets.all(_padding),
-                    corner: 40,
-                    wobble: 0.055,
-                    // A bigger splash than the resting one: two more arms,
-                    // longer, and more droplets to throw.
-                    arms: 7,
-                    armLength: 0.13,
-                    droplets: 11,
-                    drips: 2,
-                    grow: 1.03,
-                    minScale: 0.35,
-                    // The button is in the lower half of the card, so the paint
-                    // appears to be thrown from there instead of the card
-                    // inflating from its centre.
-                    origin: const Alignment(0, 0.55),
-                    progress: t,
-                  );
-                },
+              child: AnimatedOpacity(
+                opacity: declared && !_bursting ? 0 : 1,
+                duration: reduceMotion
+                    ? Duration.zero
+                    : const Duration(milliseconds: 260),
+                curve: Curves.easeOut,
+                child: BrushSwipe(
+                  seed: _idleSeed,
+                  colors: const [
+                    AppColors.heroIdleTop,
+                    AppColors.heroIdleBottom,
+                  ],
+                  padding: const EdgeInsets.all(_padding),
+                  endBand: endBand,
+                  droplets: 12,
+                ),
               ),
             ),
-        ],
-        // The marks sit in the padding band, so they can never land on the text
-        // however far the text scale grows. They are drawn in palette colours
-        // rather than white: the band is inside the paint, and white on the pale
-        // idle wash is barely a mark at all.
-        //
-        // Keyed on the phase so they reappear when the hero switches state:
-        // a declaration is the moment worth celebrating.
-        Positioned(
-          top: 4,
-          right: 4,
-          child: SplatterDots(
-            key: ValueKey('hero-dots-$declared'),
-            seed: declared ? 41 : 17,
-            color: declared ? AppColors.yellow : AppColors.purple,
-            size: const Size(30, 24),
-            count: 7,
-          ),
+            if (declared)
+              // The coral stroke paints *itself* in from the left over the idle
+              // one, and its splatter flicks as the brush reaches the end. It is
+              // not an overlay on a finished stroke: the stroke is the thing
+              // being painted.
+              //
+              // Painting it in would normally leave the white heading on the
+              // pale idle stroke until the front reached it, so the content is
+              // clipped by the same front below — the text is only ever drawn
+              // where the coral already is.
+              Positioned.fill(
+                child: AnimatedBuilder(
+                  animation: _burstController,
+                  builder: (context, _) => BrushSwipe(
+                    seed: _declaredSeed,
+                    colors: const [
+                      AppColors.heroDeclaredTop,
+                      AppColors.heroDeclaredBottom,
+                    ],
+                    padding: const EdgeInsets.all(_padding),
+                    endBand: endBand,
+                    droplets: 16,
+                    progress: _bursting ? _burstController.value : 1,
+                  ),
+                ),
+              ),
+            // The marks sit in the band the stroke leaves around the content,
+            // so they can never land on the text however far the text scale
+            // grows. They are drawn in palette colours rather than white: white
+            // on the pale idle stroke is barely a mark at all.
+            //
+            // Keyed on the phase so they reappear when the hero switches state:
+            // a declaration is the moment worth celebrating.
+            Positioned(
+              top: 4,
+              right: 4,
+              child: SplatterDots(
+                key: ValueKey('hero-dots-$declared'),
+                seed: declared ? 41 : 17,
+                color: declared ? AppColors.yellow : AppColors.purple,
+                size: const Size(30, 24),
+                count: 7,
+              ),
+            ),
+            Positioned(
+              bottom: 4,
+              left: 4,
+              child: PaintMark(
+                key: ValueKey('hero-star-$declared'),
+                kind: PaintMarkKind.star,
+                seed: 9,
+                color: AppColors.yellow,
+                size: 16,
+              ),
+            ),
+            // The content ends where the frayed end begins: the same inset the
+            // stroke uses, so the bristles and the streaks are never under a
+            // label.
+            _revealWithPaint(
+              Padding(
+                padding: const EdgeInsets.all(
+                  _padding,
+                ).add(EdgeInsets.only(right: endBand)),
+                child: _content(state, declared, reduceMotion),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// Clips [child] to the paint front while the declared stroke is painting
+  /// itself in.
+  ///
+  /// The heading is white and the idle stroke is pale lavender, so a heading
+  /// drawn ahead of the coral would drop to about 1.1:1 for as long as the
+  /// brush takes to reach it. Clipping the content with the same path the
+  /// stroke is clipped with keeps the text on paint at every frame — and reads
+  /// as the brush painting the new state in.
+  Widget _revealWithPaint(Widget child) {
+    if (!_bursting) return child;
+    return AnimatedBuilder(
+      animation: _burstController,
+      // The content subtree is passed through untouched: only the clip
+      // changes per frame.
+      child: child,
+      builder: (context, child) => ClipPath(
+        clipper: _SwipeRevealClipper(
+          progress: _burstController.value,
+          seed: _declaredSeed,
         ),
-        Positioned(
-          bottom: 4,
-          left: 4,
-          child: PaintMark(
-            key: ValueKey('hero-star-$declared'),
-            kind: PaintMarkKind.star,
-            seed: 9,
-            color: AppColors.yellow,
-            size: 16,
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.all(_padding),
-          child: _content(state, declared, reduceMotion),
-        ),
-      ],
+        child: child,
+      ),
     );
   }
 
@@ -309,83 +290,81 @@ class _MyStatusHeroState extends State<MyStatusHero>
               ),
             const SizedBox(width: AppSpacing.s12),
             Expanded(
-              // The heading stops short of the right edge so it never runs
-              // under the spark doodle in the corner.
-              child: Padding(
-                padding: const EdgeInsets.only(right: AppSpacing.s12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    AnimatedSwitcher(
-                      duration: reduceMotion
-                          ? Duration.zero
-                          : const Duration(milliseconds: 260),
-                      switchInCurve: Curves.easeOutCubic,
-                      switchOutCurve: Curves.easeInCubic,
-                      transitionBuilder: (child, animation) => FadeTransition(
-                        opacity: animation,
-                        child: SlideTransition(
-                          position: Tween<Offset>(
-                            begin: const Offset(0, 0.35),
-                            end: Offset.zero,
-                          ).animate(animation),
-                          child: child,
-                        ),
+              // No right padding here any more: the content is already inset
+              // by the stroke's frayed end, which is past the spark doodle, so
+              // the heading cannot run under it.
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  AnimatedSwitcher(
+                    duration: reduceMotion
+                        ? Duration.zero
+                        : const Duration(milliseconds: 260),
+                    switchInCurve: Curves.easeOutCubic,
+                    switchOutCurve: Curves.easeInCubic,
+                    transitionBuilder: (child, animation) => FadeTransition(
+                      opacity: animation,
+                      child: SlideTransition(
+                        position: Tween<Offset>(
+                          begin: const Offset(0, 0.35),
+                          end: Offset.zero,
+                        ).animate(animation),
+                        child: child,
                       ),
-                      child: Transform.rotate(
-                        key: ValueKey(state.heading),
-                        // A couple of degrees of tilt: the heading is a sticker
-                        // on the blob, not a form label.
-                        angle: declared ? -0.03 : 0,
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          state.heading,
-                          style: AppTextStyles.heroTitle.copyWith(
-                            fontSize: 34,
-                            color: declared ? AppColors.surface : AppColors.ink,
-                            // 34sp bold is WCAG large text, so white needs
-                            // 3:1 here, not 4.5:1. The coral stops are chosen
-                            // for that (3.8:1 and 3.4:1); the shadow only holds
-                            // the edge on the lighter end of the gradient.
-                            shadows: declared
-                                ? const [
-                                    Shadow(
-                                      color: Color(0x332F124F),
-                                      blurRadius: 10,
-                                      offset: Offset(0, 2),
-                                    ),
-                                  ]
-                                : null,
-                          ),
+                    ),
+                    child: Transform.rotate(
+                      key: ValueKey(state.heading),
+                      // A couple of degrees of tilt: the heading is a sticker
+                      // on the blob, not a form label.
+                      angle: declared ? -0.03 : 0,
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        state.heading,
+                        style: AppTextStyles.heroTitle.copyWith(
+                          fontSize: 34,
+                          color: declared ? AppColors.surface : AppColors.ink,
+                          // 34sp bold is WCAG large text, so white needs
+                          // 3:1 here, not 4.5:1. The coral stops are chosen
+                          // for that (3.8:1 and 3.4:1); the shadow only holds
+                          // the edge on the lighter end of the gradient.
+                          shadows: declared
+                              ? const [
+                                  Shadow(
+                                    color: Color(0x332F124F),
+                                    blurRadius: 10,
+                                    offset: Offset(0, 2),
+                                  ),
+                                ]
+                              : null,
                         ),
                       ),
                     ),
-                    if (declared)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 2),
-                        // A brush stroke rather than a thin squiggle: the
-                        // underline is paint now, thick in the middle and
-                        // tapering at both ends.
-                        child: BrushStroke(
-                          seed: 23,
-                          size: const Size(116, 9),
-                          color: AppColors.surface.withValues(alpha: 0.85),
-                        ),
-                      )
-                    else ...[
-                      const SizedBox(height: 2),
-                      Text(
-                        state.supporting,
-                        // [AppColors.muted] drops to about 4.2:1 over the
-                        // lavender stop of the idle splat. Translucent ink
-                        // stays secondary-looking but keeps about 6:1.
-                        style: AppTextStyles.body.copyWith(
-                          color: AppColors.ink.withValues(alpha: 0.72),
-                        ),
+                  ),
+                  if (declared)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      // A brush stroke rather than a thin squiggle: the
+                      // underline is paint now, thick in the middle and
+                      // tapering at both ends.
+                      child: BrushStroke(
+                        seed: 23,
+                        size: const Size(116, 9),
+                        color: AppColors.surface.withValues(alpha: 0.85),
                       ),
-                    ],
+                    )
+                  else ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      state.supporting,
+                      // [AppColors.muted] drops to about 4.2:1 over the
+                      // lavender stop of the idle stroke. Translucent ink
+                      // stays secondary-looking but keeps about 6:1.
+                      style: AppTextStyles.body.copyWith(
+                        color: AppColors.ink.withValues(alpha: 0.72),
+                      ),
+                    ),
                   ],
-                ),
+                ],
               ),
             ),
           ],
@@ -479,6 +458,26 @@ class _MyStatusHeroState extends State<MyStatusHero>
       ],
     );
   }
+}
+
+/// Clips the hero's content to the declared stroke's paint front.
+///
+/// It is the same path the stroke itself is clipped with, so the text appears
+/// exactly where the paint has arrived and never on the pale idle stroke ahead
+/// of it.
+class _SwipeRevealClipper extends CustomClipper<Path> {
+  const _SwipeRevealClipper({required this.progress, required this.seed});
+
+  final double progress;
+  final int seed;
+
+  @override
+  Path getClip(Size size) =>
+      paintSwipeRevealPath(size: size, progress: progress, seed: seed);
+
+  @override
+  bool shouldReclip(_SwipeRevealClipper oldClipper) =>
+      oldClipper.progress != progress || oldClipper.seed != seed;
 }
 
 /// The avatar with the mood as a small badge on its corner.
