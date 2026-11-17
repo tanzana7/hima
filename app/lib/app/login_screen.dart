@@ -157,10 +157,10 @@ class LoginScreen extends StatelessWidget {
                       ),
                     ],
                   ),
-                  // The stroke throws its splatter up to `paintSwipeBleed`
-                  // past its box and the lemon pass is tilted a couple of
-                  // degrees on top of that, so the gap covers both: the
-                  // splatter used to run into 「ひまなら友達に知らせよう」.
+                  // The splatter stays inside the band, but the lemon pass is
+                  // tilted a couple of degrees, so its corner dips below the
+                  // box. The gap keeps that corner clear of
+                  // 「ひまなら友達に知らせよう」.
                   const SizedBox(height: AppSpacing.s32),
                   Text(
                     'ひまなら友達に知らせよう',
