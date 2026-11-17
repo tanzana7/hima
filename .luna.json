@@ -1,1 +1,0 @@
-{ "setup": "cd app && flutter pub get", "lint": "cd app && flutter analyze" }
