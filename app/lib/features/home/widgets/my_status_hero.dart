@@ -80,9 +80,13 @@ class MyStatusHero extends StatefulWidget {
 class _MyStatusHeroState extends State<MyStatusHero>
     with SingleTickerProviderStateMixin {
   /// The band the paint keeps clear of the content. Everything the user can
-  /// read or tap stays inside the rect this leaves, so the bristles, the dry
+  /// read or tap stays inside the rect this leaves, so the strands, the dry
   /// streaks and the splatter can never cover it.
-  static const _padding = 20.0;
+  ///
+  /// The vertical inset is tighter than the horizontal one: the band should
+  /// read as a band, not as a flag, and the content already carries its own
+  /// 48dp targets.
+  static const _padding = EdgeInsets.symmetric(horizontal: 20, vertical: 14);
 
   /// Fixed seeds: the hero's two strokes must not change shape between
   /// rebuilds, and the declared one has to sit over the idle one every time.
@@ -126,6 +130,11 @@ class _MyStatusHeroState extends State<MyStatusHero>
     final state = widget.state;
     final declared = state.isDeclared;
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    // Reduced motion can switch on while the declare animation is running. The
+    // stroke then paints itself whole at once, so the outer clip and the idle
+    // band have to jump to the finished state with it instead of staying at the
+    // in-progress value.
+    final bursting = _bursting && !reduceMotion;
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -135,101 +144,125 @@ class _MyStatusHeroState extends State<MyStatusHero>
         // the edge. Both strokes get the same band so their silhouettes line
         // up.
         final endBand = paintSwipeEndBand(constraints.maxWidth);
-        return Stack(
-          clipBehavior: Clip.none,
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // The idle stroke. It stays visible while the coral paints itself
-            // in over it, and fades out once the coral has landed: the coral
-            // covers the content rect but not the idle bristles, so a stroke
-            // left underneath would keep lavender and lemon strands peeking out
-            // around it as a leftover layer.
-            //
-            // Reduced motion drops the fade and switches it off at once.
-            Positioned.fill(
-              child: AnimatedOpacity(
-                opacity: declared && !_bursting ? 0 : 1,
-                duration: reduceMotion
-                    ? Duration.zero
-                    : const Duration(milliseconds: 260),
-                curve: Curves.easeOut,
-                child: BrushSwipe(
-                  seed: _idleSeed,
-                  colors: const [
-                    AppColors.heroIdleTop,
-                    AppColors.heroIdleBottom,
-                  ],
-                  padding: const EdgeInsets.all(_padding),
-                  endBand: endBand,
-                  droplets: 12,
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                // The idle stroke. It stays visible while the coral paints itself
+                // in over it, and fades out once the coral has landed: the coral
+                // covers the content rect but not the idle strands, so a stroke
+                // left underneath would keep lavender and lemon strands peeking out
+                // around it as a leftover layer.
+                //
+                // Reduced motion drops the fade and switches it off at once.
+                Positioned.fill(
+                  child: AnimatedOpacity(
+                    opacity: declared && !bursting ? 0 : 1,
+                    duration: reduceMotion
+                        ? Duration.zero
+                        : const Duration(milliseconds: 260),
+                    curve: Curves.easeOut,
+                    child: BrushSwipe(
+                      seed: _idleSeed,
+                      colors: const [
+                        AppColors.heroIdleTop,
+                        AppColors.heroIdleBottom,
+                      ],
+                      padding: _padding,
+                      endBand: endBand,
+                      droplets: 12,
+                    ),
+                  ),
                 ),
-              ),
+                if (declared)
+                  // The coral stroke paints *itself* in from the left over the idle
+                  // one, and its splatter flicks as the brush reaches the end. It is
+                  // not an overlay on a finished stroke: the stroke is the thing
+                  // being painted.
+                  //
+                  // Painting it in would normally leave the white heading on the
+                  // pale idle stroke until the front reached it, so the content is
+                  // clipped by the same front below — the text is only ever drawn
+                  // where the coral already is.
+                  Positioned.fill(
+                    child: AnimatedBuilder(
+                      animation: _burstController,
+                      builder: (context, _) => BrushSwipe(
+                        seed: _declaredSeed,
+                        colors: const [
+                          AppColors.heroDeclaredTop,
+                          AppColors.heroDeclaredBottom,
+                        ],
+                        padding: _padding,
+                        endBand: endBand,
+                        droplets: 16,
+                        progress: bursting ? _burstController.value : 1,
+                      ),
+                    ),
+                  ),
+                // The marks sit in the band the stroke leaves around the content,
+                // so they can never land on the text however far the text scale
+                // grows. They are drawn in palette colours rather than white: white
+                // on the pale idle stroke is barely a mark at all.
+                //
+                // Keyed on the phase so they reappear when the hero switches state:
+                // a declaration is the moment worth celebrating.
+                Positioned(
+                  top: 4,
+                  right: 4,
+                  child: SplatterDots(
+                    key: ValueKey('hero-dots-$declared'),
+                    seed: declared ? 41 : 17,
+                    color: declared ? AppColors.yellow : AppColors.purple,
+                    size: const Size(30, 24),
+                    count: 7,
+                  ),
+                ),
+                Positioned(
+                  bottom: 4,
+                  left: 4,
+                  child: PaintMark(
+                    key: ValueKey('hero-star-$declared'),
+                    kind: PaintMarkKind.star,
+                    seed: 9,
+                    color: AppColors.yellow,
+                    size: 16,
+                  ),
+                ),
+                // The content ends where the frayed end begins: the same inset the
+                // stroke uses, so the strands and the streaks are never under a
+                // label.
+                _revealWithPaint(
+                  Padding(
+                    padding: _padding.add(EdgeInsets.only(right: endBand)),
+                    child: _content(state, declared, reduceMotion),
+                  ),
+                  bursting,
+                ),
+              ],
             ),
-            if (declared)
-              // The coral stroke paints *itself* in from the left over the idle
-              // one, and its splatter flicks as the brush reaches the end. It is
-              // not an overlay on a finished stroke: the stroke is the thing
-              // being painted.
-              //
-              // Painting it in would normally leave the white heading on the
-              // pale idle stroke until the front reached it, so the content is
-              // clipped by the same front below — the text is only ever drawn
-              // where the coral already is.
-              Positioned.fill(
-                child: AnimatedBuilder(
-                  animation: _burstController,
-                  builder: (context, _) => BrushSwipe(
-                    seed: _declaredSeed,
-                    colors: const [
-                      AppColors.heroDeclaredTop,
-                      AppColors.heroDeclaredBottom,
-                    ],
-                    padding: const EdgeInsets.all(_padding),
-                    endBand: endBand,
-                    droplets: 16,
-                    progress: _bursting ? _burstController.value : 1,
+            // The chips sit on the paper below the stroke, not on it. Inside the
+            // band the scrolling row was cut by the band's straight right edge,
+            // and a fade over that edge would have taken the chip labels'
+            // contrast with it. On paper every label stays fully opaque.
+            if (!declared) ...[
+              const SizedBox(height: AppSpacing.s8),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                // Optional and never a precondition for declaring, so it sits
+                // right under the card.
+                child: Shake(
+                  key: widget.activityShakeKey,
+                  child: ActivityChips(
+                    selected: widget.selectedActivity,
+                    onSelected: widget.onSelectActivity,
                   ),
                 ),
               ),
-            // The marks sit in the band the stroke leaves around the content,
-            // so they can never land on the text however far the text scale
-            // grows. They are drawn in palette colours rather than white: white
-            // on the pale idle stroke is barely a mark at all.
-            //
-            // Keyed on the phase so they reappear when the hero switches state:
-            // a declaration is the moment worth celebrating.
-            Positioned(
-              top: 4,
-              right: 4,
-              child: SplatterDots(
-                key: ValueKey('hero-dots-$declared'),
-                seed: declared ? 41 : 17,
-                color: declared ? AppColors.yellow : AppColors.purple,
-                size: const Size(30, 24),
-                count: 7,
-              ),
-            ),
-            Positioned(
-              bottom: 4,
-              left: 4,
-              child: PaintMark(
-                key: ValueKey('hero-star-$declared'),
-                kind: PaintMarkKind.star,
-                seed: 9,
-                color: AppColors.yellow,
-                size: 16,
-              ),
-            ),
-            // The content ends where the frayed end begins: the same inset the
-            // stroke uses, so the bristles and the streaks are never under a
-            // label.
-            _revealWithPaint(
-              Padding(
-                padding: const EdgeInsets.all(
-                  _padding,
-                ).add(EdgeInsets.only(right: endBand)),
-                child: _content(state, declared, reduceMotion),
-              ),
-            ),
+            ],
           ],
         );
       },
@@ -244,8 +277,12 @@ class _MyStatusHeroState extends State<MyStatusHero>
   /// brush takes to reach it. Clipping the content with the same path the
   /// stroke is clipped with keeps the text on paint at every frame — and reads
   /// as the brush painting the new state in.
-  Widget _revealWithPaint(Widget child) {
-    if (!_bursting) return child;
+  ///
+  /// [bursting] is already false under reduced motion, so a mid-animation
+  /// switch to reduced motion drops the clip instead of leaving the content cut
+  /// at the in-progress value.
+  Widget _revealWithPaint(Widget child, bool bursting) {
+    if (!bursting) return child;
     return AnimatedBuilder(
       animation: _burstController,
       // The content subtree is passed through untouched: only the clip
@@ -370,7 +407,7 @@ class _MyStatusHeroState extends State<MyStatusHero>
           ],
         ),
         if (declared) ...[
-          const SizedBox(height: AppSpacing.s12),
+          const SizedBox(height: AppSpacing.s8),
           // One wrap: how long is left, what I want to do, and the way out. All
           // three stay tappable, so the mood and the activity are still
           // changeable without the extra pills the hero used to carry.
@@ -408,16 +445,6 @@ class _MyStatusHeroState extends State<MyStatusHero>
             busy: widget.busy,
             shakeToken: widget.shakeToken,
             onDeclare: widget.onDeclare,
-          ),
-          const SizedBox(height: AppSpacing.s8),
-          // Optional and never a precondition for declaring, so it sits right
-          // under the main button.
-          Shake(
-            key: widget.activityShakeKey,
-            child: ActivityChips(
-              selected: widget.selectedActivity,
-              onSelected: widget.onSelectActivity,
-            ),
           ),
           AnimatedSwitcher(
             duration: reduceMotion

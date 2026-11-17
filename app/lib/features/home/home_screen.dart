@@ -279,11 +279,10 @@ class _HomeScreenState extends State<HomeScreen> {
           onOpenKnocks: _openKnocks,
           onOpenSettings: _openSettings,
         ),
-        // The hero's splash throws arms, droplets and a drip past its own box.
-        // `paintMaxBleed` is the hard bound the paint kit keeps, so reserving
-        // exactly that much above and below means the paint always lands on
-        // paper — whether or not match cards follow, and at any text scale.
-        const SizedBox(height: paintMaxBleed),
+        // The hero is a brush swipe. The stroke keeps `paintSwipeBleed` of
+        // paper above and below, so its ragged edges never touch a neighbouring
+        // card — whether or not match cards follow, and at any text scale.
+        const SizedBox(height: paintSwipeBleed),
         if (me != null)
           MyStatusHero(
             state: state,
@@ -308,9 +307,9 @@ class _HomeScreenState extends State<HomeScreen> {
         if (matchCards.isEmpty)
           // No match cards: the hero's paint is the last thing above the
           // friends section, so it needs the same reserved band here too.
-          const SizedBox(height: paintMaxBleed)
+          const SizedBox(height: paintSwipeBleed)
         else ...[
-          const SizedBox(height: paintMaxBleed),
+          const SizedBox(height: paintSwipeBleed),
           for (final card in matchCards)
             Padding(
               padding: const EdgeInsets.only(bottom: AppSpacing.s12),

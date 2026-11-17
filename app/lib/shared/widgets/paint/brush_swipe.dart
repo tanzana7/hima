@@ -10,18 +10,18 @@ import 'paint_geometry.dart';
 /// on top, an arm on the side, a drip below — because its arms were lobes stuck
 /// onto a body that was still a box. A stroke has no growths: it is one band
 /// whose two ends say what happened at the two ends of the movement. The left
-/// end is blunt and fat where the brush touched down loaded; the right end
-/// breaks into bristles and throws splatter where the paint ran out.
+/// end is rounded where the brush touched down loaded; the right end breaks into
+/// a few tapered strands and throws splatter where the paint ran out.
 ///
 /// **Content safety.** [child] is laid out inside [padding], and the widget
 /// additionally reserves [paintSwipeEndBand] on the right for the frayed end.
-/// The solid band therefore always covers the padded content, and the bristles,
+/// The solid band therefore always covers the padded content, and the strands,
 /// the dry streaks and the splatter all start to the right of it: no hole in
 /// the paint can run under a label.
 ///
-/// **Fit.** The whole stroke — bristles and splatter included — stays inside
+/// **Fit.** The whole stroke — strands and splatter included — stays inside
 /// the widget's width, which is the opposite of the splash: a stroke cut off by
-/// the screen edge reads as a rectangle again. On a narrow box the bristles and
+/// the screen edge reads as a rectangle again. On a narrow box the strands and
 /// the splatter get shorter instead of being clipped.
 ///
 /// **Motion.** [progress] reveals the stroke from left to right behind a soft,
@@ -57,7 +57,7 @@ class BrushSwipe extends StatelessWidget {
   /// child's size.
   final Size size;
 
-  /// The safe rect inset. The band, the bristles and the streaks stay outside
+  /// The safe rect inset. The band, the strands and the streaks stay outside
   /// it.
   final EdgeInsets padding;
 
@@ -68,12 +68,14 @@ class BrushSwipe extends StatelessWidget {
   /// the same value to both, so the two silhouettes line up.
   final double? endBand;
 
-  /// Overrides the bristle count. Null derives it from the band's height so
-  /// that every hair stays inside the specified 6–20dp thickness: 5–9 hairs on
-  /// a normal band, more on a band that grew with the text scale.
+  /// Overrides the strand count. Null picks 5–7 from the seed.
+  ///
+  /// The dry end always has 5–7 strands whatever the band height: a taller band
+  /// gets thicker strands, not more of them, because more than seven even
+  /// strands read as a comb.
   final int? bristles;
 
-  /// 10–18 droplets. Null picks 10–18 from the seed.
+  /// 10–16 droplets. Null picks 10–16 from the seed.
   final int? droplets;
 
   /// 0 → 1 paint-in. Values above 1 are clamped.
@@ -82,7 +84,7 @@ class BrushSwipe extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
-    final t = reduceMotion ? 1.0 : progress.clamp(0.0, 1.0);
+    final t = reduceMotion ? 1.0 : progress.clamp(0.0, 1.0).toDouble();
     final childWidget = child;
     // RepaintBoundary: a stroke is a static picture between animations, so it
     // must not repaint when a sibling card rebuilds while scrolling.
@@ -224,11 +226,34 @@ class _BrushSwipePainter extends CustomPainter {
         ).createShader(sheenRect),
     );
     canvas.restore();
+
+    // The dry end. Each strand fades from the body's own colour at its root to
+    // almost nothing at its tip, so the paint runs dry along the stroke instead
+    // of stopping at a hard edge. The fade is per strand, which is why they are
+    // drawn separately instead of being unioned into the body.
+    for (final strand in swipe.strands) {
+      final root = _swipeColorAt(colors, size, strand.root);
+      final rect = Rect.fromLTRB(
+        strand.root.dx,
+        strand.root.dy - strand.half - 1,
+        strand.tip.dx,
+        strand.root.dy + strand.half + 1,
+      );
+      canvas.drawPath(
+        strand.path,
+        Paint()
+          ..shader = LinearGradient(
+            begin: Alignment.centerLeft,
+            end: Alignment.centerRight,
+            colors: [root, root.withValues(alpha: 0.35)],
+          ).createShader(rect),
+      );
+    }
     if (t < 1) canvas.restore();
 
     // The splatter only exists once the brush has reached the end: paint cannot
     // flick off a stroke that has not been painted yet.
-    final thrown = ((t - 0.72) / 0.28).clamp(0.0, 1.0);
+    final thrown = ((t - 0.72) / 0.28).clamp(0.0, 1.0).toDouble();
     if (thrown <= 0) return;
     final paint = Paint()..color = colors.last;
     for (var i = 0; i < swipe.droplets.length; i++) {
@@ -236,7 +261,7 @@ class _BrushSwipePainter extends CustomPainter {
       // Staggered so the drops leave the stroke in sequence instead of popping
       // out as one ring.
       final stagger = Curves.easeOutCubic.transform(
-        ((thrown - 0.04 * i) / 0.6).clamp(0.0, 1.0),
+        ((thrown - 0.04 * i) / 0.6).clamp(0.0, 1.0).toDouble(),
       );
       if (stagger <= 0) continue;
       final radius = droplet.radius * (0.4 + 0.6 * stagger);
@@ -263,4 +288,25 @@ class _BrushSwipePainter extends CustomPainter {
       oldDelegate.droplets != droplets ||
       oldDelegate.progress != progress ||
       !listEquals(oldDelegate.colors, colors);
+}
+
+/// The colour of the body gradient at [point].
+///
+/// The strands fade from the colour the body has where they leave it, so the
+/// join has no colour step. Sampling the gradient is cheaper than clipping each
+/// strand to the body and keeps the fade independent of the body's shape.
+Color _swipeColorAt(List<Color> colors, Size size, Offset point) {
+  if (colors.length == 1) return colors.first;
+  final dx = size.width;
+  final dy = size.height;
+  final lengthSquared = dx * dx + dy * dy;
+  final t = lengthSquared <= 0
+      ? 0.0
+      : ((point.dx * dx + point.dy * dy) / lengthSquared)
+            .clamp(0.0, 1.0)
+            .toDouble();
+  final scaled = t * (colors.length - 1);
+  final index = scaled.floor().clamp(0, colors.length - 2).toInt();
+  return Color.lerp(colors[index], colors[index + 1], scaled - index) ??
+      colors.last;
 }
