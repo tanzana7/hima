@@ -91,9 +91,8 @@ def end_session(body: EndSessionIn) -> dict:
 
 @router.get("/board")
 def board(guild_id: int = Query(...), user_id: int = Query(...)) -> dict:
+    """ギルド登録が無くても掲示板は参照できる（/panel_setup 廃止により setup を経由しない入口が存在するため）。"""
     with SessionLocal() as db:
-        if db.get(Guild, guild_id) is None:
-            raise HTTPException(status_code=404, detail="guild not found")
         return domain.board_for_guild(db, guild_id=guild_id, viewer_id=user_id)
 
 
