@@ -40,7 +40,9 @@
 
 ※ `moon`（🌙）はマッチング対象外（宣言者・候補のどちらかが 🌙 なら成立しない）。旧 fire 行（matches の過去データ）はそのまま残す。ブロック関係にあるペアも対象外。`matches` は (session_a_id, session_b_id) の小さい方を a として保存し、同じペアの行が既にあれば温度感が変わっても再通知しない。1回の宣言で送るマッチ DM は最大3件（activity 一致の相手を優先）。
 
-### knocks.status — ノックのライフサイクル
+### knocks.status — ノック（**ユーザー向け呼称は「お返事」**。API 名・custom_id・テーブル名は不変）のライフサイクル
+
+誘い文なしでも送れる（`template` は NULL。着信 DM は「{送信者} さんからお返事が届いたよ」の形）。
 
 `sent` → `accept`/`later`/`pass` 返答で `accepted` / `later` / `passed`。未返答のまま（①当事者の有効セッションが消えた、②宛先が宣言解除した）場合は `expired`。同一ペア（双方向）のノックは5分クールダウン（409）。
 
@@ -53,7 +55,7 @@
 - 送信成功時は `knocks.dm_message_id` に保存（nullable）。DM が閉じられている等で失敗しても**ログのみでノック作成は成功**（受信箱に残る）
 - 痕跡を残さないための削除：①Bot 側で DM の返答ボタンを押して返答が成功したら、その DM メッセージを Bot が削除する（掲示板 ephemeral 上のボタンは従来どおり・削除しない）。②ノックが expired になったとき（宛先の宣言解除・ワーカーによるセッション期限切れ）は、dm_message_id があれば API 側で DM を削除する（チャンネルは宛先との DM を開き直して特定）。削除後は dm_message_id を NULL にして再試行しない
 
-### knocks.template — 誘い文（自由文字列。推奨は activity キーに対応する次の3種）
+### knocks.template — 誘い文（**nullable＝なし可**。自由文字列。推奨は activity キーに対応する次の3種）
 
 | key | 文面 |
 | --- | --- |
@@ -109,7 +111,7 @@
 | POST | `/bot/guilds/{guild_id}/teardown` | list_message_id / panel_message_id が残っていればその2件を REST 削除（失敗は無視）して NULL 化。旧パネル掃除用 |
 | POST | `/bot/sessions` | ヒマ宣言（延長=同ID更新／新規は source=manual）。minutes は整数分（**5〜720 分を想定**。API は 1〜1440 にクランプ）。マッチング評価＋お知らせ（watch_queue）登録 |
 | DELETE | `/bot/sessions` | 有効セッション終了。宛ノックを expired に |
-| GET | `/bot/board?guild_id=&user_id=` | 閲覧者に見える有効セッション一覧（共有可視・ブロック除外・source非表示）＋宛ノック（最大5件。**`to_moon` は宛先＝受信者が現在🌙の有効セッションを持つときのみ true**）＋未見結果。レスポンスに `viewer.notify_on_hima` を含む |
+| GET | `/bot/board?guild_id=&user_id=` | 閲覧者に見える有効セッション一覧（共有可視・ブロック除外・source非表示）＋受信したお返事（最大5件。**`to_moon` は宛先＝受信者が現在🌙の有効セッションを持つときのみ true**）＋未見結果。レスポンスに `viewer.notify_on_hima` を含む |
 | POST | `/bot/knocks/results/seen` | 未見結果に `result_seen_at` を打つ |
 | POST | `/bot/knocks` | ノック作成（相手が有効セッション中・共有可視・非ブロック必須。5分クールダウンは 409） |
 | POST | `/bot/knocks/{id}/reply` | 返答（accept/later/pass）。to_user 本人のみ。status と responded_at を更新 |

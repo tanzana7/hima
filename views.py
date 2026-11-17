@@ -65,7 +65,7 @@ def render_board(data: dict) -> list[discord.Embed]:
             line += "（スルーしてOK）"
         inbox_lines.append(line)
     inbox = discord.Embed(
-        title="📬 ノック受信箱",
+        title="📬 お返事受信箱",
         description="\n".join(inbox_lines) if inbox_lines else "今は届いていないよ",
         color=discord.Color.gold(),
     )
@@ -74,7 +74,7 @@ def render_board(data: dict) -> list[discord.Embed]:
         for k in data.get("results", [])
     ]
     results = discord.Embed(
-        title="🔔 ノックの結果",
+        title="🔔 お返事の結果",
         description="\n".join(result_lines) if result_lines else "まだ結果はないよ",
         color=discord.Color.green(),
     )
@@ -230,7 +230,7 @@ class WatchToggle(ui.DynamicItem, template=r"atsumaro:watchtoggle:(?P<state>[01]
 
 
 class BoardView(ui.View):
-    """個人用掲示板（ephemeral）。ヒマ宣言/ノック/ブロック/お知らせ/やめるのボタン＋受信箱の返答ボタン。"""
+    """個人用掲示板（ephemeral）。ヒマ宣言/お返事/ブロック/お知らせ/やめるのボタン＋受信箱の返答ボタン。"""
 
     def __init__(self, bot: "HimaBot", data: dict) -> None:
         super().__init__(timeout=None)
@@ -253,7 +253,7 @@ class BoardView(ui.View):
             view=JoinView(self.bot, interaction.guild_id, interaction.user), ephemeral=True
         )
 
-    @ui.button(label="ノックする", style=discord.ButtonStyle.primary, custom_id="board:knock", emoji="🚪", row=0)
+    @ui.button(label="お返事する", style=discord.ButtonStyle.primary, custom_id="board:knock", emoji="🚪", row=0)
     async def knock(self, interaction: discord.Interaction, _: ui.Button) -> None:
         guild_id = interaction.guild_id
         assert guild_id is not None
@@ -265,7 +265,7 @@ class BoardView(ui.View):
         candidates = [s for s in data.get("sessions", []) if s["user_id"] != interaction.user.id][:CANDIDATE_LIMIT]
         if not candidates:
             await interaction.response.send_message(
-                "今ヒマな人はいないよ。自分が宣言してみよう！", ephemeral=True
+                "お返事できる人がいないよ。自分が募集してみよう！", ephemeral=True
             )
             return
         await interaction.response.send_message(
@@ -493,13 +493,13 @@ class JoinNoteModal(ui.Modal):
 
 
 class KnockSendView(ui.View):
-    """ノック送信画面（相手とテンプレを選んで POST /bot/knocks）。"""
+    """お返事送信画面（相手と誘い文を選んで POST /bot/knocks）。"""
 
     def __init__(self, bot: "HimaBot", user: discord.abc.User, candidates: list[dict]) -> None:
         super().__init__(timeout=300)
         self.bot = bot
         self.user = user
-        self.template = KNOCK_TEMPLATES[0]
+        self.template: str | None = None  # 誘い文なしでも送れる
         self.user_select.options = [
             discord.SelectOption(
                 label=s["display_name"],
@@ -509,23 +509,24 @@ class KnockSendView(ui.View):
             for s in candidates
         ]
 
-    @ui.select(cls=ui.UserSelect, placeholder="誰にノックする？（最大25人まで）", min_values=1, max_values=CANDIDATE_LIMIT, row=0)
+    @ui.select(cls=ui.UserSelect, placeholder="誰にお返事する？（最大25人まで）", min_values=1, max_values=CANDIDATE_LIMIT, row=0)
     async def user_select(self, interaction: discord.Interaction, select: ui.UserSelect) -> None:
         await interaction.response.defer()
 
     @ui.select(
-        placeholder="誘い文はどれ？",
-        options=[discord.SelectOption(label=text, value=text) for text in KNOCK_TEMPLATES],
+        placeholder="誘い文はどれ？（なしでも送れるよ）",
+        options=[discord.SelectOption(label="誘い文なし", value="")] +
+                 [discord.SelectOption(label=text, value=text) for text in KNOCK_TEMPLATES],
         row=1,
     )
     async def template_select(self, interaction: discord.Interaction, select: ui.Select) -> None:
-        self.template = select.values[0]
+        self.template = select.values[0] or None
         await interaction.response.defer()
 
-    @ui.button(label="ノックを送る", style=discord.ButtonStyle.primary, row=2, emoji="🚪")
+    @ui.button(label="お返事を送る", style=discord.ButtonStyle.primary, row=2, emoji="🚪")
     async def send(self, interaction: discord.Interaction, _: ui.Button) -> None:
         if not self.user_select.values:
-            await interaction.response.send_message("先にノックする相手を選んでね！", ephemeral=True)
+            await interaction.response.send_message("先にお返事する相手を選んでね！", ephemeral=True)
             return
         parts = []
         for member in self.user_select.values:
@@ -543,12 +544,12 @@ class KnockSendView(ui.View):
             except ApiConnectionError:
                 parts.append(f"⚠️ {member.display_name}: {CONNECTION_ERROR_TEXT}")
             else:
-                parts.append(f"✅ {member.display_name}: 届けたよ！（相手の /board 受信箱に表示されるよ）")
+                parts.append(f"✅ {member.display_name}: 届けたよ！（相手の受信箱と DM に届くよ）")
         await interaction.response.send_message("\n".join(parts), ephemeral=True)
 
 
 class KnockTemplateView(ui.View):
-    """テンプレ選択（game / chat / work）→ 指定した相手にノックを送る。/panel 参加 から使う。"""
+    """誘い文選択（なし / game / chat / work）→ 指定した相手にお返事を送る。/panel 参加 から使う。"""
 
     def __init__(self, bot: "HimaBot", user: discord.abc.User, target: discord.abc.User) -> None:
         super().__init__(timeout=180)
@@ -569,8 +570,12 @@ class KnockTemplateView(ui.View):
         except ApiConnectionError:
             content = f"⚠️ {CONNECTION_ERROR_TEXT}"
         else:
-            content = f"✅ {self.target.display_name} さんにノックを送ったよ！（相手の受信箱と DM に届くよ）"
+            content = f"✅ {self.target.display_name} さんにお返事を送ったよ！（相手の受信箱と DM に届くよ）"
         await interaction.response.edit_message(content=content, view=None)
+
+    @ui.button(label="✉️ 誘い文なし", style=discord.ButtonStyle.secondary, row=0)
+    async def none_template(self, interaction: discord.Interaction, _: ui.Button) -> None:
+        await self._knock(interaction, None)
 
     @ui.button(label="🎮 ゲームしない？", style=discord.ButtonStyle.primary, row=0)
     async def game(self, interaction: discord.Interaction, _: ui.Button) -> None:

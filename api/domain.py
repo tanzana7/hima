@@ -99,7 +99,7 @@ def end_session(db, user_id: int, rest=None) -> dict:
     return {"user_id": user_id, "ended": ended}
 
 
-def create_knock(db, *, from_user: int, to_user: int, template: str, rest=None) -> dict:
+def create_knock(db, *, from_user: int, to_user: int, template: str | None, rest=None) -> dict:
     if from_user == to_user:
         raise HTTPException(status_code=400, detail="cannot knock yourself")
     if active_session(db, to_user) is None:
@@ -127,7 +127,8 @@ def create_knock(db, *, from_user: int, to_user: int, template: str, rest=None) 
     sender = db.get(User, from_user)
     sender_name = sender.display_name if sender else f"discord:{from_user}"
     _send_knock_dm(db, knock, sender_name, template, rest)
-    send_push(db, to_user, "🚪 ノックが届いたよ！", f"{sender_name} さんが「{template}」")
+    push_body = f"{sender_name} さんが「{template}」" if template else f"{sender_name} さんから"
+    send_push(db, to_user, "🔔 お返事が届いたよ！", push_body)
     return {"id": knock.id, "from_user": knock.from_user, "to_user": knock.to_user, "status": knock.status}
 
 
@@ -146,7 +147,10 @@ def _send_knock_dm(db, knock, sender_name: str, template: str, rest=None) -> Non
         channel = rest.open_dm_channel(knock.to_user)
         if channel is None:
             return
-        lines = [f"🚪 {sender_name} さんからノック：「{template}」"]
+        if template:
+            lines = [f"{sender_name} さんからお返事が届いたよ：「{template}」"]
+        else:
+            lines = [f"{sender_name} さんからお返事が届いたよ"]
         sender_session = active_session(db, knock.from_user)
         if sender_session is not None:
             remaining = max(0, int((sender_session.expires_at - utcnow()).total_seconds() // 60))
@@ -351,6 +355,10 @@ def board_for_guild(db, *, guild_id: int, viewer_id: int) -> dict:
 
     inbox, results = _inbox_and_results(db, viewer_id, viewer_mood)
     viewer = db.get(User, viewer_id)
+    if viewer is None:
+        # 初めて board を開いたユーザーも作る（notify_on_hima はデフォルト ON に従う）
+        viewer = upsert_user(db, viewer_id)
+        db.commit()
     return {
         "guild_id": guild_id,
         "viewer_id": viewer_id,
@@ -404,4 +412,8 @@ def cross_guild_board(db, viewer_id: int) -> dict:
         )
 
     inbox, results = _inbox_and_results(db, viewer_id, viewer_mood)
+    if db.get(User, viewer_id) is None:
+        # 初めて board を開いたユーザーも作る（notify_on_hima はデフォルト ON に従う）
+        upsert_user(db, viewer_id)
+        db.commit()
     return {"viewer_id": viewer_id, "sessions": sessions_out, "inbox": inbox, "results": results}
