@@ -363,8 +363,8 @@ class AppViewModel extends ChangeNotifier {
   }
 
   /// Matches are computed here from my own mood and the board rows, following
-  /// the contract: fire×fire, fire×ok (fire side only) and ok×ok; 🌙 never
-  /// matches, and blocked users are already excluded by the server.
+  /// the contract: only 🙂×🙂 matches; 🌙 never matches, and blocked users are
+  /// already excluded by the server.
   void _rebuildMatches() {
     final mine = isDeclared ? _myHima : null;
     if (mine == null) {

@@ -528,7 +528,7 @@ class _AutoMoodChips extends StatelessWidget {
   );
 }
 
-/// The three auto-declaration moods as compact chips. The full mood names are
+/// The two auto-declaration moods as compact chips. The full mood names are
 /// too long to sit side by side, so each chip carries the emoji plus a short
 /// label and keeps the full name as its accessible label.
 class _MoodChips extends StatelessWidget {
@@ -538,7 +538,6 @@ class _MoodChips extends StatelessWidget {
   final ValueChanged<Mood> onSelected;
 
   static String _shortLabel(Mood mood) => switch (mood) {
-    Mood.fire => '今すぐ',
     Mood.ok => '誘い待ち',
     Mood.quiet => 'ひっそり',
   };
@@ -546,7 +545,6 @@ class _MoodChips extends StatelessWidget {
   /// Full name for screen readers. `Mood.label` still spells ひま as 暇, and the
   /// app writes it in hiragana everywhere, so the spoken name is spelled here.
   static String _semanticLabel(Mood mood) => switch (mood) {
-    Mood.fire => '今すぐ遊びたい',
     Mood.ok => '誘われたら行く',
     Mood.quiet => 'ひっそりひま',
   };

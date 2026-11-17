@@ -9,42 +9,22 @@ import '../../../shared/widgets/knock_pill.dart';
 import '../../../shared/widgets/mood_badge.dart';
 import '../../../shared/widgets/paint/paint.dart';
 
-/// How a match kind presents itself: the emoji pair in the header, the card's
+/// How the 🙂×🙂 match presents itself: the emoji pair in the header, the card's
 /// pastel and the mark in its corner.
 ///
 /// The tint is decoration only. What the card is about is written in the header
-/// sentence, so a reader who cannot tell peach from lemon loses nothing.
-extension _MatchKindStyle on MatchKind {
-  String get emoji => switch (this) {
-    MatchKind.fireFire => '🔥🔥',
-    MatchKind.fireOk => '🔥🙂',
-    MatchKind.okOk => '🙂🙂',
-  };
-
-  Color get tint => switch (this) {
-    MatchKind.fireFire => AppColors.peachSoft,
-    MatchKind.fireOk => AppColors.lemonSoft,
-    MatchKind.okOk => AppColors.skySoft,
-  };
-
-  Color get accent => switch (this) {
-    MatchKind.fireFire => AppColors.coral,
-    MatchKind.fireOk => AppColors.orange,
-    MatchKind.okOk => AppColors.purple,
-  };
-
-  PaintMarkKind get mark => switch (this) {
-    MatchKind.fireFire => PaintMarkKind.star,
-    MatchKind.fireOk => PaintMarkKind.heart,
-    MatchKind.okOk => PaintMarkKind.star,
-  };
-}
+/// sentence, so a reader who cannot tell one pastel from another loses nothing.
+const _matchEmoji = '🙂🙂';
+const _matchTint = AppColors.skySoft;
+const _matchAccent = AppColors.purple;
+const _matchMark = PaintMarkKind.star;
+const _matchMessage = 'お互い誘われ待ちだよ';
 
 /// One card per match kind, shown between the hero and the friend grid.
 ///
-/// A card per person flooded the screen (four separate cards with 🔥) and listed
-/// the same people the friend grid below already shows, so the friends of a kind
-/// are grouped into one card with a row of avatars.
+/// A card per person flooded the screen and listed the same people the friend
+/// grid below already shows, so the friends of a kind are grouped into one card
+/// with a row of avatars.
 ///
 /// The kind is stated once, by the emoji pair and the sentence in the header. An
 /// earlier version floated a 🙂 bubble beside the first avatar, which read as
@@ -123,12 +103,6 @@ class _MatchCardState extends State<MatchCard>
     super.dispose();
   }
 
-  String get _message => switch (widget.kind) {
-    MatchKind.fireFire => 'いっしょに遊べる人がいるよ',
-    MatchKind.fireOk => '誘えば来る人がいるよ',
-    MatchKind.okOk => 'お互い誘われ待ちだよ',
-  };
-
   @override
   Widget build(BuildContext context) {
     final kind = widget.kind;
@@ -155,7 +129,7 @@ class _MatchCardState extends State<MatchCard>
         ).animate(appearance),
         child: PaintWash(
           seed: paintSeedOf('match-${kind.name}'),
-          color: kind.tint,
+          color: _matchTint,
           padding: const EdgeInsets.fromLTRB(
             AppSpacing.s16,
             AppSpacing.s16,
@@ -172,7 +146,7 @@ class _MatchCardState extends State<MatchCard>
                   // kind is, so a screen reader does not need the emoji read out.
                   ExcludeSemantics(
                     child: Text(
-                      kind.emoji,
+                      _matchEmoji,
                       maxLines: 1,
                       style: const TextStyle(fontSize: 15, height: 1.2),
                     ),
@@ -180,7 +154,7 @@ class _MatchCardState extends State<MatchCard>
                   const SizedBox(width: AppSpacing.s8),
                   Expanded(
                     child: Text(
-                      _message,
+                      _matchMessage,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: AppTextStyles.friendName.copyWith(fontSize: 15),
@@ -188,9 +162,9 @@ class _MatchCardState extends State<MatchCard>
                   ),
                   const SizedBox(width: AppSpacing.s8),
                   PaintMark(
-                    kind: kind.mark,
+                    kind: _matchMark,
                     seed: paintSeedOf('match-mark-${kind.name}'),
-                    color: kind.accent,
+                    color: _matchAccent,
                     size: 18,
                   ),
                 ],

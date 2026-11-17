@@ -135,8 +135,11 @@ class DeclareButtonState extends State<DeclareButton>
   }
 
   Offset _bubbleCenter(int index) {
-    // 205° / 270° / 335°: an arc that opens upward around the finger.
-    final angle = math.pi * (1.14 + 0.36 * index);
+    // An arc that opens upward around the finger: the bubbles are spread evenly
+    // and centred on the vertical, so an even count stays symmetric.
+    const step = 0.36 * math.pi;
+    final angle =
+        math.pi * 1.5 + step * (index - (Mood.values.length - 1) / 2);
     final raw = _origin + Offset(math.cos(angle), math.sin(angle)) * _arcRadius;
     // Keep every bubble on screen so a press near an edge cannot make a mood
     // unreachable.
@@ -174,7 +177,7 @@ class DeclareButtonState extends State<DeclareButton>
   }
 
   /// The bubbles only exist while a finger holds the button, which a screen
-  /// reader cannot do, so the same three choices are offered as an explicit
+  /// reader cannot do, so the same two choices are offered as an explicit
   /// action that opens an operable picker.
   Future<void> _pickMood() async {
     if (widget.busy) return;
@@ -546,13 +549,11 @@ class DeclareButtonState extends State<DeclareButton>
   }
 
   static Color _moodTint(Mood mood) => switch (mood) {
-    Mood.fire => AppColors.peachSoft,
     Mood.ok => AppColors.purpleSoft,
     Mood.quiet => AppColors.skySoft,
   };
 
   static String _shortLabel(Mood mood) => switch (mood) {
-    Mood.fire => '今すぐ',
     Mood.ok => '誘われたら',
     Mood.quiet => 'ひっそり',
   };

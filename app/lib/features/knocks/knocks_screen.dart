@@ -364,7 +364,7 @@ class _KnockCard extends StatelessWidget {
                       style: AppTextStyles.friendName.copyWith(fontSize: 15),
                     ),
                     Text(
-                      knock.template.text,
+                      knock.message,
                       maxLines: 2,
                       style: AppTextStyles.caption.copyWith(color: _washMuted),
                     ),

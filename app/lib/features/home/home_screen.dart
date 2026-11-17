@@ -221,32 +221,30 @@ class _HomeScreenState extends State<HomeScreen> {
     Mood? mood,
   }) => showKnockSheet(context, user: user, activity: activity, mood: mood);
 
-  /// One card per match kind, in a fixed order.
+  /// The match card, when there is a match.
   ///
-  /// A card per person flooded the screen (four cards with 🔥) and repeated the
-  /// people the friend grid already lists, so the friends of a kind share one
-  /// card.
+  /// A card per person flooded the screen and repeated the people the friend
+  /// grid already lists, so the friends of a kind share one card. Only 🙂×🙂
+  /// matches exist, so there is a single card.
   List<MatchCard> _matchCards(
     List<MatchRecord> matches,
     Set<String> pendingUserIds,
     Set<String> acceptedUserIds,
   ) {
-    const order = [MatchKind.fireFire, MatchKind.fireOk, MatchKind.okOk];
+    if (matches.isEmpty) return const [];
     return [
-      for (final kind in order)
-        if (matches.any((match) => match.kind == kind))
-          MatchCard(
-            key: ValueKey(kind),
-            kind: kind,
-            matches: matches.where((match) => match.kind == kind).toList(),
-            pendingUserIds: pendingUserIds,
-            acceptedUserIds: acceptedUserIds,
-            onKnock: (match) => _knock(
-              match.otherUser,
-              activity: match.otherHima.activity,
-              mood: match.otherHima.mood,
-            ),
-          ),
+      MatchCard(
+        key: const ValueKey(MatchKind.okOk),
+        kind: MatchKind.okOk,
+        matches: matches,
+        pendingUserIds: pendingUserIds,
+        acceptedUserIds: acceptedUserIds,
+        onKnock: (match) => _knock(
+          match.otherUser,
+          activity: match.otherHima.activity,
+          mood: match.otherHima.mood,
+        ),
+      ),
     ];
   }
 

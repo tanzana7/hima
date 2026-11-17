@@ -96,13 +96,13 @@ String? readAvatar(JsonMap json) =>
 List<T> readModelList<T>(Object? value, T Function(JsonMap) fromJson) =>
     readJsonList(value).map((item) => fromJson(readJsonMap(item))).toList();
 
-enum Mood { fire, ok, quiet }
+enum Mood { ok, quiet }
 
 enum Activity { game, chat, work, out, any }
 
 enum DeclarationSource { manual, suggested, auto }
 
-enum MatchKind { fireFire, fireOk, okOk }
+enum MatchKind { okOk }
 
 enum KnockStatus { pending, accepted, later, passed, expired }
 
@@ -112,12 +112,10 @@ enum DevicePlatform { android, ios }
 
 extension MoodPresentation on Mood {
   String get label => switch (this) {
-    Mood.fire => '今すぐ遊びたい',
     Mood.ok => '誘われたら行く',
     Mood.quiet => 'ひっそり暇',
   };
   String get emoji => switch (this) {
-    Mood.fire => '🔥',
     Mood.ok => '🙂',
     Mood.quiet => '🌙',
   };
@@ -176,12 +174,9 @@ int activityMatchRank(Activity? mine, Activity? other) {
 
 /// The match the contract defines for my mood and the other person's mood.
 ///
-/// fire×fire and ok×ok notify both sides, so both see the match. fire×ok
-/// notifies only the fire side, so it is a match for me only when I am the fire
-/// one. 🌙 (the app's [Mood.quiet]) never matches.
+/// Only 🙂×🙂 notifies both sides, so it is the only match the app shows. 🌙
+/// (the app's [Mood.quiet]) never matches.
 MatchKind? matchKindFor(Mood mine, Mood other) => switch ((mine, other)) {
-  (Mood.fire, Mood.fire) => MatchKind.fireFire,
-  (Mood.fire, Mood.ok) => MatchKind.fireOk,
   (Mood.ok, Mood.ok) => MatchKind.okOk,
   _ => null,
 };
@@ -206,15 +201,16 @@ extension KnockStatusPresentation on KnockStatus {
 
 /// The server calls the quiet mood `moon`; the app keeps `Mood.quiet` so the UI
 /// vocabulary does not change. The mapping lives only at this boundary.
+///
+/// `fire` is retired, and the contract says the rows that still carry it are
+/// read as `ok`. An unknown value falls back the same way rather than throwing,
+/// because one unreadable row would otherwise fail the whole board load.
 Mood moodFromJson(String value) => switch (value) {
-  'fire' => Mood.fire,
-  'ok' => Mood.ok,
   'moon' || 'quiet' => Mood.quiet,
-  _ => throw FormatException('Unknown mood: $value'),
+  _ => Mood.ok,
 };
 
 String moodToJson(Mood mood) => switch (mood) {
-  Mood.fire => 'fire',
   Mood.ok => 'ok',
   Mood.quiet => 'moon',
 };
@@ -265,14 +261,29 @@ String knockReplyAction(KnockStatus status) => switch (status) {
   ),
 };
 
-/// `knocks.template` stores the invitation text itself, not a key, so the app's
-/// enum is mapped to and from the fixed phrases.
-KnockTemplate knockTemplateFromJson(String value) => switch (value) {
-  'ゲームしない？' || 'game' => KnockTemplate.game,
-  'ちょっと話さない？' || 'chat' => KnockTemplate.chat,
-  '作業通話しない？' || 'work' => KnockTemplate.work,
-  _ => throw FormatException('Unknown knock template: $value'),
-};
+/// The invitation a knock carries.
+///
+/// `knocks.template` is nullable and free-form: the app only sends the three
+/// fixed phrases, but a knock from the Bot may carry no text at all or any
+/// sentence of its own. A known phrase keeps its [KnockTemplate] so the app's
+/// vocabulary still applies; anything else is shown exactly as it arrived.
+({KnockTemplate? template, String message}) knockTemplateFromJson(
+  String? value,
+) {
+  final template = switch (value) {
+    'ゲームしない？' || 'game' => KnockTemplate.game,
+    'ちょっと話さない？' || 'chat' => KnockTemplate.chat,
+    '作業通話しない？' || 'work' => KnockTemplate.work,
+    _ => null,
+  };
+  if (template != null) return (template: template, message: template.text);
+  // A knock without text still has to read as an invitation, so it borrows the
+  // shortest of the fixed phrases.
+  return (
+    template: null,
+    message: value == null || value.isEmpty ? 'あそばない？' : value,
+  );
+}
 
 DevicePlatform devicePlatformFromJson(String value) => switch (value) {
   'android' => DevicePlatform.android,
@@ -319,7 +330,8 @@ class UserSettings {
   factory UserSettings.fromJson(JsonMap json) => UserSettings(
     autoMode: readBoolOr(json, 'auto_mode', fallback: false),
     autoMood: _moodOrOk(readOptionalString(json, 'auto_mood')),
-    notifyOnHima: readBoolOr(json, 'notify_on_hima', fallback: false),
+    // The server's default is ON, so a payload without the flag means ON.
+    notifyOnHima: readBoolOr(json, 'notify_on_hima', fallback: true),
   );
 
   UserSettings copyWith({bool? autoMode, Mood? autoMood, bool? notifyOnHima}) =>
@@ -330,14 +342,9 @@ class UserSettings {
       );
 }
 
-Mood _moodOrOk(String? value) {
-  if (value == null) return Mood.ok;
-  try {
-    return moodFromJson(value);
-  } on FormatException {
-    return Mood.ok;
-  }
-}
+/// `auto_mood` is optional, and [moodFromJson] already folds anything it cannot
+/// read into `Mood.ok`.
+Mood _moodOrOk(String? value) => value == null ? Mood.ok : moodFromJson(value);
 
 class UserProfile {
   const UserProfile({
@@ -625,7 +632,10 @@ class Knock {
   final String id;
   final UserSummary? sender;
   final UserSummary? recipient;
-  final KnockTemplate template;
+
+  /// The fixed phrase the app sent, or null when the knock came without text or
+  /// with a free-form one. [message] always holds what the UI shows.
+  final KnockTemplate? template;
   final KnockStatus status;
   final DateTime createdAt;
 
@@ -643,18 +653,20 @@ class Knock {
   /// A knock I received: `{id, from_user, from_display_name, template,
   /// created_at, to_moon}`.
   factory Knock.fromInboxJson(JsonMap json) {
-    final template = knockTemplateFromJson(readString(json, 'template'));
+    final invitation = knockTemplateFromJson(
+      readOptionalString(json, 'template'),
+    );
     return Knock(
       id: readId(json, 'id'),
       sender: UserSummary(
         id: readId(json, 'from_user'),
         displayName: readOptionalString(json, 'from_display_name') ?? '',
       ),
-      template: template,
+      template: invitation.template,
       // The inbox only carries knocks that are still waiting for my answer.
       status: KnockStatus.pending,
       createdAt: readDateTime(json, 'created_at'),
-      message: template.text,
+      message: invitation.message,
       // `to_moon` means I am 🌙 right now, so the knock is informational.
       recipientNote: readBoolOr(json, 'to_moon', fallback: false)
           ? 'スルーしてOK'
@@ -665,7 +677,9 @@ class Knock {
   /// A reply to a knock I sent, from `/app/board` `results`:
   /// `{id, to_user, to_display_name, template, status, responded_at}`.
   factory Knock.fromResultJson(JsonMap json) {
-    final template = knockTemplateFromJson(readString(json, 'template'));
+    final invitation = knockTemplateFromJson(
+      readOptionalString(json, 'template'),
+    );
     final respondedAt = readOptionalDateTime(json, 'responded_at');
     return Knock(
       id: readId(json, 'id'),
@@ -673,18 +687,20 @@ class Knock {
         id: readId(json, 'to_user'),
         displayName: readOptionalString(json, 'to_display_name') ?? '',
       ),
-      template: template,
+      template: invitation.template,
       status: knockStatusFromJson(readString(json, 'status')),
       // An expired knock never got an answer, so it has no `responded_at`.
       createdAt: respondedAt ?? DateTime.now().toUtc(),
-      message: template.text,
+      message: invitation.message,
       respondedAt: respondedAt,
     );
   }
 
   /// A knock I sent, from `GET /app/knocks/sent`.
   factory Knock.fromSentJson(JsonMap json) {
-    final template = knockTemplateFromJson(readString(json, 'template'));
+    final invitation = knockTemplateFromJson(
+      readOptionalString(json, 'template'),
+    );
     return Knock(
       id: readId(json, 'id'),
       recipient: UserSummary(
@@ -692,10 +708,10 @@ class Knock {
         displayName: readOptionalString(json, 'to_display_name') ?? '',
         avatarUrl: readOptionalString(json, 'to_avatar') ?? readAvatar(json),
       ),
-      template: template,
+      template: invitation.template,
       status: knockStatusFromJson(readString(json, 'status')),
       createdAt: readDateTime(json, 'created_at'),
-      message: template.text,
+      message: invitation.message,
       respondedAt: readOptionalDateTime(json, 'responded_at'),
       resultSeenAt: readOptionalDateTime(json, 'result_seen_at'),
     );

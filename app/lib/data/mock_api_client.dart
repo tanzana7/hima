@@ -7,8 +7,8 @@ import 'models/models.dart';
 ///
 /// It answers the same snapshots as the real server so the app runs offline and
 /// the demo flow works end to end: the default mood is `ok`, so a one-tap
-/// declare matches けんた (ok × ok), and a knock to him is answered with
-/// 「いいよ！」 a few seconds later without a push service.
+/// declare matches every 🙂 friend (ok × ok), and a knock to one of them is
+/// answered with 「いいよ！」 a few seconds later without a push service.
 class MockApiClient implements ApiClient {
   MockApiClient() {
     final now = DateTime.now().toUtc();
@@ -26,7 +26,7 @@ class MockApiClient implements ApiClient {
       _freeFriend(
         '111111111111111101',
         'さな',
-        Mood.fire,
+        Mood.ok,
         Activity.game,
         '協力プレイしたい！',
         '222222222222222201',
@@ -55,7 +55,7 @@ class MockApiClient implements ApiClient {
       _freeFriend(
         '111111111111111104',
         'りく',
-        Mood.fire,
+        Mood.quiet,
         Activity.chat,
         null,
         '222222222222222202',
@@ -74,7 +74,7 @@ class MockApiClient implements ApiClient {
       _freeFriend(
         '111111111111111106',
         'ゆず',
-        Mood.fire,
+        Mood.quiet,
         Activity.out,
         null,
         '222222222222222202',
@@ -84,7 +84,7 @@ class MockApiClient implements ApiClient {
       _freeFriend(
         '111111111111111107',
         'なな',
-        Mood.fire,
+        Mood.ok,
         Activity.work,
         null,
         '222222222222222203',
