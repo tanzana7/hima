@@ -4,30 +4,54 @@ import 'package:provider/provider.dart';
 import '../app/theme/app_colors.dart';
 import '../app/theme/app_spacing.dart';
 import '../app/theme/app_text_styles.dart';
+import '../data/api_client.dart';
+import '../data/app_config.dart';
+import '../data/discord_oauth.dart';
 import '../shared/widgets/hima_logo.dart';
 import '../state/app_view_model.dart';
 
 class LoginScreen extends StatelessWidget {
-  const LoginScreen({super.key, required this.mockMode});
+  const LoginScreen({super.key, required this.config});
 
-  final bool mockMode;
+  final AppConfig config;
+
+  static void _showMessage(BuildContext context, String message) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
 
   Future<void> _login(BuildContext context, AppViewModel viewModel) async {
-    if (!mockMode) {
-      // TODO: Start Discord OAuth2 PKCE in a browser and handle the
-      // custom-scheme redirect.
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Discordログインは準備中です')));
+    if (config.useMockApi) {
+      try {
+        await viewModel.loginAsDemo();
+      } catch (_) {
+        if (context.mounted) {
+          _showMessage(context, 'ログインできなかった。もう一度試してね');
+        }
+      }
+      return;
+    }
+    if (config.discordClientId.isEmpty) {
+      _showMessage(context, 'Discordの設定が足りないよ');
       return;
     }
     try {
-      await viewModel.loginAsDemo();
-    } catch (_) {
+      final request = await DiscordOAuth(
+        clientId: config.discordClientId,
+      ).authorize();
       if (!context.mounted) return;
-      ScaffoldMessenger.of(
+      await viewModel.completeDiscordLogin(request);
+    } on DiscordLoginCancelled {
+      // Closing the Discord page is not a failure, so nothing is shown.
+    } catch (error) {
+      if (!context.mounted) return;
+      _showMessage(
         context,
-      ).showSnackBar(const SnackBar(content: Text('ログインできなかった。もう一度試してね')));
+        error is ApiException
+            ? error.message
+            : 'ログインできなかった。もう一度試してね',
+      );
     }
   }
 

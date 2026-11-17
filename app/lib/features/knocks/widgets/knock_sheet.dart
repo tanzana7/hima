@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_spacing.dart';
 import '../../../app/theme/app_text_styles.dart';
+import '../../../data/api_client.dart';
 import '../../../data/models/models.dart';
 import '../../../shared/haptics.dart';
 import '../../../shared/widgets/avatar_view.dart';
@@ -88,13 +89,21 @@ class _KnockSheetState extends State<KnockSheet>
       // No success SnackBar: the paper plane and the 「さそった」 pill the sheet
       // leaves behind already say the knock went out, so a third confirmation
       // would only cover the friend list. Errors still get one below.
-    } catch (_) {
+    } catch (error) {
       if (!mounted) return;
       setState(() => _sending = false);
       AppHaptics.error();
       _shakeKey.currentState?.shake();
       messenger.showSnackBar(
-        const SnackBar(content: Text('さそえなかった。もう一度試してね')),
+        SnackBar(
+          content: Text(
+            // A 409 means the 5 minute per-pair cooldown is still running; the
+            // client already phrases that for the user.
+            error is ApiException && error.statusCode == 409
+                ? error.message
+                : 'さそえなかった。もう一度試してね',
+          ),
+        ),
       );
     }
   }

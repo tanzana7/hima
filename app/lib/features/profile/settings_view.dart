@@ -268,7 +268,11 @@ class _SettingsViewState extends State<SettingsView> {
                       title: Text(_slotLabel(viewModel.regularSlots[index])),
                       trailing: IconButton(
                         tooltip: '削除',
-                        onPressed: () => _removeSlot(context, viewModel, index),
+                        onPressed: () => _removeSlot(
+                          context,
+                          viewModel,
+                          viewModel.regularSlots[index],
+                        ),
                         icon: const Icon(Icons.close_rounded),
                       ),
                     ),
@@ -321,13 +325,8 @@ class _SettingsViewState extends State<SettingsView> {
     ],
   );
 
-  static const _weekdays = ['月', '火', '水', '木', '金', '土', '日'];
-
-  static String _clock(int minute) =>
-      '${(minute ~/ 60).toString().padLeft(2, '0')}:${(minute % 60).toString().padLeft(2, '0')}';
-
   static String _slotLabel(RegularSlot slot) =>
-      '${_weekdays[slot.weekday]} ${_clock(slot.startMin)}–${_clock(slot.endMin)}';
+      '${weekdayLabels[slot.weekday]} ${clockLabel(slot.startMin)}–${clockLabel(slot.endMin)}';
 
   Future<void> _addSlot(BuildContext context, AppViewModel viewModel) async {
     var weekday = 0;
@@ -357,8 +356,10 @@ class _SettingsViewState extends State<SettingsView> {
                 decoration: const InputDecoration(labelText: '曜日'),
                 items: List.generate(
                   7,
-                  (day) =>
-                      DropdownMenuItem(value: day, child: Text(_weekdays[day])),
+                  (day) => DropdownMenuItem(
+                    value: day,
+                    child: Text(weekdayLabels[day]),
+                  ),
                 ),
                 onChanged: (value) {
                   if (value != null) setSheetState(() => weekday = value);
@@ -401,13 +402,10 @@ class _SettingsViewState extends State<SettingsView> {
       ),
     );
     if (slot == null || !context.mounted) return;
-    final updated = [...viewModel.regularSlots, slot]
-      ..sort((a, b) {
-        final byDay = a.weekday.compareTo(b.weekday);
-        return byDay == 0 ? a.startMin.compareTo(b.startMin) : byDay;
-      });
     try {
-      await viewModel.saveRegularSlots(updated);
+      // Slots are added one at a time; the server assigns the id the row needs
+      // to be deleted again.
+      await viewModel.addRegularSlot(slot);
     } catch (_) {
       if (!context.mounted) return;
       _showMessage(context, '保存できなかった。もう一度試してね');
@@ -417,11 +415,10 @@ class _SettingsViewState extends State<SettingsView> {
   Future<void> _removeSlot(
     BuildContext context,
     AppViewModel viewModel,
-    int index,
+    RegularSlot slot,
   ) async {
-    final updated = [...viewModel.regularSlots]..removeAt(index);
     try {
-      await viewModel.saveRegularSlots(updated);
+      await viewModel.deleteRegularSlot(slot);
     } catch (_) {
       if (!context.mounted) return;
       _showMessage(context, '削除できなかった。もう一度試してね');

@@ -6,7 +6,11 @@ import '../data/api_client.dart';
 import '../data/models/models.dart';
 
 class AppViewModel extends ChangeNotifier {
-  AppViewModel(this._api);
+  AppViewModel(this._api) {
+    // The client reports any 401 here: the JWT cannot be refreshed, so the only
+    // recovery is to drop it and show the login screen again.
+    _api.onUnauthorized = _handleUnauthorized;
+  }
 
   final ApiClient _api;
   Timer? _pollTimer;
@@ -27,8 +31,14 @@ class AppViewModel extends ChangeNotifier {
   bool _refreshQueued = false;
   UserProfile? _me;
   HimaSession? _myHima;
+  List<HimaSession> _boardSessions = [];
   List<HimaSession> _friends = [];
   List<FriendServer> _friendServers = [];
+
+  /// Members of my shared servers, or null while `GET /app/members` is missing
+  /// on the server. Kept apart from [FriendServer] so the hima of each member can
+  /// be re-attached on every poll without re-reading the member list.
+  List<FriendServer>? _memberServers;
   List<MatchRecord> _matches = [];
   List<Knock> _inbox = [];
   List<Knock> _sent = [];
@@ -37,12 +47,27 @@ class AppViewModel extends ChangeNotifier {
   List<RegularSlot> _regularSlots = [];
   List<HimaTimeSuggestion> _suggestions = [];
 
+  /// Replies that arrived and have not been shown yet, oldest first.
+  ///
+  /// `/app/board` returns every unseen reply at once and the server marks them
+  /// seen in one bulk call, so the celebration overlay pops this queue one item
+  /// at a time instead of asking the server again per id.
+  final List<Knock> _resultQueue = [];
+
+  /// First time each session pair was matched, so the same pair is not
+  /// re-notified after a mood or activity change.
+  final Map<String, DateTime> _matchCreatedAt = {};
+
   // Remembered between declarations so a single tap can declare again without
   // asking a question. `auto_mood` in settings is unrelated (it belongs to the
   // server-side auto mode) and must not be reused here.
   Mood _lastMood = Mood.ok;
   Activity? _pendingActivity;
   int _durationMin = defaultHimaDurationMin;
+
+  /// True once the user picked a duration in this run, so a value read back from
+  /// the server never overwrites the choice.
+  bool _durationPicked = false;
   bool _moodHintShown = false;
 
   bool get isAuthenticated => _isAuthenticated;
@@ -68,8 +93,7 @@ class AppViewModel extends ChangeNotifier {
   Activity? get selectedActivity =>
       isDeclared ? _myHima?.activity : _pendingActivity;
 
-  int get selectedDurationMin =>
-      isDeclared ? _myHima!.durationMin : _durationMin;
+  int get selectedDurationMin => _durationMin;
 
   bool get isDeclared {
     final session = _myHima;
@@ -80,13 +104,15 @@ class AppViewModel extends ChangeNotifier {
   /// it is answered, so the badge needs its own seen state.
   final Set<String> _seenInboxIds = {};
 
-  /// A pending incoming knock or an unread reply both light the header bell.
+  /// A pending incoming knock, a reply waiting to be shown, or an unread reply
+  /// all light the header bell.
   bool get hasUnseenKnocks =>
       _inbox.any(
         (knock) =>
             knock.status == KnockStatus.pending &&
             !_seenInboxIds.contains(knock.id),
       ) ||
+      _resultQueue.isNotEmpty ||
       _sent.any(
         (knock) =>
             knock.status != KnockStatus.pending && knock.resultSeenAt == null,
@@ -166,11 +192,8 @@ class AppViewModel extends ChangeNotifier {
   /// until the user opened the bell and switched to 送信. The result is claimed
   /// here so the overlay and the knocks screen never celebrate it twice.
   Knock? takeUnseenKnockResult() {
-    for (final knock in _sent) {
-      if (knock.status == KnockStatus.pending) continue;
-      if (knock.resultSeenAt != null) continue;
-      if (!_celebratedResultIds.add(knock.id)) continue;
-      return knock;
+    for (final knock in _resultQueue) {
+      if (_celebratedResultIds.add(knock.id)) return knock;
     }
     return null;
   }
@@ -181,65 +204,258 @@ class AppViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> loginAsDemo() async {
+  /// Restores the token saved by a previous launch and goes straight to the main
+  /// shell when `/app/me` still accepts it.
+  Future<void> restoreSession() async {
+    try {
+      if (!await _api.restoreToken()) return;
+      await _refreshAll();
+      _isAuthenticated = true;
+    } catch (_) {
+      // A 401 has already cleared the token in the client; any other failure
+      // leaves the login screen in charge, and the token stays for a retry.
+    } finally {
+      notifyListeners();
+    }
+  }
+
+  /// The offline demo login. Only the mock answers it.
+  Future<void> loginAsDemo() => _login(() => _api.loginWithDiscord(null));
+
+  Future<void> completeDiscordLogin(DiscordAuthRequest request) =>
+      _login(() => _api.loginWithDiscord(request));
+
+  Future<void> _login(Future<void> Function() authenticate) async {
     _isBusy = true;
     notifyListeners();
     try {
-      _me = await _api.loginWithDiscord(null);
-      _isAuthenticated = true;
+      await authenticate();
       await _refreshAll();
-    } catch (_) {
-      _isAuthenticated = false;
-      rethrow;
+      _isAuthenticated = true;
     } finally {
       _isBusy = false;
       notifyListeners();
     }
   }
 
-  Future<void> completeDiscordLogin(DiscordAuthRequest request) async {
-    _isBusy = true;
-    notifyListeners();
-    try {
-      _me = await _api.loginWithDiscord(request);
-      _isAuthenticated = true;
-      await _refreshAll();
-    } catch (_) {
-      _isAuthenticated = false;
-      rethrow;
-    } finally {
-      _isBusy = false;
-      notifyListeners();
-    }
-  }
-
+  /// Reads everything the app shows. Used after login and after a mutation that
+  /// changes more than one list.
   Future<void> _refreshAll() async {
-    final results = await Future.wait<Object?>([
-      _api.getMe(),
-      _api.getGuilds(),
-      _api.getMyHima(),
-      _api.getHima(),
-      _api.getFriends(),
-      _api.getMatches(),
-      _api.getKnockInbox(),
-      _api.getKnockSent(),
-      _api.getBlocks(),
-      _api.getRegularSlots(),
-      _api.getHimaTimeSuggestions(),
-    ]);
-    _me = results[0] as UserProfile;
-    _guilds = results[1] as List<Guild>;
-    _myHima = results[2] as HimaSession?;
-    _friends = results[3] as List<HimaSession>;
-    _friendServers = results[4] as List<FriendServer>;
-    _matches = results[5] as List<MatchRecord>;
-    _inbox = results[6] as List<Knock>;
-    _sent = results[7] as List<Knock>;
-    _blocks = results[8] as List<BlockedUser>;
-    _regularSlots = results[9] as List<RegularSlot>;
-    _suggestions = results[10] as List<HimaTimeSuggestion>;
+    final me = await _api.getMe();
+    final board = await _api.getBoard();
+    final sent = await _api.getSentKnocks();
+    final members = await _api.getMembers();
+    final blocks = await _api.getBlocks();
+    final slots = await _api.getRegularSlots();
+    final forecast = await _api.getForecast();
+    _applyLive(me, board, sent);
+    _memberServers = members;
+    _rebuildFriendServers();
+    _blocks = _withKnownNames(blocks);
+    _regularSlots = List.of(slots);
+    _suggestions = List.of(forecast);
     _liveError = false;
   }
+
+  /// One live read: my profile and session, the board, and the knocks I sent.
+  Future<void> _readLive() async {
+    final me = await _api.getMe();
+    final board = await _api.getBoard();
+    final sent = await _api.getSentKnocks();
+    _applyLive(me, board, sent);
+    _rebuildFriendServers();
+    _liveError = false;
+  }
+
+  void _applyLive(MeSnapshot me, BoardSnapshot board, List<Knock>? sent) {
+    _applyMe(me);
+    _inbox = List.of(board.inbox);
+    _applyResults(board.results);
+    _applySent(sent, board.results);
+    _boardSessions = List.of(board.sessions);
+    _rebuildFriends();
+    _rebuildMatches();
+  }
+
+  void _applyMe(MeSnapshot me) {
+    _me = me.profile;
+    _guilds = List.of(me.guilds);
+    final session = me.session;
+    final hadSession = _myHima != null;
+    if (session != null) {
+      if (!hadSession && !_durationPicked) {
+        // After a restart the last chosen duration is unknown. The remaining
+        // time rounded up to an offered choice is the closest estimate; it is
+        // taken once per session so it cannot drift while the session runs.
+        _durationMin = _nearestDurationChoice(session.durationMin);
+      }
+      _lastMood = session.mood;
+      _pendingActivity = session.activity;
+    }
+    _myHima = session?.withDurationMin(_durationMin);
+  }
+
+  static int _nearestDurationChoice(int minutes) {
+    for (final choice in himaDurationChoices) {
+      if (choice >= minutes) return choice;
+    }
+    return himaDurationChoices.last;
+  }
+
+  void _applyResults(List<Knock> results) {
+    if (results.isEmpty) return;
+    final queuedIds = {for (final knock in _resultQueue) knock.id};
+    for (final result in results) {
+      // A reply that was already celebrated must not come back when the bulk
+      // "seen" call has not reached the server yet.
+      if (_celebratedResultIds.contains(result.id)) continue;
+      if (queuedIds.add(result.id)) _resultQueue.add(result);
+    }
+    // One bulk call covers the whole batch, which is why the app never needs a
+    // per-id "seen" request. It is repeated on the next poll if it failed.
+    unawaited(
+      _api.markKnockResultsSeen().catchError((Object _) {
+        // Best effort: the next poll sends the same batch again.
+      }),
+    );
+  }
+
+  void _applySent(List<Knock>? fromServer, List<Knock> results) {
+    final server = fromServer;
+    if (server != null) {
+      _sent = List.of(server);
+      return;
+    }
+    // Temporary fallback while `GET /app/knocks/sent` is not implemented: keep
+    // the knocks this app instance sent and fold in the replies the board
+    // reports, so the 送信 tab still shows 返事待ち and the answers.
+    final byId = {for (final knock in _sent) knock.id: knock};
+    for (final result in results) {
+      final existing = byId[result.id];
+      byId[result.id] = existing == null
+          ? result
+          : existing.copyWith(
+              status: result.status,
+              respondedAt: result.respondedAt,
+            );
+    }
+    _sent = byId.values.toList()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+  }
+
+  void _rebuildFriends() {
+    final myId = _me?.id;
+    final mine = isDeclared ? _myHima : null;
+    final others = [
+      for (final session in _boardSessions)
+        if (session.user.id != myId) session,
+    ];
+    others.sort((a, b) {
+      final byActivity = activityMatchRank(
+        mine?.activity,
+        a.activity,
+      ).compareTo(activityMatchRank(mine?.activity, b.activity));
+      return byActivity == 0
+          ? a.user.displayName.compareTo(b.user.displayName)
+          : byActivity;
+    });
+    _friends = others;
+  }
+
+  /// Matches are computed here from my own mood and the board rows, following
+  /// the contract: fire×fire, fire×ok (fire side only) and ok×ok; 🌙 never
+  /// matches, and blocked users are already excluded by the server.
+  void _rebuildMatches() {
+    final mine = isDeclared ? _myHima : null;
+    if (mine == null) {
+      _matches = [];
+      _matchCreatedAt.clear();
+      return;
+    }
+    final now = DateTime.now().toUtc();
+    final liveKeys = <String>{};
+    final matches = <MatchRecord>[];
+    for (final other in _friends) {
+      final kind = matchKindFor(mine.mood, other.mood);
+      if (kind == null) continue;
+      final key = '${mine.sessionId}:${other.sessionId}';
+      liveKeys.add(key);
+      // Derived from the current moods, so changing the mood of a live session
+      // adds or removes its match cards immediately.
+      final createdAt = _matchCreatedAt.putIfAbsent(key, () => now);
+      matches.add(
+        MatchRecord(
+          mySessionId: mine.sessionId,
+          otherSessionId: other.sessionId,
+          kind: kind,
+          otherUser: other.user,
+          otherHima: MatchedHima(
+            mood: other.mood,
+            activity: other.activity,
+            note: other.note,
+            expiresAt: other.expiresAt,
+          ),
+          createdAt: createdAt,
+        ),
+      );
+    }
+    _matchCreatedAt.removeWhere((key, _) => !liveKeys.contains(key));
+    matches.sort((a, b) {
+      final byActivity = activityMatchRank(
+        mine.activity,
+        a.otherHima.activity,
+      ).compareTo(activityMatchRank(mine.activity, b.otherHima.activity));
+      return byActivity == 0
+          ? b.createdAt.compareTo(a.createdAt)
+          : byActivity;
+    });
+    _matches = matches;
+  }
+
+  void _rebuildFriendServers() {
+    final himaByUserId = {
+      for (final session in _boardSessions)
+        if (session.user.id != _me?.id) session.user.id: session,
+    };
+    final members = _memberServers;
+    if (members == null) {
+      // Temporary fallback until `GET /app/members` exists: only people who are
+      // hima right now can be listed, grouped by the servers I share. The 友達
+      // tab therefore shows nobody who is not currently free.
+      _friendServers = [
+        for (final guild in _guilds)
+          if (_friends.any((friend) => friend.guildIds.contains(guild.id)))
+            FriendServer(
+              guild: guild,
+              members: _sortedMembers([
+                for (final friend in _friends)
+                  if (friend.guildIds.contains(guild.id))
+                    FriendMember(user: friend.user, hima: friend),
+              ]),
+            ),
+      ];
+      return;
+    }
+    _friendServers = [
+      for (final server in members)
+        server.withMembers(
+          _sortedMembers([
+            for (final member in server.members)
+              member.withHima(
+                server.guild.visible
+                    ? himaByUserId[member.user.id]
+                    : null,
+              ),
+          ]),
+        ),
+    ];
+  }
+
+  static List<FriendMember> _sortedMembers(List<FriendMember> members) =>
+      members..sort((a, b) {
+        if (a.isFree != b.isFree) return a.isFree ? -1 : 1;
+        return a.user.displayName.compareTo(b.user.displayName);
+      });
 
   /// Reads the data the home screen shows live.
   ///
@@ -262,14 +478,9 @@ class AppViewModel extends ChangeNotifier {
         _refreshQueued = false;
         final generation = _stateGeneration;
         try {
-          final results = await Future.wait<Object?>([
-            _api.getHima(),
-            _api.getMyHima(),
-            _api.getFriends(),
-            _api.getMatches(),
-            _api.getKnockInbox(),
-            _api.getKnockSent(),
-          ]);
+          final me = await _api.getMe();
+          final board = await _api.getBoard();
+          final sent = await _api.getSentKnocks();
           if (generation != _stateGeneration || !_isAuthenticated) {
             // A mutation committed while this read was in flight, or the session
             // ended: these results are older than the state held here, so drop
@@ -277,12 +488,8 @@ class AppViewModel extends ChangeNotifier {
             _refreshQueued = _isAuthenticated;
             continue;
           }
-          _friends = results[0] as List<HimaSession>;
-          _myHima = results[1] as HimaSession?;
-          _friendServers = results[2] as List<FriendServer>;
-          _matches = results[3] as List<MatchRecord>;
-          _inbox = results[4] as List<Knock>;
-          _sent = results[5] as List<Knock>;
+          _applyLive(me, board, sent);
+          _rebuildFriendServers();
           _liveError = false;
         } catch (_) {
           // Keep the last good data and let the UI offer a retry instead of
@@ -316,31 +523,49 @@ class AppViewModel extends ChangeNotifier {
     _pollTimer = null;
   }
 
+  /// Re-reads the state after a committed mutation.
+  ///
+  /// The mutation already succeeded, so a failing read must not be reported as
+  /// a failed mutation; it raises [hasLiveError] instead, which the screen shows
+  /// with a retry.
+  Future<void> _refreshAfterMutation() async {
+    try {
+      await _readLive();
+    } catch (_) {
+      _liveError = true;
+    }
+    notifyListeners();
+  }
+
   /// Declares hima. Passing no mood keeps the last used one so the hero button
   /// stays a true one-tap action.
-  Future<HimaSession> declareHima({
+  Future<void> declareHima({
     Mood? mood,
     Activity? activity,
     int? durationMin,
     String? note,
   }) async {
-    final session = await _api.putMyHima(
+    final minutes = durationMin ?? _durationMin;
+    await _api.declareHima(
       HimaDeclaration(
         mood: mood ?? _lastMood,
         activity: activity ?? _pendingActivity,
         note: note,
-        durationMin: durationMin ?? _durationMin,
+        durationMin: minutes,
         source: DeclarationSource.manual,
       ),
     );
+    _durationMin = minutes;
+    _durationPicked = true;
     _invalidateLiveReads();
     _retireSentKnocks();
-    _applySession(session);
-    await refreshLiveData();
-    return session;
+    // The declare response only carries the session id and the new expiry, so
+    // the state is re-read from /app/me instead of being patched from it.
+    await _refreshAfterMutation();
   }
 
-  /// Changes only the mood. The API keeps the session id for a live session.
+  /// Changes only the mood. The server extends the live session, so this is the
+  /// same POST as a declaration.
   Future<void> changeMood(Mood mood) async {
     final current = isDeclared ? _myHima : null;
     if (current == null) {
@@ -348,18 +573,7 @@ class AppViewModel extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    final session = await _api.putMyHima(
-      HimaDeclaration(
-        mood: mood,
-        activity: current.activity,
-        note: current.note,
-        durationMin: current.durationMin,
-        source: current.source ?? DeclarationSource.manual,
-      ),
-    );
-    _invalidateLiveReads();
-    _applySession(session);
-    await refreshLiveData();
+    await _declareLike(current, mood: mood, activity: current.activity);
   }
 
   /// Chips only remember the choice until the user declares hima. An expired
@@ -371,62 +585,66 @@ class AppViewModel extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    final session = await _api.putMyHima(
-      HimaDeclaration(
-        mood: current.mood,
-        activity: activity,
-        note: current.note,
-        durationMin: current.durationMin,
-        source: current.source ?? DeclarationSource.manual,
-      ),
-    );
-    _invalidateLiveReads();
-    _applySession(session);
-    await refreshLiveData();
+    _pendingActivity = activity;
+    await _declareLike(current, activity: activity);
   }
 
   Future<void> selectDuration(int minutes) async {
     final current = isDeclared ? _myHima : null;
+    _durationMin = minutes;
+    _durationPicked = true;
     if (current == null) {
-      _durationMin = minutes;
       notifyListeners();
       return;
     }
-    final session = await _api.putMyHima(
+    await _declareLike(
+      current,
+      activity: current.activity,
+      durationMin: minutes,
+    );
+  }
+
+  /// Re-declares with one field changed; the server extends the live session.
+  ///
+  /// [activity] is required rather than optional so "keep the current activity"
+  /// and "the user chose no activity" (null, sent as `any`) stay distinct.
+  Future<void> _declareLike(
+    HimaSession current, {
+    Mood? mood,
+    required Activity? activity,
+    int? durationMin,
+  }) async {
+    await _api.declareHima(
       HimaDeclaration(
-        mood: current.mood,
-        activity: current.activity,
+        mood: mood ?? current.mood,
+        activity: activity,
         note: current.note,
-        durationMin: minutes,
+        durationMin: durationMin ?? _durationMin,
         source: current.source ?? DeclarationSource.manual,
       ),
     );
     _invalidateLiveReads();
-    _applySession(session);
-    await refreshLiveData();
-  }
-
-  void _applySession(HimaSession session) {
-    _myHima = session;
-    _lastMood = session.mood;
-    _pendingActivity = session.activity;
-    _durationMin = session.durationMin;
-    notifyListeners();
+    await _refreshAfterMutation();
   }
 
   Future<void> endHima() async {
-    await _api.deleteMyHima();
+    await _api.endHima();
     _invalidateLiveReads();
     _myHima = null;
     notifyListeners();
-    await refreshLiveData();
+    await _refreshAfterMutation();
   }
 
   Future<Knock> sendKnock(String userId, KnockTemplate template) async {
+    final to = _knownUser(userId) ?? UserSummary(id: userId, displayName: '');
     // The knock is committed by this call. A failing follow-up read must not be
     // reported as a failed send, or a retry would send a duplicate.
-    final knock = await _api.createKnock(userId: userId, template: template);
+    final knock = await _api.createKnock(to: to, template: template);
     _invalidateLiveReads();
+    // Kept locally so 「さそった」 shows at once and the 送信 tab has something to
+    // list while `GET /app/knocks/sent` is missing.
+    if (!_sent.any((item) => item.id == knock.id)) _sent.insert(0, knock);
+    notifyListeners();
     await _refreshKnocksQuietly();
     // Mock replies arrive after three seconds; a short refresh makes them
     // visible without waiting for the 30 second poll.
@@ -440,20 +658,15 @@ class AppViewModel extends ChangeNotifier {
   /// retries, and the mutation itself is already reported as successful.
   Future<void> _refreshKnocksQuietly() async {
     try {
-      await refreshKnocks();
+      final board = await _api.getBoard();
+      final sent = await _api.getSentKnocks();
+      _inbox = List.of(board.inbox);
+      _applyResults(board.results);
+      _applySent(sent, board.results);
+      notifyListeners();
     } catch (_) {
       // Keep the committed state instead of surfacing a false failure.
     }
-  }
-
-  Future<void> refreshKnocks() async {
-    final results = await Future.wait<Object?>([
-      _api.getKnockInbox(),
-      _api.getKnockSent(),
-    ]);
-    _inbox = results[0] as List<Knock>;
-    _sent = results[1] as List<Knock>;
-    notifyListeners();
   }
 
   Future<void> respondToKnock(String knockId, KnockStatus response) async {
@@ -462,26 +675,18 @@ class AppViewModel extends ChangeNotifier {
     await _refreshKnocksQuietly();
   }
 
+  /// Marks a reply as seen locally.
+  ///
+  /// The server marks results in bulk as soon as the board returns them, so
+  /// there is no per-id endpoint to call; this only drops the reply from the
+  /// local queue and clears its 「新着」 state.
   Future<void> markKnockResultSeen(String knockId) async {
-    final seenAt =
-        await _api.markKnockResultSeen(knockId) ?? DateTime.now().toUtc();
-    _invalidateLiveReads();
-    _sent = _sent.map((knock) {
-      if (knock.id != knockId) return knock;
-      return Knock(
-        id: knock.id,
-        sender: knock.sender,
-        recipient: knock.recipient,
-        template: knock.template,
-        status: knock.status,
-        createdAt: knock.createdAt,
-        guild: knock.guild,
-        message: knock.message,
-        respondedAt: knock.respondedAt,
-        recipientNote: knock.recipientNote,
-        resultSeenAt: seenAt,
-      );
-    }).toList();
+    _resultQueue.removeWhere((knock) => knock.id == knockId);
+    final seenAt = DateTime.now().toUtc();
+    _sent = [
+      for (final knock in _sent)
+        knock.id == knockId ? knock.copyWith(resultSeenAt: seenAt) : knock,
+    ];
     notifyListeners();
   }
 
@@ -490,52 +695,130 @@ class AppViewModel extends ChangeNotifier {
     Mood? autoMood,
     bool? notifyOnHima,
   }) async {
-    final current = _me?.settings;
     final profile = _me;
-    if (current == null || profile == null) return;
+    if (profile == null) return;
     final updated = await _api.updateSettings(
-      UserSettings(
-        autoMode: autoMode ?? current.autoMode,
-        autoMood: autoMood ?? current.autoMood,
-        notifyOnHima: notifyOnHima ?? current.notifyOnHima,
-      ),
+      autoMode: autoMode,
+      autoMood: autoMood,
+      notifyOnHima: notifyOnHima,
     );
     _invalidateLiveReads();
-    _me = UserProfile(
-      id: profile.id,
-      displayName: profile.displayName,
-      avatarUrl: profile.avatarUrl,
-      settings: updated,
-    );
+    _me = profile.withSettings(updated);
     notifyListeners();
   }
 
   Future<void> updateGuildVisibility(String guildId, bool visible) async {
-    final updated = await _api.updateGuildVisibility(guildId, visible);
+    final stored = await _api.updateGuildVisibility(guildId, visible);
     _invalidateLiveReads();
-    _guilds = _guilds
-        .map((guild) => guild.id == guildId ? updated : guild)
-        .toList();
-    await refreshLiveData();
+    _guilds = [
+      for (final guild in _guilds)
+        guild.id == guildId ? guild.withVisibility(stored) : guild,
+    ];
+    notifyListeners();
+    // What I can see depends on which servers are visible, so the board is read
+    // again rather than patched.
+    await _refreshAfterMutation();
   }
 
   Future<void> addBlock(String userId) async {
     await _api.createBlock(userId);
     _invalidateLiveReads();
-    _blocks = await _api.getBlocks();
-    await refreshLiveData();
+    await _reloadBlocks();
+    await _refreshAfterMutation();
   }
 
   Future<void> removeBlock(String userId) async {
     await _api.deleteBlock(userId);
     _invalidateLiveReads();
-    _blocks = await _api.getBlocks();
-    await refreshLiveData();
+    await _reloadBlocks();
+    await _refreshAfterMutation();
   }
 
-  Future<void> saveRegularSlots(List<RegularSlot> slots) async {
-    _regularSlots = await _api.putRegularSlots(slots);
+  Future<void> _reloadBlocks() async {
+    // The member list excludes blocked people, so it is read again as well.
+    final blocks = await _api.getBlocks();
+    _memberServers = await _api.getMembers();
+    _blocks = _withKnownNames(blocks);
+    _rebuildFriendServers();
+  }
+
+  /// `GET /app/blocks` currently returns bare ids, so a name is filled in from
+  /// the members already loaded, or a neutral placeholder when the person is
+  /// unknown to this app instance.
+  List<BlockedUser> _withKnownNames(List<BlockedUser> blocks) {
+    if (blocks.every((block) => block.user.displayName.isNotEmpty)) {
+      return blocks;
+    }
+    return [
+      for (final block in blocks)
+        if (block.user.displayName.isNotEmpty)
+          block
+        else
+          block.withUser(
+            UserSummary(
+              id: block.user.id,
+              displayName: _knownUser(block.user.id)?.displayName ?? _unknownName,
+              avatarUrl:
+                  block.user.avatarUrl ?? _knownUser(block.user.id)?.avatarUrl,
+            ),
+          ),
+    ];
+  }
+
+  static const _unknownName = '名前不明';
+
+  /// Looks a person up in what the app already knows, for the places where the
+  /// server only gives an id.
+  UserSummary? _knownUser(String id) {
+    for (final friend in _friends) {
+      if (friend.user.id == id) return friend.user;
+    }
+    for (final server in _friendServers) {
+      for (final member in server.members) {
+        if (member.user.id == id) return member.user;
+      }
+    }
+    for (final knock in _inbox) {
+      final sender = knock.sender;
+      if (sender != null && sender.id == id) return sender;
+    }
+    for (final knock in _sent) {
+      final recipient = knock.recipient;
+      if (recipient != null && recipient.id == id) return recipient;
+    }
+    return null;
+  }
+
+  Future<void> addRegularSlot(RegularSlot slot) async {
+    final saved = await _api.addRegularSlot(slot);
     _invalidateLiveReads();
+    _regularSlots = [..._regularSlots, saved]..sort(_compareSlots);
+    notifyListeners();
+  }
+
+  Future<void> deleteRegularSlot(RegularSlot slot) async {
+    final id = slot.id;
+    if (id == null) return;
+    await _api.deleteRegularSlot(id);
+    _invalidateLiveReads();
+    _regularSlots = [
+      for (final item in _regularSlots)
+        if (item.id != id) item,
+    ];
+    notifyListeners();
+  }
+
+  static int _compareSlots(RegularSlot a, RegularSlot b) {
+    final byDay = a.weekday.compareTo(b.weekday);
+    return byDay == 0 ? a.startMin.compareTo(b.startMin) : byDay;
+  }
+
+  /// Drops the local session when the server rejects the token. The client has
+  /// already cleared the stored token by the time this runs.
+  void _handleUnauthorized() {
+    stopPolling();
+    _invalidateLiveReads();
+    _resetSession();
     notifyListeners();
   }
 
@@ -545,14 +828,23 @@ class AppViewModel extends ChangeNotifier {
     // its results instead of letting it repopulate the signed-out model.
     _invalidateLiveReads();
     await _api.logout();
+    _resetSession();
+    notifyListeners();
+  }
+
+  void _resetSession() {
     _isAuthenticated = false;
     _me = null;
     _myHima = null;
+    _boardSessions = [];
     _friends = [];
     _friendServers = [];
+    _memberServers = null;
     _matches = [];
+    _matchCreatedAt.clear();
     _inbox = [];
     _sent = [];
+    _resultQueue.clear();
     _seenInboxIds.clear();
     _celebratedResultIds.clear();
     _retiredKnockIds.clear();
@@ -562,8 +854,9 @@ class AppViewModel extends ChangeNotifier {
     _suggestions = [];
     _pendingActivity = null;
     _durationMin = defaultHimaDurationMin;
+    _durationPicked = false;
     _lastMood = Mood.ok;
     _moodHintShown = false;
-    notifyListeners();
+    _liveError = false;
   }
 }
