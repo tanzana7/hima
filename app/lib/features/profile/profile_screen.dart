@@ -4,14 +4,15 @@ import 'package:provider/provider.dart';
 import '../../app/theme/app_colors.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_text_styles.dart';
+import '../../shared/widgets/app_bottom_navigation.dart';
 import '../../shared/widgets/avatar_view.dart';
 import '../../shared/widgets/paint/paint.dart';
 import '../../state/app_view_model.dart';
 import 'settings_view.dart';
 
 /// Captions that sit directly on a [PaintWash]. [AppColors.muted] measures
-/// 4.2:1 once the wash layers overlap, so text on paint takes this darker tone
-/// instead (5.4:1).
+/// 4.2:1 on the pastel wash, so text on paint takes this darker tone instead
+/// (5.4:1).
 const _washMuted = Color(0xFF635B6F);
 
 /// プロフィール tab: who you are, then every setting, then logout.
@@ -23,11 +24,11 @@ class ProfileScreen extends StatelessWidget {
     final viewModel = context.watch<AppViewModel>();
     final me = viewModel.me;
     return ListView(
-      padding: const EdgeInsets.fromLTRB(
+      padding: EdgeInsets.fromLTRB(
         AppSpacing.s16,
         AppSpacing.s8,
         AppSpacing.s16,
-        AppSpacing.s32,
+        AppBottomNavigation.listBottomInset(context),
       ),
       children: [
         Row(

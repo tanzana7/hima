@@ -44,6 +44,11 @@ const appNavDestinations = [
 /// a soft one with an irregular top edge — still reads as a bar, which is what
 /// the previous lavender band did.
 ///
+/// The shell floats this nav over the content (`Scaffold.extendBody`), so a
+/// list scrolls underneath it instead of being cut off at its top edge. The
+/// fade is what makes that seam disappear: the content dissolves into the paper
+/// over [fadeHeight] and the solid area below it hides the rest.
+///
 /// The selected tab gets a small splash behind its icon, one colour per tab: a
 /// body, one or two short arms and a few droplets, and no drip, because a drip
 /// hanging off the splash would run into the label under it. It splashes in on
@@ -68,55 +73,87 @@ class AppBottomNavigation extends StatelessWidget {
     AppColors.yellow,
   ];
 
-  /// Room above the icons for the selected tab's splash to throw an arm
-  /// upwards, and the band the transparent-to-paper fade covers. It is not a
-  /// strip: nothing is painted in it but the fade.
-  static const _fadeHeight = 20.0;
+  /// Height of the transparent-to-paper fade painted above the tabs.
+  ///
+  /// It is a fixed height rather than a fraction of the nav: the nav grows with
+  /// the text scale (a 200% label wraps to two lines), and a fractional stop
+  /// would make the fade band change height with it. 48–72dp is the range where
+  /// scrolled content dissolves into the paper instead of ending at a straight
+  /// edge, and it also leaves the selected tab's splash room to throw an arm
+  /// upwards.
+  static const double fadeHeight = 56;
+
+  /// The bottom padding a scrolling tab keeps so its last item can be scrolled
+  /// clear of the nav.
+  ///
+  /// The nav floats over the content, and `Scaffold.extendBody` makes the
+  /// scaffold report the nav's height as the body's bottom `MediaQuery`
+  /// padding. Reading it back instead of hard-coding a height is what keeps the
+  /// last card reachable at 200% text scale, where the nav grows by a second
+  /// label line, and on a device with a taller system inset.
+  static double listBottomInset(BuildContext context) =>
+      MediaQuery.paddingOf(context).bottom + AppSpacing.s32;
 
   @override
-  Widget build(BuildContext context) => DecoratedBox(
-    // A gradient, not a shape: it has no edge to see, so the nav never becomes
-    // a band. It only matters when content scrolls behind the nav; on the paper
-    // background it is invisible by design.
-    decoration: BoxDecoration(
-      gradient: LinearGradient(
-        begin: Alignment.topCenter,
-        end: Alignment.bottomCenter,
-        colors: [
-          AppColors.background.withValues(alpha: 0),
-          AppColors.background,
-        ],
-        stops: const [0, 0.42],
-      ),
-    ),
-    child: SafeArea(
-      top: false,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(
-          AppSpacing.s8,
-          _fadeHeight,
-          AppSpacing.s8,
-          AppSpacing.s8,
-        ),
-        child: Row(
-          children: [
-            for (var index = 0; index < appNavDestinations.length; index++)
-              Expanded(
-                child: _NavItem(
-                  destination: appNavDestinations[index],
-                  tint: _tabTints[index % _tabTints.length],
-                  selected: index == selectedIndex,
-                  onTap: () {
-                    if (index == selectedIndex) return;
-                    AppHaptics.select();
-                    onSelected(index);
-                  },
-                ),
-              ),
-          ],
+  Widget build(BuildContext context) => Column(
+    mainAxisSize: MainAxisSize.min,
+    // Stretch, not centre: both bands are full-width and neither has an
+    // intrinsic width of its own.
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      // A gradient, not a shape: it has no edge to see, so the nav never
+      // becomes a band. It ends exactly on the paper colour, so it meets the
+      // solid area below without a seam of its own.
+      SizedBox(
+        height: fadeHeight,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                AppColors.background.withValues(alpha: 0),
+                AppColors.background,
+              ],
+            ),
+          ),
         ),
       ),
-    ),
+      // Solid paper behind the tabs and the system inset. Nothing scrolls
+      // through this part: by the time content reaches it, the fade has already
+      // taken it to the paper colour.
+      ColoredBox(
+        color: AppColors.background,
+        child: SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.s8,
+              0,
+              AppSpacing.s8,
+              AppSpacing.s8,
+            ),
+            child: Row(
+              children: [
+                for (var index = 0; index < appNavDestinations.length; index++)
+                  Expanded(
+                    child: _NavItem(
+                      destination: appNavDestinations[index],
+                      tint: _tabTints[index % _tabTints.length],
+                      selected: index == selectedIndex,
+                      onTap: () {
+                        if (index == selectedIndex) return;
+                        AppHaptics.select();
+                        onSelected(index);
+                      },
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ],
   );
 }
 

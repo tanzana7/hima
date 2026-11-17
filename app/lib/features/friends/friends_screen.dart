@@ -7,6 +7,7 @@ import '../../app/theme/app_colors.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_text_styles.dart';
 import '../../data/models/models.dart';
+import '../../shared/widgets/app_bottom_navigation.dart';
 import '../../shared/widgets/avatar_view.dart';
 import '../../shared/widgets/empty_state.dart';
 import '../../shared/widgets/knock_pill.dart';
@@ -15,8 +16,8 @@ import '../../state/app_view_model.dart';
 import '../knocks/widgets/knock_sheet.dart';
 
 /// Captions that sit directly on a [PaintWash]. [AppColors.muted] measures
-/// 4.2:1 once the wash layers overlap, so text on paint takes this darker tone
-/// instead (5.4:1).
+/// 4.2:1 on the pastel wash, so text on paint takes this darker tone instead
+/// (5.4:1).
 const _washMuted = Color(0xFF635B6F);
 
 /// 友達 tab: everyone in the shared servers, grouped by server.
@@ -59,11 +60,11 @@ class _FriendsScreenState extends State<FriendsScreen> {
     ].where((server) => server.members.isNotEmpty).toList();
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(
+      padding: EdgeInsets.fromLTRB(
         AppSpacing.s16,
         AppSpacing.s8,
         AppSpacing.s16,
-        AppSpacing.s32,
+        AppBottomNavigation.listBottomInset(context),
       ),
       children: [
         const _ScreenHeader(),
@@ -109,19 +110,24 @@ class _FriendsScreenState extends State<FriendsScreen> {
     );
   }
 
-  /// The field is a soft wash with no outline. A focus ring would put back the
+  /// The field is a soft dab with no outline. A focus ring would put back the
   /// hairline the rest of the screen just lost, so focus is shown by the caret
   /// and by the text the user is typing.
-  Widget _searchField() => PaintWash(
+  Widget _searchField() => PaintDab(
     seed: paintSeedOf('friends-search'),
     color: AppColors.purpleSoft,
-    // Zero padding: the field's own content padding keeps the text off the
-    // paint's edge, and the wash is then exactly the field's box.
-    padding: EdgeInsets.zero,
-    corner: AppSpacing.radiusPill,
-    // The pooling rim reads as an outline at this size, which is the one thing
-    // the field is losing.
-    rim: false,
+    // The dab's own padding is what lets the paint round into a pill. The shape
+    // generator solves its corner radius against the padded content rect, so a
+    // zero-padding box can only come back with square corners — which is why
+    // the field used to read as a rectangle with straight sides, however large
+    // the requested radius was.
+    padding: const EdgeInsets.symmetric(
+      horizontal: AppSpacing.s8,
+      vertical: 6,
+    ),
+    // A field is taller than a chip, so the wobble has to be a larger fraction
+    // of the short side to bend the long edges at all.
+    wobble: 0.10,
     child: TextField(
       controller: _search,
       textInputAction: TextInputAction.search,
@@ -129,15 +135,15 @@ class _FriendsScreenState extends State<FriendsScreen> {
       decoration: InputDecoration(
         hintText: '名前でさがす',
         hintStyle: AppTextStyles.body.copyWith(color: _washMuted),
-        // The wash is the field's background, so the theme's fill and its
+        // The dab is the field's background, so the theme's fill and its
         // outline borders are both turned off.
         filled: false,
         border: InputBorder.none,
         enabledBorder: InputBorder.none,
         focusedBorder: InputBorder.none,
         contentPadding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.s16,
-          vertical: 14,
+          horizontal: AppSpacing.s8,
+          vertical: 10,
         ),
         prefixIcon: const Icon(Icons.search_rounded, color: _washMuted),
         suffixIcon: _query.isEmpty
@@ -195,9 +201,16 @@ class _ServerSection extends StatelessWidget {
 
   /// The group's hue, picked from the guild id so a server keeps its colour
   /// across rebuilds and the list does not look striped.
-  Color get _tint =>
-      AppColors.friendTints[paintSeedOf(server.guild.id) %
-          AppColors.friendTints.length];
+  int get _tintIndex =>
+      paintSeedOf(server.guild.id) % AppColors.friendTints.length;
+
+  Color get _tint => AppColors.friendTints[_tintIndex];
+
+  /// The underline takes the palette's saturated partner of [_tint] instead of
+  /// a darkened copy of the wash. Lerping a pastel towards black desaturates
+  /// it, which is what turned the mint group's underline grey-green and the
+  /// peach one grey-brown.
+  Color get _strokeTint => AppColors.friendStrokeTints[_tintIndex];
 
   @override
   Widget build(BuildContext context) => Column(
@@ -219,7 +232,7 @@ class _ServerSection extends StatelessWidget {
                 BrushStroke(
                   seed: paintSeedOf('guild-stroke-${server.guild.id}'),
                   size: const Size(88, 8),
-                  color: paintTone(_tint, -0.3),
+                  color: _strokeTint,
                 ),
               ],
             ),

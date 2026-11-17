@@ -1,24 +1,32 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import 'paint_geometry.dart';
 
 /// A watercolour wash for card and section backgrounds.
 ///
-/// Two or three translucent blobs of the same hue, slightly offset, so the
-/// overlaps darken the way layered paint does. The outline is the same body
-/// generator the splash uses, with a smaller wobble: enough that the edge
-/// bulges and dents and the corners do not match, so a card reads as a wet
-/// spread of paint rather than as a frosted rectangle. A faint darker rim
-/// follows the edge of each blob: that pooling line is what separates a wash
-/// from a flat pastel rectangle, and it replaces the thin border cards used to
-/// carry.
+/// **One layer.** The wash is a single filled silhouette from the same body
+/// generator the splash uses, with a smaller wobble: enough that the edge bulges
+/// and dents and the corners do not match, so a card reads as a wet spread of
+/// paint rather than as a frosted rectangle.
 ///
-/// There is no shadow and no highlight: a drop shadow is what made the first
-/// version look like glass.
+/// It used to stack two or three translucent blobs, each with its own seed and a
+/// few dp of offset. Every one of them also carried a pooling rim, so the eye saw
+/// two or three outlines tracing the same rectangle and read the card as frosted
+/// glass with several edges. The tonal variation that the stacking was there for
+/// now lives *inside* the one layer: a two-tone gradient across the body plus one
+/// or two soft radial blooms clipped to it. A bloom has no edge of its own, so it
+/// deepens part of the wash without adding an outline.
+///
+/// A single faint pooling rim follows the real outline. That line is what
+/// separates a wash from a flat pastel rectangle, and it replaces the thin border
+/// cards used to carry. There is no shadow and no highlight: a drop shadow is
+/// what made the first version look like glass.
 ///
 /// Like [PaintSplat] the shapes are seeded and cached, the child is laid out in
-/// the inner rect left by [padding], and the paint spills into that band and
-/// past the widget box.
+/// the inner rect left by [padding], and the paint spills into that band and past
+/// the widget box.
 class PaintWash extends StatelessWidget {
   const PaintWash({
     super.key,
@@ -38,7 +46,8 @@ class PaintWash extends StatelessWidget {
   /// Keeps a card's wash the same across rebuilds and scrolling.
   final int seed;
 
-  /// The hue. Layers and the rim are derived from it, so one token is enough.
+  /// The hue. The tonal gradient, the blooms and the rim are derived from it, so
+  /// one token is enough.
   final Color color;
 
   final Widget? child;
@@ -46,19 +55,20 @@ class PaintWash extends StatelessWidget {
   final EdgeInsets padding;
   final double corner;
 
-  /// 2–3. More layers darken the overlaps into a muddy patch.
+  /// How many tonal passes the wash gets, 1–3. One is a plain gradient; 2–3 add
+  /// one or two soft interior blooms. It no longer means "stacked blobs": the
+  /// passes never draw an outline of their own.
   final int layers;
 
   /// Wobble of the edge as a fraction of the short side. 0.02–0.05 is the wash
   /// range: a splash uses 0.04–0.10.
   final double wobble;
 
-  /// Draws the pooling edge. Off for very small washes where it would read as
-  /// a hairline.
+  /// Draws the single pooling edge. Off for very small washes where it would read
+  /// as a hairline.
   final bool rim;
 
-  /// Short lobes where the wash spread. 0 keeps a plain, if still uneven,
-  /// blob.
+  /// Short lobes where the wash spread. 0 keeps a plain, if still uneven, blob.
   final int arms;
 
   /// Arm length as a fraction of the short side. A wash spreads sideways, not
@@ -116,43 +126,90 @@ class _PaintWashPainter extends CustomPainter {
   final int arms;
   final double armLength;
 
+  /// Alpha of the single body fill.
+  ///
+  /// It replaces the three 50% layers the wash used to stack, which composited
+  /// to about 0.87 in the middle of a card. Matching that keeps the card's
+  /// weight and the contrast the captions on it were measured against, while
+  /// leaving the interior light enough for the blooms to show.
+  static const _bodyAlpha = 0.86;
+
   @override
   void paint(Canvas canvas, Size size) {
     if (size.isEmpty) return;
-    final count = layers.clamp(1, 3);
-    final fill = Paint()..color = color.withValues(alpha: 0.5);
-    // A small blur keeps the pooling edge soft. It is deliberately tiny: the
-    // home screen scrolls a dozen of these cards, and a large sigma would cost
-    // a saveLayer per card per frame.
-    final edge = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.4
-      ..color = paintTone(color, -0.28).withValues(alpha: 0.16)
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 1.4);
 
-    for (var index = 0; index < count; index++) {
-      // Layer 0 is the one that has to cover the safe rect, so it keeps the
-      // full box. The others are nudged by a few dp — far enough that the union
-      // of the three is a ragged wet edge, close enough that a card in a 12dp
-      // grid gap does not paint over its neighbour.
-      final dx = index == 0 ? 0.0 : (index.isOdd ? 4.0 : -3.5);
-      final dy = index == 0 ? 0.0 : (index.isOdd ? -3.0 : 3.5);
-      // Only the base layer grows arms: three layers of arms would be a
-      // starburst, not a wash.
-      final path = paintSilhouette(
-        size: size,
-        seed: seed + index * 7919,
-        padding: padding,
-        corner: corner,
-        wobble: wobble,
-        arms: index == 0 ? arms : 0,
-        armLength: armLength,
-      );
+    // One silhouette for the whole wash, so there is exactly one outline.
+    final body = paintSilhouette(
+      size: size,
+      seed: seed,
+      padding: padding,
+      corner: corner,
+      wobble: wobble,
+      arms: arms,
+      armLength: armLength,
+    );
+
+    // Tonal variation inside that one layer: a two-tone diagonal, the way a wet
+    // wash dries unevenly. A single flat value reads as a vector shape however
+    // irregular its outline is.
+    canvas.drawPath(
+      body,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            paintTone(color, 0.08).withValues(alpha: _bodyAlpha),
+            paintTone(color, -0.08).withValues(alpha: _bodyAlpha),
+          ],
+        ).createShader(Offset.zero & size),
+    );
+
+    // Secondary passes are interior blooms, never offset copies of the outline.
+    // A radial gradient has no edge to trace, and clipping it to the body means
+    // it can only deepen the paint it sits on.
+    final blooms = layers.clamp(1, 3) - 1;
+    if (blooms > 0) {
+      final rng = math.Random(seed ^ 0x2f7d);
+      final shortSide = math.min(size.width, size.height);
       canvas.save();
-      canvas.translate(dx, dy);
-      canvas.drawPath(path, fill);
-      if (rim) canvas.drawPath(path, edge);
+      canvas.clipPath(body);
+      for (var index = 0; index < blooms; index++) {
+        // Kept off the very edge: a bloom centred on the outline would darken
+        // the rim band and read as a second outline after all.
+        final center = Offset(
+          size.width * (0.3 + 0.4 * rng.nextDouble()),
+          size.height * (0.3 + 0.4 * rng.nextDouble()),
+        );
+        final radius = shortSide * (0.5 + 0.3 * rng.nextDouble());
+        final tone = paintTone(
+          color,
+          index.isEven ? -0.16 : 0.16,
+        ).withValues(alpha: 0.18);
+        canvas.drawCircle(
+          center,
+          radius,
+          Paint()
+            ..shader = RadialGradient(
+              colors: [tone, tone.withValues(alpha: 0)],
+            ).createShader(Rect.fromCircle(center: center, radius: radius)),
+        );
+      }
       canvas.restore();
+    }
+
+    if (rim) {
+      canvas.drawPath(
+        body,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.6
+          ..color = paintTone(color, -0.3).withValues(alpha: 0.22)
+          // A small blur keeps the pooling edge soft. It is deliberately tiny:
+          // the home screen scrolls a dozen of these cards, and a large sigma
+          // would cost a saveLayer per card per frame.
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 1.4),
+      );
     }
   }
 
