@@ -12,10 +12,11 @@ import 'package:flutter/material.dart';
 /// a scrolling list does not re-sample an outline on every frame.
 ///
 /// **Anatomy of a swipe.** A wide band painted with one sideways movement: a
-/// rounded loaded start, a band whose edges wobble, a frayed strand end and the
-/// splatter flicked off it. It is the opposite of a splash — nothing grows out
-/// of it — and it is the only primitive that keeps its whole silhouette inside
-/// the box width. See [paintSwipe].
+/// blunt loaded start, a band whose edges wobble, an end that breaks into
+/// uneven fingers with rounded tips, and the splatter flicked off it. It is the
+/// opposite of a splash — nothing grows out of it — and it is the only
+/// primitive that keeps its whole silhouette inside the box width. See
+/// [paintSwipe].
 ///
 /// **Anatomy of a splash.** A body, arms and droplets:
 ///
@@ -1071,83 +1072,49 @@ Path paintSwashPath({
 // Brush swipe
 // ---------------------------------------------------------------------------
 
-/// How far a swipe's strands may reach past its solid band, in dp.
-///
-/// The strands are what makes the dry end read as a brush running out of
-/// paint, so they are the first thing to shorten when the box is narrow: unlike
-/// the splash, a stroke keeps its whole silhouette inside the box, because one
-/// cut off by the screen edge reads as a rectangle again.
-const double paintSwipeMaxBristle = 50;
-
 /// The paper a caller should keep around a swipe, in dp.
 ///
-/// The splatter cone reaches the box edge and a second pass over a stroke is
-/// usually tilted a couple of degrees, so a caller that puts a swipe next to
-/// text reserves this much. It is much smaller than [paintMaxBleed]: a stroke
-/// throws its paint sideways, not in a ring.
+/// The fingers and the splatter stay inside the box width, but the band's edges
+/// wobble a few dp past the band and a second pass over a stroke is usually
+/// tilted a couple of degrees, so a caller that puts a swipe next to text
+/// reserves this much. It is much smaller than [paintMaxBleed]: a stroke throws
+/// its paint sideways, not in a ring.
 const double paintSwipeBleed = 18;
 
-/// One strand of a dry brush end.
-///
-/// The strands are kept apart from [PaintSwipe.body] rather than unioned into
-/// it: each one fades toward its tip as the paint runs dry, which a single
-/// filled path cannot do.
-class PaintStrand {
-  const PaintStrand({
-    required this.path,
-    required this.root,
-    required this.tip,
-    required this.half,
-  });
-
-  /// The filled strand, already tapered and rounded at the tip.
-  final Path path;
-
-  /// Where the strand leaves the solid body. It starts a few dp inside the
-  /// body, so the join has no seam.
-  final Offset root;
-
-  /// The centre of the tip cap.
-  final Offset tip;
-
-  /// Half the strand's thickness at [root].
-  final double half;
-}
-
-/// A wide brush stroke: a rounded loaded start, a wobbling band with a ragged
-/// diagonal right edge, a handful of tapered strands, dry streaks and the
-/// splatter flicked off the end.
+/// A wide brush stroke: a blunt loaded start, a wobbling band that breaks into
+/// uneven fingers, dry streaks near the end and the splatter flicked off it.
 class PaintSwipe {
   const PaintSwipe({
     required this.body,
-    required this.strands,
     required this.droplets,
     required this.band,
     required this.bodyRight,
     required this.tipRight,
+    required this.splatterAt,
   });
 
-  /// The solid band with the dry streaks cut out of it.
+  /// The whole stroke — fingers included — with the dry streaks cut out of it.
   ///
   /// The streaks are real holes: whatever is behind the stroke (paper, or the
   /// idle wash the hero paints over) shows through them instead of a
   /// paper-coloured dash being painted on top of it.
   final Path body;
 
-  /// The dry end, drawn separately so each strand can fade toward its tip.
-  final List<PaintStrand> strands;
-
-  /// Individual droplets flicked off the frayed end, in the stroke direction.
+  /// Individual droplets flicked off the frayed end, scattered in a cone.
   final List<PaintDroplet> droplets;
 
   /// The vertical extent of the band inside the box.
   final Rect band;
 
-  /// Where the solid part of the band ends and the strands take over.
+  /// Where the solid part of the band ends and the fingers take over.
   final double bodyRight;
 
-  /// The line the strands reach and the splatter starts from.
+  /// The furthest any finger reaches.
   final double tipRight;
+
+  /// The reveal progress at which the brush reaches [bodyRight], so the
+  /// splatter can wait for the paint instead of arriving ahead of it.
+  final double splatterAt;
 }
 
 final _swipeCache = PaintCache<PaintSwipe>();
@@ -1201,39 +1168,37 @@ Path paintSwipeRevealPath({
 
 /// Builds (or returns the cached) swipe for one box.
 ///
-/// **Geometry.** The band is a closed outline sampled along the stroke: a semi
-/// ellipse at the left (the brush touching down loaded), a top edge and a
-/// bottom edge that each carry two low harmonics of their own, and a ragged,
-/// diagonal-ish right edge. The cap's radius is a large fraction of the band
-/// height, so the two left corners are the shoulders of an ellipse rather than
-/// the corners of a rectangle. The thickness falls off slightly along the
-/// stroke, so the start is fatter than the dry end.
+/// **Geometry.** One closed Catmull-Rom spline (tension 1/6) through the
+/// samples of the mock-up this stroke was drawn from, so the curve passes
+/// through every sample instead of only near it: a top edge that wobbles on a
+/// 41dp sine, the fingers of the dry end, a bottom edge that wobbles on a 33dp
+/// sine, and a blunt rounded start.
 ///
-/// **The dry end.** The paint breaks into 5–7 strands, whatever the band
-/// height. The count is fixed because more strands read as a comb; a taller
-/// band gets thicker strands instead. Thickness is deliberately uneven — one
-/// or two fat strands next to thin 4–8dp ones — the gaps run from hairline to
-/// wide, and the lengths vary a lot, with one clearly longest and one that
-/// barely leaves the body. Each strand tapers to a soft point and fades toward
-/// its tip, so the end looks like a brush running dry rather than a torn flag.
+/// **The dry end.** The band breaks into fingers at a fixed dp size — 8–26dp
+/// thick, 1.5–4dp apart, each reaching 6–40dp past the body — so a taller band
+/// gets more fingers rather than thicker ones. The count is therefore not
+/// fixed: the mock-up produced about nine on a 166dp band, and a fixed count is
+/// what used to read as a comb. Every finger ends in a rounded tip, never a
+/// point, and the gaps cut back into the paint so the right end is never a
+/// near-vertical line.
 ///
 /// **Content safety.** [padding] plus [endBand] on the right is the rect the
-/// caller lays its content out in. The solid band covers all of it, and the
-/// strands, the gaps, the dry streaks and the splatter all start to its right,
-/// so no hole in the paint can run under a label.
+/// caller lays its content out in. The body covers all of it, and the streaks,
+/// the fingers and the splatter all start to its right, so no hole in the paint
+/// can run under a label.
 ///
-/// **Fit.** Everything, splatter included, is clamped to the box width and to
-/// the band's vertical extent. The strands and the splatter get shorter on a
-/// narrow box instead of being cut off.
+/// **Fit.** Everything, splatter included, stays inside the box width. When the
+/// paper right of the content is short — wide content, 200% text — the finger
+/// reach and the splatter distance shrink together instead of being clipped by
+/// the edge.
 PaintSwipe paintSwipe({
   required Size size,
   required int seed,
   required EdgeInsets padding,
   required double endBand,
-  int? bristles,
   int? droplets,
 }) {
-  final key = (size, seed, padding, endBand, bristles, droplets);
+  final key = (size, seed, padding, endBand, droplets);
   return _swipeCache.get(
     key,
     () => _buildSwipe(
@@ -1241,7 +1206,6 @@ PaintSwipe paintSwipe({
       seed: seed,
       padding: padding,
       endBand: endBand,
-      bristleCount: bristles,
       dropletCount: droplets,
     ),
   );
@@ -1252,7 +1216,6 @@ PaintSwipe _buildSwipe({
   required int seed,
   required EdgeInsets padding,
   required double endBand,
-  required int? bristleCount,
   required int? dropletCount,
 }) {
   final rng = math.Random(seed);
@@ -1261,11 +1224,11 @@ PaintSwipe _buildSwipe({
   if (width < 12 || height < 12) {
     return PaintSwipe(
       body: Path(),
-      strands: const [],
       droplets: const [],
       band: Offset.zero & size,
       bodyRight: width,
       tipRight: width,
+      splatterAt: 1,
     );
   }
 
@@ -1277,472 +1240,169 @@ PaintSwipe _buildSwipe({
     math.min(12.0, height * 0.08),
   );
   final band = Rect.fromLTRB(0, bandInset, width, height - bandInset);
-  final centerY = band.center.dy;
-  final halfH = band.height * 0.5;
+  final top = band.top;
+  final bot = band.bottom;
+  final mid = (top + bot) * 0.5;
+  final bandHeight = band.height;
 
-  // How much paper the band leaves between its own edge and the content edge.
-  // The wobble and the taper both spend it, and neither may spend more: a band
-  // that dips inside the content rect puts a hole in the paint under a label.
-  final contentHalf = math.max(
-    centerY - padding.top,
-    height - padding.bottom - centerY,
+  // The paper the band leaves between its own edge and the content edge. The
+  // wobble and the jitter both spend it and neither may spend all of it: an
+  // edge that dips inside the content rect puts a hole in the paint under a
+  // label.
+  final margin = math.max(
+    0.0,
+    math.min(padding.top - top, bot - (height - padding.bottom)),
   );
-  final margin = math.max(0.0, halfH - contentHalf);
+  // The mock-up's wobble is 5dp with ±2dp of jitter. Both are in dp rather than
+  // a fraction of the band: a stroke has a direction, and a wobble that grows
+  // with the band turns it into a blob.
+  final wobble = math.min(5.0, math.max(0.0, margin - 2.5));
+  final jitter = math.min(2.0, math.max(0.0, margin - wobble - 1.5));
 
   // The rect the caller lays its content out in (see [paintSwipe]).
   final contentRight = math.max(padding.left, width - padding.right - endBand);
-
-  // The dry end is laid out from the right. The splatter takes the last slice,
-  // the strands reach into the slice before it, and both start *after* the
-  // content — a hole or a strand under a label would read as a strike-through.
-  // The splatter needs room for 10–16 drops that never touch, so it gets
-  // slightly less than half of the band.
-  final splatRoom = endBand * 0.45;
-  final tipRight = math.max(contentRight, width - splatRoom);
-  final strandRoot = math.max(contentRight + 3, width - endBand - 2);
-  final bodyRight = math.min(width, strandRoot + 2);
-
-  // The wobble is a few dp of slow movement, not the splash's 4–10% of the
-  // short side: a stroke has a direction, and a big wobble turns it into a
-  // blob. It is capped by the paper margin so the edge never reaches the
-  // content, and by the band inset so it never leaves the box.
-  final amp = math.min(
-    math.min(4.0, band.height * 0.035),
-    math.min(bandInset, math.max(0.0, margin - 2)),
+  // The paper reserved to the right of the content: the last stretch of the
+  // body, where the paint runs dry, and then the fingers and the splatter.
+  final room = math.max(0.0, width - contentRight);
+  final streakZone = math.min(70.0, room * 0.22);
+  final bodyRight = math.max(
+    contentRight,
+    math.min(width - 2, contentRight + streakZone),
   );
-  // A hand-painted band is never level. A couple of dp of drift across the
-  // whole stroke is what stops it reading as a rectangle.
-  final drift = (rng.nextDouble() - 0.5) * 5;
-  // The loaded start is a semi-ellipse, not a ruled vertical edge: its radius
-  // is a large fraction of the band height, so the top-left and the bottom-left
-  // are the shoulders of an ellipse rather than the corners of a rectangle.
-  final capRx = math.min(
-    math.min(band.height * (0.35 + 0.07 * rng.nextDouble()), bodyRight * 0.45),
-    width * 0.22,
-  );
-  // The brush touched down at a slight angle, so the blunt start is not
-  // symmetric about the centre line.
-  final capSlant = (rng.nextDouble() - 0.5) * 0.35;
-  final capPhase = rng.nextDouble() * math.pi * 2;
-  // Two harmonics per edge, with independent seeded phases: the top and the
-  // bottom wander separately, so the band never pinches into a lens.
-  final topFreq = [1.3 + rng.nextDouble() * 0.9, 3.0 + rng.nextDouble() * 1.5];
-  final topPhase = [
-    rng.nextDouble() * math.pi * 2,
-    rng.nextDouble() * math.pi * 2,
-  ];
-  final bottomFreq = [
-    1.2 + rng.nextDouble() * 1.0,
-    2.8 + rng.nextDouble() * 1.7,
-  ];
-  final bottomPhase = [
-    rng.nextDouble() * math.pi * 2,
-    rng.nextDouble() * math.pi * 2,
-  ];
+  // The mock-up puts the first droplet 42dp past the body and reaches 40dp
+  // further, and its fingers reach 6–40dp. All three shrink together when the
+  // paper runs out, so nothing is ever cut off by the edge.
+  final reach = math.min(1.0, (width - bodyRight) / 90);
 
-  double edge(double t, List<double> freq, List<double> phase) =>
-      amp *
-      (0.6 * math.sin(2 * math.pi * freq[0] * t + phase[0]) +
-          0.4 * math.sin(2 * math.pi * freq[1] * t + phase[1]));
-  double driftAt(double t) => drift * (t - 0.5);
-
-  // The loaded start is fatter than the dry end: the brush still had paint in
-  // it when it touched down. The taper may only spend the margin the wobble
-  // leaves, so the band never dips inside the content rect.
-  final minHalf = math.min(halfH, contentHalf + amp + 2);
-  double halfAt(double t) => halfH - (halfH - minHalf) * t;
-
-  // --- strand layout ------------------------------------------------------
-  // A dry brush end is a handful of strands, not a comb. The count is fixed at
-  // 5–7 whatever the band height: a taller band gets thicker strands instead of
-  // more of them, because more than seven even strands read as a torn flag.
-  final count = (bristleCount ?? (5 + rng.nextInt(3))).clamp(5, 7).toInt();
-  final fatCount = 1 + (rng.nextDouble() < 0.45 ? 1 : 0);
-  final fat = <int>{};
-  while (fat.length < fatCount) {
-    // Kept away from the two extremes: a fat strand at the very top or bottom
-    // merges with the band's corner and reads as an arm.
-    fat.add(1 + rng.nextInt(count - 2));
-  }
-  // One or two fat strands next to thin ones: a set of strands of the same
-  // thickness is half of the comb look.
-  final thicknesses = <double>[
-    for (var i = 0; i < count; i++)
-      fat.contains(i)
-          ? band.height * (0.25 + 0.10 * rng.nextDouble())
-          : 4.0 + 4.0 * rng.nextDouble(),
-  ];
-  var thicknessSum = thicknesses.fold(0.0, (sum, value) => sum + value);
-  final thicknessCap = band.height * 0.92;
-  if (thicknessSum > thicknessCap) {
-    final scale = thicknessCap / thicknessSum;
-    for (var i = 0; i < count; i++) {
-      thicknesses[i] *= scale;
-    }
-    thicknessSum = thicknessCap;
-  }
-  // Uneven gaps, from hairline to wide: equal gaps are the other half.
-  final gapRoom = math.max(0.0, band.height - thicknessSum) * 0.94;
-  final gapWeights = <double>[
-    for (var i = 0; i < count - 1; i++)
-      0.12 + 2.4 * math.pow(rng.nextDouble(), 2.4).toDouble(),
-  ];
-  final gapWeightSum = gapWeights.fold(0.0, (sum, value) => sum + value);
-  final span = thicknessSum + gapRoom;
-  var y = band.top + (band.height - span) / 2;
-  final strandCenters = <double>[];
-  for (var i = 0; i < count; i++) {
-    strandCenters.add(y + thicknesses[i] / 2);
-    y +=
-        thicknesses[i] +
-        (i < count - 1 ? gapRoom * gapWeights[i] / gapWeightSum : 0);
-  }
-
-  // The solid body's right edge is ragged and diagonal-ish: a ruled vertical
-  // line there is what made the frayed end look like a comb glued onto a
-  // rectangle. It also recedes between the strands, so the gaps cut back into
-  // the paint instead of being glued onto its edge.
-  final edgeTilt =
-      band.height *
-      (0.08 + 0.06 * rng.nextDouble()) *
-      (rng.nextBool() ? 1 : -1);
-  final edgePhase = rng.nextDouble() * math.pi * 2;
-  final notchDepth = math.min(padding.right * 0.5, band.height * 0.055);
-  // A very narrow box can leave no room right of the content; the edge then
-  // collapses onto the box edge instead of inverting the clamp.
-  final edgeMin = math.min(contentRight + 1, width - 1);
-  double bodyEdgeAt(double edgeY) {
-    final t = ((edgeY - band.top) / band.height).clamp(0.0, 1.0).toDouble();
-    // Out at a strand, back in between two of them: the gaps cut into the
-    // paint instead of being glued onto a straight edge.
-    var notch = 0.0;
-    for (var i = 0; i < count; i++) {
-      final distance = (edgeY - strandCenters[i]).abs();
-      final half = thicknesses[i] / 2;
-      if (distance <= half) {
-        notch = 0.0;
-        break;
-      }
-      notch = math.max(notch, math.min(1.0, (distance - half) / 6));
-    }
-    final value =
-        bodyRight +
-        edgeTilt * (t - 0.5) +
-        2.6 * math.sin(2 * math.pi * 1.7 * t + edgePhase) +
-        1.5 * math.sin(2 * math.pi * 4.1 * t + edgePhase * 1.7) -
-        notchDepth * notch;
-    return value.clamp(edgeMin, width - 1).toDouble();
-  }
-
-  final thin = <int>[for (var i = 0; i < count; i++) if (!fat.contains(i)) i];
-  final longest = thin.isEmpty ? 0 : thin[rng.nextInt(thin.length)];
-  var shortest = rng.nextInt(count);
-  if (shortest == longest) shortest = (shortest + 1) % count;
-  // Lengths vary a lot: one clearly longest strand and one that barely leaves
-  // the body. They are fractions of the room between the strand's root and
-  // [tipRight], so no strand can overshoot the line the splatter starts from.
-  final reachFractions = <double>[
-    for (var i = 0; i < count; i++)
-      fat.contains(i)
-          ? 0.25 + 0.30 * rng.nextDouble()
-          : 0.10 + 0.70 * math.pow(rng.nextDouble(), 1.6).toDouble(),
-  ];
-  reachFractions[longest] = 0.85 + 0.15 * rng.nextDouble();
-  reachFractions[shortest] = 0.02 + 0.05 * rng.nextDouble();
-  final wanders = <double>[
-    for (var i = 0; i < count; i++)
-      (rng.nextDouble() - 0.5) * math.min(2.5, thicknesses[i] * 0.25 + 1),
-  ];
-
-  // --- band ---------------------------------------------------------------
+  const x0 = 4.0;
+  final topStart = math.min(x0 + 20, bodyRight);
   final points = <Offset>[];
-  // Loaded start: a semi-ellipse bulging left, with a gentle wobble and a
-  // slight slant, so the brush touched down at an angle.
-  const capSteps = 10;
-  for (var i = 0; i <= capSteps; i++) {
-    final a = math.pi / 2 + math.pi * i / capSteps;
-    final wobble =
-        1 + 0.035 * math.sin(2 * math.pi * 1.7 * i / capSteps + capPhase);
-    points.add(
-      Offset(
-        capRx + capRx * math.cos(a) * wobble,
-        centerY +
-            driftAt(0) +
-            halfH * math.sin(a) * wobble +
-            capSlant * capRx * math.cos(a),
-      ),
-    );
-  }
-  // Top edge, left to right, ending on the ragged edge.
-  final edgeTop = bodyEdgeAt(band.top);
-  final edgeBottom = bodyEdgeAt(band.bottom);
-  final steps = math.max(10, (bodyRight / 5).round());
-  for (var i = 0; i <= steps; i++) {
-    final t = i / steps;
-    points.add(
-      Offset(
-        capRx + (edgeTop - capRx) * t,
-        centerY +
-            driftAt(t) -
-            halfAt(t) +
-            edge(t, topFreq, topPhase) +
-            _jitter(rng),
-      ),
-    );
-  }
-  // Ragged, diagonal-ish right edge: sampled top to bottom so the dry end never
-  // stops on a ruled line.
-  const rightSteps = 9;
-  for (var i = 0; i <= rightSteps; i++) {
-    final t = i / rightSteps;
-    final rightY = band.top + band.height * t;
-    points.add(Offset(bodyEdgeAt(rightY) + _jitter(rng) * 0.7, rightY));
-  }
-  // Bottom edge, right to left.
-  for (var i = steps; i >= 0; i--) {
-    final t = i / steps;
-    points.add(
-      Offset(
-        capRx + (edgeBottom - capRx) * t,
-        centerY +
-            driftAt(t) +
-            halfAt(t) +
-            edge(t, bottomFreq, bottomPhase) +
-            _jitter(rng),
-      ),
-    );
-  }
-  var body = smoothClosedPath(points);
 
-  // The strands start a few dp inside the body, so the join has no seam, and
-  // they stay separate from it: each one fades toward its tip as the paint runs
-  // dry, which a single unioned fill could not do.
-  final roots = <Offset>[
-    for (var i = 0; i < count; i++)
-      Offset(
-        math.max(contentRight + 1, bodyEdgeAt(strandCenters[i]) - 4),
-        strandCenters[i],
-      ),
-  ];
-  // The room left between the rightmost root and the tip line. Scaling every
-  // strand by the same room keeps the longest clearly the longest and keeps
-  // every tip at or before [tipRight], which is where the splatter starts.
-  final minRoom = math.max(
-    1.0,
-    roots.map((root) => tipRight - root.dx).reduce(math.min),
-  );
-  final strands = <PaintStrand>[
-    for (var i = 0; i < count; i++)
-      _strand(
-        root: roots[i],
-        reach: (reachFractions[i] * minRoom)
-            .clamp(1.0, paintSwipeMaxBristle)
-            .toDouble(),
-        half: thicknesses[i] / 2,
-        wander: wanders[i],
-      ),
-  ];
-
-  // --- dry streaks --------------------------------------------------------
-  // Holes rather than painted dashes, and never under the content: they are
-  // concentrated in the last quarter of the stroke, where the paint is running
-  // out, and they start after the content's right edge.
-  final streakStart = math.max(contentRight + 2, width * 0.72);
-  final streakEnd = math.max(streakStart + 4, tipRight);
-  final streakZone = streakEnd - streakStart;
-  final streakCount = 3 + rng.nextInt(3);
-  for (var i = 0; i < streakCount; i++) {
-    final length = streakZone * (0.3 + 0.45 * rng.nextDouble());
-    final x0 = streakStart + (streakZone - length) * rng.nextDouble();
-    body = Path.combine(
-      PathOperation.difference,
-      body,
-      _streakPath(
-        x0,
-        x0 + length,
-        centerY + (rng.nextDouble() - 0.5) * band.height * 0.62,
-        0.5 + rng.nextDouble() * 0.5,
-        rng,
-      ),
+  // The top edge, left to right: a gentle sine wobble plus a little jitter.
+  for (var x = topStart; x <= bodyRight; x += 9) {
+    points.add(
+      Offset(x, top + math.sin(x / 41) * wobble + _jitterAt(rng, jitter)),
     );
   }
 
-  // --- splatter -----------------------------------------------------------
-  // Individual droplets flicked off the frayed end, in the stroke direction.
-  // They start at the furthest strand tip, not at the body: a drop in a gap
-  // before the tips reads as a hole punched in the stroke. They are placed one
-  // at a time and rejected if they would touch another droplet, and the cone
-  // stays inside the band, so no drop is above the top or below the bottom near
-  // a corner.
-  final droplets = <PaintDroplet>[];
-  final dropCount = (dropletCount ?? (10 + rng.nextInt(7))).clamp(0, 16).toInt();
-  final from = tipRight + 2;
-  final room = math.max(0.0, width - 2 - from);
-  if (dropCount > 0 && room > 6) {
-    for (var i = 0; i < dropCount; i++) {
-      final stretch = 0.16 + 0.14 * rng.nextDouble();
-      final base = (i + 0.5) / dropCount;
-      for (var attempt = 0; attempt < 40; attempt++) {
-        final along = (base + (rng.nextDouble() - 0.5) * 0.9 / dropCount)
-            .clamp(0.0, 1.0)
-            .toDouble();
-        // The size is the rendered long axis, so the stretch cannot push a
-        // drop out of the requested range: 5–9dp near the tips, 1.5–3dp far
-        // out.
-        final maxDiameter = 9.0 + (3.0 - 9.0) * along;
-        final minDiameter = 5.0 + (1.5 - 5.0) * along;
-        final diameter =
-            minDiameter + (maxDiameter - minDiameter) * rng.nextDouble();
-        final rx = diameter / 2;
-        final radius = rx / (1 + stretch);
-        final ry = radius * (1 - stretch * 0.35);
-        final travel = math.max(0.0, room - 2 * rx);
-        final x = from + rx + travel * along;
-        final lateral = halfH * (0.35 + 0.65 * along);
-        final minY = band.top + ry + 1;
-        final maxY = band.bottom - ry - 1;
-        if (minY > maxY) continue;
-        final y = (centerY + (rng.nextDouble() * 2 - 1) * lateral)
-            .clamp(minY, maxY)
-            .toDouble();
-        final center = Offset(x, y);
-        if (center.dx + rx > width - 1) continue;
-        if (_hitsStrand(strands, center, rx, ry)) continue;
-        if (droplets.any((drop) => _overlapsDrop(drop, center, rx, ry))) {
-          continue;
-        }
-        droplets.add(
-          PaintDroplet(
-            center: center,
-            radius: radius,
-            direction: const Offset(1, 0),
-            stretch: stretch,
-          ),
-        );
-        break;
-      }
+  // The dry end: the band splits into uneven fingers separated by small gaps.
+  // Thickness, reach and gap are all in dp, so a taller band gets more fingers
+  // instead of thicker ones.
+  final fingers = <(double, double, double)>[];
+  var y = top;
+  while (y < bot - 4) {
+    final y1 = math.min(bot, y + 8 + rng.nextDouble() * 18);
+    fingers.add((y, y1, bodyRight + (6 + rng.nextDouble() * 34) * reach));
+    y = y1 + 1.5 + rng.nextDouble() * 2.5;
+  }
+  // Each finger runs out from the body edge to a rounded tip: five samples, so
+  // the spline closes it with a shoulder instead of a point.
+  for (final (y0, y1, tip) in fingers) {
+    final shoulder = tip - 6 * reach;
+    points.add(Offset(bodyRight, y0 + 0.5));
+    points.add(Offset(shoulder, y0 + (y1 - y0) * 0.25));
+    points.add(Offset(tip, (y0 + y1) * 0.5));
+    points.add(Offset(shoulder, y1 - (y1 - y0) * 0.25));
+    points.add(Offset(bodyRight, y1 - 0.5));
+  }
+
+  // The bottom edge, right to left.
+  for (var x = bodyRight; x >= topStart; x -= 9) {
+    points.add(
+      Offset(x, bot + math.sin(x / 33 + 1) * wobble + _jitterAt(rng, jitter)),
+    );
+  }
+
+  // The loaded start: the brush touched down blunt, so the left end is a
+  // rounded bulge rather than a ruled edge.
+  final cap = math.min(14.0, bandHeight * 0.25);
+  points.add(Offset(x0 + 6, bot - cap));
+  points.add(Offset(x0 - 3, math.min(mid + 8, bot - 2)));
+  points.add(Offset(x0 + 4, top + cap));
+
+  var body = _catmullRomPath(points);
+
+  // The dry streaks: paper-coloured slivers cut out of the last stretch of the
+  // body, never under the content.
+  final streakStart = math.max(contentRight, bodyRight - 70);
+  final streakWidth = bodyRight - streakStart;
+  if (streakWidth > 6 && bandHeight > 28) {
+    for (var i = 0; i < 6; i++) {
+      final yy = top + 12 + rng.nextDouble() * (bandHeight - 24);
+      final length = streakWidth * (0.45 + 0.55 * rng.nextDouble());
+      final sx = streakStart + (streakWidth - length) * rng.nextDouble();
+      body = Path.combine(
+        PathOperation.difference,
+        body,
+        _streakPath(sx, sx + length, yy, 0.7, rng),
+      );
     }
   }
+
+  // The splatter flicked off the end: scattered in a cone, not lined up in a
+  // column. A droplet that would not fit inside the box is dropped rather than
+  // clipped by the edge.
+  final droplets = <PaintDroplet>[];
+  final dropCount = (dropletCount ?? 16).clamp(0, 24).toInt();
+  for (var i = 0; i < dropCount; i++) {
+    final distance = 6 + rng.nextDouble() * 34;
+    final angle = (rng.nextDouble() - 0.5) * 1.6;
+    final radius = math.max(
+      0.8,
+      (4.5 - distance / 9) * (0.5 + rng.nextDouble() * 0.6),
+    );
+    final center = Offset(
+      bodyRight + (42 + distance * math.cos(angle)) * reach,
+      mid + (rng.nextDouble() - 0.5) * bandHeight,
+    );
+    if (center.dx + radius > width - 1) continue;
+    if (center.dy - radius < 0 || center.dy + radius > height) continue;
+    droplets.add(PaintDroplet(center: center, radius: radius));
+  }
+
+  final tipRight = fingers.isEmpty
+      ? bodyRight
+      : fingers.map((finger) => finger.$3).reduce((a, b) => math.max(a, b));
 
   return PaintSwipe(
     body: body,
-    strands: strands,
     droplets: droplets,
     band: band,
     bodyRight: bodyRight,
     tipRight: tipRight,
+    splatterAt: ((bodyRight + 2) / (width + 4)).clamp(0.0, 1.0).toDouble(),
   );
 }
 
-/// A little seeded roughness on the band edge.
+/// A little seeded roughness on a band edge.
 ///
-/// The harmonics alone are too smooth to read as paint at arm's length; a
-/// sub-dp jitter on every sample is what breaks the edge up without turning it
-/// into noise.
-double _jitter(math.Random rng) => (rng.nextDouble() - 0.5) * 0.9;
+/// The sine alone is too smooth to read as paint at arm's length; a small
+/// jitter on every sample is what breaks the edge up without turning it into
+/// noise.
+double _jitterAt(math.Random rng, double amount) =>
+    (rng.nextDouble() - 0.5) * 2 * amount;
 
-/// One strand of a dry brush end, built from its root.
+/// A closed Catmull-Rom spline through [points], as cubic Béziers.
 ///
-/// The strand is wide where it leaves the body and tapers to a small round tip.
-/// A tooth of constant width and a square cut reads as a comb; the taper and
-/// the round tip are what make it read as a brush running dry.
-PaintStrand _strand({
-  required Offset root,
-  required double reach,
-  required double half,
-  required double wander,
-}) {
-  final tipHalf = math.max(0.6, half * 0.10);
-  final tipX = root.dx + math.max(3.0, reach);
-  return PaintStrand(
-    path: _strandPath(
-      x0: root.dx,
-      x1: tipX - tipHalf,
-      centerY: root.dy,
-      half: half,
-      tipHalf: tipHalf,
-      wander: wander,
-    ),
-    root: root,
-    tip: Offset(tipX, root.dy + wander),
-    half: half,
-  );
-}
-
-/// The point ring of one strand: a tapered body plus a small round tip.
-///
-/// The width is sampled along the strand rather than interpolated linearly, so
-/// the strand narrows over its whole length instead of staying parallel and
-/// then stopping. The last part keeps a minimum width so the tip is a soft
-/// point rather than a needle.
-Path _strandPath({
-  required double x0,
-  required double x1,
-  required double centerY,
-  required double half,
-  required double tipHalf,
-  required double wander,
-}) {
-  const steps = 8;
-  final top = <Offset>[];
-  final bottom = <Offset>[];
-  for (var i = 0; i <= steps; i++) {
-    final t = i / steps;
-    final width = math.max(tipHalf, half * math.pow(1 - t, 0.9).toDouble());
-    final x = x0 + (x1 - x0) * t;
-    final y = centerY + wander * t;
-    top.add(Offset(x, y - width));
-    bottom.add(Offset(x, y + width));
+/// The curve passes through every sample (unlike [smoothClosedPath], which only
+/// touches the midpoints), which is what keeps a finger's tip exactly where the
+/// layout put it. The tension is the mock-up's 1/6.
+Path _catmullRomPath(List<Offset> points) {
+  final path = Path();
+  final n = points.length;
+  if (n < 3) return path;
+  path.moveTo(points[0].dx, points[0].dy);
+  for (var i = 0; i < n; i++) {
+    final previous = points[(i - 1 + n) % n];
+    final current = points[i];
+    final next = points[(i + 1) % n];
+    final after = points[(i + 2) % n];
+    final c1 = current + (next - previous) / 6;
+    final c2 = next - (after - current) / 6;
+    path.cubicTo(c1.dx, c1.dy, c2.dx, c2.dy, next.dx, next.dy);
   }
-  final points = <Offset>[...top];
-  final tipY = centerY + wander;
-  const capSteps = 8;
-  for (var i = 1; i < capSteps; i++) {
-    final a = -math.pi / 2 + math.pi * i / capSteps;
-    points.add(Offset(x1 + tipHalf * math.cos(a), tipY + tipHalf * math.sin(a)));
-  }
-  points.addAll(bottom.reversed);
-  return smoothClosedPath(points);
-}
-
-/// Whether a droplet of radii [rx], [ry] at [center] would land on a strand.
-///
-/// A droplet that lands on the stroke is invisible, so the splatter has to stay
-/// in the gaps between the strands; without this the drops pile up on the
-/// strands and only the ones that miss look like paint.
-bool _hitsStrand(
-  List<PaintStrand> strands,
-  Offset center,
-  double rx,
-  double ry,
-) {
-  for (final strand in strands) {
-    if (center.dx + rx < strand.root.dx || center.dx - rx > strand.tip.dx) {
-      continue;
-    }
-    final span = strand.tip.dx - strand.root.dx;
-    final t = span <= 0
-        ? 0.0
-        : ((center.dx - strand.root.dx) / span).clamp(0.0, 1.0).toDouble();
-    final y = strand.root.dy + (strand.tip.dy - strand.root.dy) * t;
-    final half = strand.half * math.pow(1 - t, 0.9).toDouble() + 0.6;
-    if ((center.dy - y).abs() < half + ry + 1) return true;
-  }
-  return false;
-}
-
-/// Whether two droplets would touch, counting the stretched extent of each.
-bool _overlapsDrop(
-  PaintDroplet other,
-  Offset center,
-  double rx,
-  double ry,
-) {
-  final otherRx = other.radius * (1 + other.stretch);
-  final otherRy = other.radius * (1 - other.stretch * 0.35);
-  final dx = (center.dx - other.center.dx) / (rx + otherRx + 1.5);
-  final dy = (center.dy - other.center.dy) / (ry + otherRy + 1.5);
-  return dx * dx + dy * dy < 1;
+  path.close();
+  return path;
 }
 
 /// A thin lens with tapered ends: one dry streak.
