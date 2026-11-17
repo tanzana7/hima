@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show OverflowBoxFit;
 import 'package:provider/provider.dart';
 
 import '../app/theme/app_colors.dart';
@@ -93,9 +94,14 @@ class LoginScreen extends StatelessWidget {
                       // behind and the coral one in front share the box and the
                       // inset, so the two silhouettes stay aligned.
                       final contentInset = paintSwipeContentInset(strokeWidth);
+                      // `deferToChild` is required: the default fit takes the
+                      // biggest size the parent allows, and inside the scroll
+                      // view that height is unbounded, which pushed the stroke
+                      // and the button out of place.
                       return OverflowBox(
                         minWidth: strokeWidth,
                         maxWidth: strokeWidth,
+                        fit: OverflowBoxFit.deferToChild,
                         child: Stack(
                           // The column above stretches the stack to the full
                           // width, so the stroke is centred explicitly: the

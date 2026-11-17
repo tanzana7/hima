@@ -317,10 +317,12 @@ class UserSettings {
   });
 
   /// Used when a payload has no settings yet (the OAuth response, for example).
+  /// `notifyOnHima` mirrors the server's default (ON), so the switch does not
+  /// flicker off and back on until `/app/me` arrives.
   static const fallback = UserSettings(
     autoMode: false,
     autoMood: Mood.ok,
-    notifyOnHima: false,
+    notifyOnHima: true,
   );
 
   final bool autoMode;
