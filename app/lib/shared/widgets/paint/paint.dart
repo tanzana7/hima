@@ -8,11 +8,18 @@
 ///   polls and scrolling. Nothing draws from an unseeded `Random`.
 /// * **Cached.** Paths are built once per (seed, size, config) and reused, so a
 ///   scrolling list does not re-sample an outline per frame.
+/// * **Filled, never stroked.** A splash is a body plus arms plus droplets, all
+///   of them filled shapes. No outline, no neck from the body to a droplet and
+///   no drip drawn as a line: each of those reads as a pin or a lollipop.
 /// * **Safe rect.** A primitive with a `child` lays it out inside the inner
 ///   rect left by `padding`; the paint is drawn in the full box and spills into
 ///   that band, so the decorative edge can never cover a label or a tap target.
-/// * **Reduced motion.** The animated primitives take a `progress` and paint the
-///   final state when `MediaQuery.disableAnimationsOf` is true.
+/// * **Overflow is expected.** The wobble, the arms and the droplets leave the
+///   widget box on purpose; the caller gives them room (`Clip.none`, a gap in
+///   the layout, a bleed off the screen edge). Shrinking the paint until it
+///   fits puts the straight edges back.
+/// * **Reduced motion.** The animated primitives take a `progress` and paint
+///   the final state when `MediaQuery.disableAnimationsOf` is true.
 library;
 
 export 'brush_stroke.dart';

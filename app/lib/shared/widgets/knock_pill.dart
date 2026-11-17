@@ -72,7 +72,7 @@ class KnockPill extends StatelessWidget {
               seed: paintSeedOf('knock-$friendName'),
               color: fill,
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-              wobble: 0.035,
+              wobble: 0.10,
               child: Row(
                 mainAxisSize: expand ? MainAxisSize.max : MainAxisSize.min,
                 mainAxisAlignment: MainAxisAlignment.center,

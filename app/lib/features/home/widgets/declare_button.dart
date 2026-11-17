@@ -417,7 +417,7 @@ class DeclareButtonState extends State<DeclareButton>
       horizontal: AppSpacing.s24,
       vertical: _dabPaddingV,
     ),
-    wobble: 0.028,
+    wobble: 0.09,
     child: Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [

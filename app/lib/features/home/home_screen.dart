@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../data/models/models.dart';
 import '../../shared/haptics.dart';
+import '../../shared/widgets/paint/paint_geometry.dart';
 import '../../shared/widgets/shake.dart';
 import '../../state/app_view_model.dart';
 import '../knocks/knocks_screen.dart';
@@ -277,7 +278,11 @@ class _HomeScreenState extends State<HomeScreen> {
           onOpenKnocks: _openKnocks,
           onOpenSettings: _openSettings,
         ),
-        const SizedBox(height: AppSpacing.s16),
+        // The hero's splash throws arms, droplets and a drip past its own box.
+        // `paintMaxBleed` is the hard bound the paint kit keeps, so reserving
+        // exactly that much above and below means the paint always lands on
+        // paper — whether or not match cards follow, and at any text scale.
+        const SizedBox(height: paintMaxBleed),
         if (me != null)
           MyStatusHero(
             state: state,
@@ -299,15 +304,21 @@ class _HomeScreenState extends State<HomeScreen> {
             onChangeActivity: _changeActivity,
             onExpired: _handleExpired,
           ),
-        if (matchCards.isNotEmpty) ...[
-          const SizedBox(height: AppSpacing.s16),
+        if (matchCards.isEmpty)
+          // No match cards: the hero's paint is the last thing above the
+          // friends section, so it needs the same reserved band here too.
+          const SizedBox(height: paintMaxBleed)
+        else ...[
+          const SizedBox(height: paintMaxBleed),
           for (final card in matchCards)
             Padding(
               padding: const EdgeInsets.only(bottom: AppSpacing.s12),
               child: card,
             ),
+          // A wash only reaches a few dp past its box, so the standard section
+          // gap is enough after the match cards.
+          const SizedBox(height: AppSpacing.s24),
         ],
-        const SizedBox(height: AppSpacing.s24),
         FriendsSection(
           friends: viewModel.friends,
           pendingUserIds: pendingUserIds,

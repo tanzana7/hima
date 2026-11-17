@@ -4,13 +4,17 @@ import 'package:flutter/material.dart';
 
 import 'paint_geometry.dart';
 
-/// The wide, shallow wash the bottom navigation sits on.
+/// A wide, shallow wash that spans the full width and runs off the bottom of
+/// the box, so only its top edge is visible.
 ///
-/// It spans the full width and runs off the bottom of the box, so only its top
-/// edge is visible. That edge is a seeded wobble rather than a straight line,
-/// which is what removes the hard seam where the page meets the bar. Two or
-/// three overlapping layers give it the watercolour depth of [PaintWash], and a
-/// faint pooling line follows the top edge.
+/// That edge is a seeded wobble rather than a straight line. Two or three
+/// overlapping layers give it the watercolour depth of [PaintWash], and a faint
+/// pooling line follows the top edge.
+///
+/// The bottom navigation no longer uses it: a shape spanning the width reads as
+/// a bar however irregular its edge is, so the nav sits on plain paper with a
+/// transparent-to-paper fade. It stays in the kit for a full-width wash that is
+/// not a navigation bar.
 class PaintSwash extends StatelessWidget {
   const PaintSwash({
     super.key,
@@ -104,8 +108,8 @@ class _PaintSwashPainter extends CustomPainter {
       rim,
     );
 
-    // A couple of drops thrown above the edge, so the bar reads as a splash of
-    // paint rather than a wavy band.
+    // A couple of drops thrown above the edge, so the wash reads as a splash
+    // of paint rather than a wavy band.
     final rng = math.Random(seed);
     final dot = Paint()..color = color.withValues(alpha: 0.5);
     for (var i = 0; i < 3; i++) {
