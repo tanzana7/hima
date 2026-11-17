@@ -10,11 +10,16 @@ import '../../../shared/widgets/paint/paint.dart';
 
 /// 「なにする？」 chips. Optional, single select, and deselectable.
 ///
-/// They sit inside the hero, directly under the main button, as one horizontally
+/// They sit on the paper directly under the hero's stroke, as one horizontally
 /// scrolling row: choosing an activity used to require scrolling past the whole
 /// friend grid, so the choice was effectively hidden. Each activity keeps its own
 /// pastel ([ActivityStyle]) so the row reads as a set of playful dabs instead of
 /// five identical chips.
+///
+/// **On paper, not on the band.** Inside the stroke the row was cut by the
+/// band's straight right edge, and a fade over that edge took the chip labels'
+/// contrast with it. Below the stroke the row is cut at the viewport edge like
+/// any scroller, and every label stays fully opaque on paper.
 ///
 /// The selected chip is the same hue pushed toward the activity's accent and
 /// carries a droplet or two, so the choice is shown by more paint rather than by
