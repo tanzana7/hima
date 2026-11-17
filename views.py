@@ -130,15 +130,17 @@ class KnockReplyButton(ui.DynamicItem, template=r"atsumaro:knockreply:(?P<knock_
 
     async def callback(self, interaction: discord.Interaction) -> None:
         bot = interaction.client  # type: ignore[union-attr]
-        is_dm = interaction.guild_id is None  # ノック着信 DM 上のボタン（痕跡を残さない）
+        is_dm = interaction.guild_id is None  # お返事着信 DM 上のボタン（痕跡を残さない）
         if is_dm:
             await interaction.response.defer()
+        else:
+            await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             await bot.api.reply_knock(self.knock_id, user_id=interaction.user.id, action=self.action)
         except ApiHTTPError as exc:
             if exc.status_code == 409:
                 if not is_dm:
-                    await interaction.response.send_message("返事はもう送ったよ！", ephemeral=True)
+                    await interaction.followup.send("返事はもう送ったよ！", ephemeral=True)
                 return
             await send_api_error(interaction, exc)
             return
@@ -151,10 +153,10 @@ class KnockReplyButton(ui.DynamicItem, template=r"atsumaro:knockreply:(?P<knock_
                 if interaction.message is not None:
                     await interaction.message.delete()
             except Exception as exc:  # noqa: BLE001
-                print(f"[hima-bot] ノック着信 DM の削除に失敗しました（無視します）: {exc}")
+                print(f"[hima-bot] お返事着信 DM の削除に失敗しました（無視します）: {exc}")
             return
         label = RESULT_LABELS[{"accept": "accepted", "later": "later", "pass": "passed"}[self.action]]
-        await interaction.response.send_message(f"「{label}」を返したよ！（送り主は /board の結果欄で確認できるよ）", ephemeral=True)
+        await interaction.followup.send(f"「{label}」を返したよ！（送り主は /panel 確認 の結果欄で確認できるよ）", ephemeral=True)
 
 
 class SuggestDeclareButton(ui.DynamicItem, template=r"atsumaro:suggest:declare"):
@@ -176,6 +178,7 @@ class SuggestDeclareButton(ui.DynamicItem, template=r"atsumaro:suggest:declare")
 
     async def callback(self, interaction: discord.Interaction) -> None:
         bot = interaction.client  # type: ignore[union-attr]
+        await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             data = await bot.api.suggest_declare(interaction.user.id)
         except ApiConnectionError as exc:
@@ -185,11 +188,11 @@ class SuggestDeclareButton(ui.DynamicItem, template=r"atsumaro:suggest:declare")
             await send_api_error(interaction, exc)
             return
         if data.get("created"):
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "宣言したよ！（あと30分・提案ボタンからの宣言）", ephemeral=True
             )
         else:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "もう宣言中だったので、あと30分に延長したよ！", ephemeral=True
             )
 
@@ -215,6 +218,7 @@ class WatchToggle(ui.DynamicItem, template=r"atsumaro:watchtoggle:(?P<state>[01]
     async def callback(self, interaction: discord.Interaction) -> None:
         bot = interaction.client  # type: ignore[union-attr]
         new_state = not self.state
+        await interaction.response.defer()  # 3秒制限: 先に ACK（メッセージ更新を遅延させる）
         try:
             await bot.api.update_settings(interaction.user.id, notify_on_hima=new_state)
         except Exception as exc:  # noqa: BLE001
@@ -223,7 +227,7 @@ class WatchToggle(ui.DynamicItem, template=r"atsumaro:watchtoggle:(?P<state>[01]
         embeds, view = await _build_board(bot, interaction)
         if embeds is None:
             return
-        await interaction.response.edit_message(embeds=embeds, view=view)
+        await interaction.edit_original_response(embeds=embeds, view=view)
 
 
 # ------------------------------------------------------------------ board view
@@ -257,6 +261,7 @@ class BoardView(ui.View):
     async def knock(self, interaction: discord.Interaction, _: ui.Button) -> None:
         guild_id = interaction.guild_id
         assert guild_id is not None
+        await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             data = await self.bot.api.get_board(guild_id, interaction.user.id)
         except Exception as exc:  # noqa: BLE001
@@ -264,11 +269,11 @@ class BoardView(ui.View):
             return
         candidates = [s for s in data.get("sessions", []) if s["user_id"] != interaction.user.id][:CANDIDATE_LIMIT]
         if not candidates:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "お返事できる人がいないよ。自分が募集してみよう！", ephemeral=True
             )
             return
-        await interaction.response.send_message(
+        await interaction.followup.send(
             view=KnockSendView(self.bot, interaction.user, candidates), ephemeral=True
         )
 
@@ -276,13 +281,14 @@ class BoardView(ui.View):
     async def blocks(self, interaction: discord.Interaction, _: ui.Button) -> None:
         guild_id = interaction.guild_id
         assert guild_id is not None
+        await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             data = await self.bot.api.list_blocks(interaction.user.id)
         except Exception as exc:  # noqa: BLE001
             await send_api_error(interaction, exc)
             return
         blocked = data.get("blocked", [])
-        await interaction.response.send_message(
+        await interaction.followup.send(
             embed=_block_embed(blocked),
             view=BlockManageView(self.bot, interaction.user, blocked),
             ephemeral=True,
@@ -290,18 +296,19 @@ class BoardView(ui.View):
 
     @ui.button(label="やめる", style=discord.ButtonStyle.secondary, custom_id="board:leave", emoji="👋", row=0)
     async def leave(self, interaction: discord.Interaction, _: ui.Button) -> None:
+        await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             data = await self.bot.api.end_session(interaction.user.id)
         except Exception as exc:  # noqa: BLE001
             await send_api_error(interaction, exc)
             return
         if not data.get("ended"):
-            await interaction.response.send_message("今は宣言していないよ。", ephemeral=True)
+            await interaction.followup.send("今は宣言していないよ。", ephemeral=True)
             return
         embeds, view = await _build_board(self.bot, interaction)
         if embeds is None:
             return
-        await interaction.response.edit_message(embeds=embeds, view=view)
+        await interaction.edit_original_response(embeds=embeds, view=view)
 
 
 async def _build_board(bot: "HimaBot", interaction: discord.Interaction) -> tuple[list[discord.Embed] | None, ui.View | None]:
@@ -328,10 +335,11 @@ class AtsumaroPanelView(ui.View):
 
     @ui.button(label="掲示板を見る", style=discord.ButtonStyle.primary, custom_id="atsumaro:board", emoji="📜", row=0)
     async def board_btn(self, interaction: discord.Interaction, _: ui.Button) -> None:
+        await interaction.response.defer(ephemeral=True, thinking=True)
         embeds, view = await _build_board(self.bot, interaction)
         if embeds is None:
             return
-        await interaction.response.send_message(embeds=embeds, view=view, ephemeral=True)
+        await interaction.followup.send(embeds=embeds, view=view, ephemeral=True)
 
     @ui.button(label="今ヒマ！", style=discord.ButtonStyle.success, custom_id="atsumaro:join", emoji="🙋", row=0)
     async def join_btn(self, interaction: discord.Interaction, _: ui.Button) -> None:
@@ -341,12 +349,13 @@ class AtsumaroPanelView(ui.View):
 
     @ui.button(label="やめる", style=discord.ButtonStyle.secondary, custom_id="atsumaro:leave", row=0)
     async def leave_btn(self, interaction: discord.Interaction, _: ui.Button) -> None:
+        await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             data = await self.bot.api.end_session(interaction.user.id)
         except Exception as exc:  # noqa: BLE001
             await send_api_error(interaction, exc)
             return
-        await interaction.response.send_message(
+        await interaction.followup.send(
             "やめたよ！また誘ってね。" if data.get("ended") else "今は宣言していないよ。", ephemeral=True
         )
 
@@ -413,6 +422,7 @@ class JoinView(ui.View):
         if self.guild_id is None:
             await interaction.response.send_message("サーバー内でのみ使えるよ。", ephemeral=True)
             return
+        await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             data = await self.bot.api.declare_session(
                 user_id=self.user.id,
@@ -428,7 +438,7 @@ class JoinView(ui.View):
             return
         kind = "掲示板に載せたよ！" if data.get("created") else "延長したよ！"
         suffix = f"（ひとこと：{self.note}）" if self.note else ""
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"{kind} あと{self.duration_min}分ヒマ宣言中。マッチしたらDMが届くよ🚀{suffix}", ephemeral=True
         )
 
@@ -528,6 +538,7 @@ class KnockSendView(ui.View):
         if not self.user_select.values:
             await interaction.response.send_message("先にお返事する相手を選んでね！", ephemeral=True)
             return
+        await interaction.response.defer(ephemeral=True, thinking=True)
         parts = []
         for member in self.user_select.values:
             try:
@@ -545,7 +556,7 @@ class KnockSendView(ui.View):
                 parts.append(f"⚠️ {member.display_name}: {CONNECTION_ERROR_TEXT}")
             else:
                 parts.append(f"✅ {member.display_name}: 届けたよ！（相手の受信箱と DM に届くよ）")
-        await interaction.response.send_message("\n".join(parts), ephemeral=True)
+        await interaction.followup.send("\n".join(parts), ephemeral=True)
 
 
 class KnockTemplateView(ui.View):
@@ -571,7 +582,8 @@ class KnockTemplateView(ui.View):
             content = f"⚠️ {CONNECTION_ERROR_TEXT}"
         else:
             content = f"✅ {self.target.display_name} さんにお返事を送ったよ！（相手の受信箱と DM に届くよ）"
-        await interaction.response.edit_message(content=content, view=None)
+        await interaction.response.defer()  # 3秒制限: 先に ACK
+        await interaction.edit_original_response(content=content, view=None)
 
     @ui.button(label="✉️ 誘い文なし", style=discord.ButtonStyle.secondary, row=0)
     async def none_template(self, interaction: discord.Interaction, _: ui.Button) -> None:
@@ -619,6 +631,7 @@ class BlockManageView(ui.View):
 
     @ui.select(cls=ui.UserSelect, placeholder="ブロックに追加するユーザー", min_values=1, max_values=20, row=0)
     async def add_select(self, interaction: discord.Interaction, select: ui.UserSelect) -> None:
+        await interaction.response.defer()  # 3秒制限: 先に ACK
         errors = []
         for member in select.values:
             try:
@@ -632,7 +645,7 @@ class BlockManageView(ui.View):
             return
         self.blocked = data.get("blocked", [])
         note = ("\n" + "\n".join(errors)) if errors else ""
-        await interaction.response.edit_message(
+        await interaction.edit_original_response(
             embed=_block_embed(self.blocked), view=BlockManageView(self.bot, self.user, self.blocked)
         )
         if note:
@@ -640,6 +653,7 @@ class BlockManageView(ui.View):
 
     @ui.select(placeholder="ブロックを解除するユーザー", min_values=1, max_values=1, row=1)
     async def remove_select(self, interaction: discord.Interaction, select: ui.Select) -> None:
+        await interaction.response.defer()  # 3秒制限: 先に ACK
         uid = int(select.values[0])
         try:
             await self.bot.api.remove_block(self.user.id, uid)
@@ -652,6 +666,6 @@ class BlockManageView(ui.View):
             await send_api_error(interaction, exc)
             return
         self.blocked = data.get("blocked", [])
-        await interaction.response.edit_message(
+        await interaction.edit_original_response(
             embed=_block_embed(self.blocked), view=BlockManageView(self.bot, self.user, self.blocked)
         )
