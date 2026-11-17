@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../app/theme/app_colors.dart';
+import '../../app/theme/app_spacing.dart';
 
 /// The hand-drawn marks sprinkled over the home screen.
 enum DoodleKind {
@@ -315,38 +316,81 @@ class _BlobPainter extends CustomPainter {
 
 /// A closed, smooth path that fills [size] without exceeding it.
 ///
-/// The points sit on a superellipse (so the corners stay full enough to hold
-/// text) and are then pulled inward by two out-of-phase sine waves before being
-/// joined with quadratics through the midpoints, which keeps the outline round
-/// instead of polygonal.
+/// The outline is a rounded rectangle whose edge is pulled inward by two
+/// out-of-phase sine waves and then joined with quadratics through the
+/// midpoints, which keeps it round instead of polygonal.
+///
+/// It used to be a superellipse with a much deeper wobble. That shape ate into
+/// the corners enough that the hero's bottom-right control was painted outside
+/// the blob, and the only way to keep content inside it was to leave most of
+/// the card empty. The rounded rectangle keeps the hand-drawn edge while
+/// guaranteeing the band the hero reserves for its content stays inside.
 Path _blobPath(Size size, double seed) {
-  const count = 16;
-  final center = Offset(size.width / 2, size.height / 2);
-  final rx = size.width / 2;
-  final ry = size.height / 2;
+  final width = size.width;
+  final height = size.height;
+  // The corner radius is capped by the shortest side so a short hero does not
+  // turn into a stadium.
+  final radius = math.min(AppSpacing.radiusHero, size.shortestSide * 0.34);
+  // How far the outline may wander inward. The hero insets its content by 20dp
+  // and the corner arc leaves more slack than that, so a few dp of wobble reads
+  // as hand-drawn without ever reaching a control.
+  final depth = math.min(9.0, size.shortestSide * 0.07);
+
+  const edgeSteps = 6;
+  const arcSteps = 4;
+  const total = 4 * (edgeSteps + arcSteps);
   final points = <Offset>[];
-  for (var i = 0; i < count; i++) {
-    final t = i / count * 2 * math.pi;
-    final cos = math.cos(t);
-    final sin = math.sin(t);
-    final wobble =
-        1 -
-        0.05 -
-        0.03 * math.sin(t * 3 + seed) -
-        0.02 * math.sin(t * 5 - seed);
-    // `pow` is declared on `num`, so the coordinates are converted explicitly
-    // instead of relying on the operator overloads to narrow them back to
-    // `double` for [Offset].
-    final x = math.pow(cos.abs(), 0.72).toDouble() * cos.sign * rx * wobble;
-    final y = math.pow(sin.abs(), 0.72).toDouble() * sin.sign * ry * wobble;
-    points.add(Offset(center.dx + x, center.dy + y));
+  var index = 0;
+
+  void add(Offset point, Offset inward) {
+    final phase = index++ / total * 2 * math.pi;
+    // One slow lobe plus a smaller ripple, normalised to [0, 1]: the pull is
+    // always inward, so the shape can never paint over its neighbours.
+    final pull =
+        0.5 +
+        0.35 * math.sin(phase * 3 + seed) +
+        0.15 * math.sin(phase * 5 - seed * 1.7);
+    points.add(point + inward * (depth * pull));
   }
+
+  void addArc(Offset center, double start) {
+    for (var i = 0; i < arcSteps; i++) {
+      final angle = start + math.pi / 2 * i / arcSteps;
+      final direction = Offset(math.cos(angle), math.sin(angle));
+      add(center + direction * radius, -direction);
+    }
+  }
+
+  void addEdge(Offset from, Offset to, Offset inward) {
+    for (var i = 0; i < edgeSteps; i++) {
+      add(Offset.lerp(from, to, i / edgeSteps)!, inward);
+    }
+  }
+
+  // Clockwise from the top-left corner.
+  addArc(Offset(radius, radius), math.pi);
+  addEdge(Offset(radius, 0), Offset(width - radius, 0), const Offset(0, 1));
+  addArc(Offset(width - radius, radius), math.pi * 1.5);
+  addEdge(
+    Offset(width, radius),
+    Offset(width, height - radius),
+    const Offset(-1, 0),
+  );
+  addArc(Offset(width - radius, height - radius), 0);
+  addEdge(
+    Offset(width - radius, height),
+    Offset(radius, height),
+    const Offset(0, -1),
+  );
+  addArc(Offset(radius, height - radius), math.pi * 0.5);
+  addEdge(Offset(0, height - radius), Offset(0, radius), const Offset(1, 0));
+
   final path = Path();
   final start = (points.first + points[1]) / 2;
   path.moveTo(start.dx, start.dy);
-  for (var i = 1; i <= count; i++) {
-    final current = points[i % count];
-    final next = points[(i + 1) % count];
+  for (var i = 1; i <= points.length; i++) {
+    final current = points[i % points.length];
+    final next = points[(i + 1) % points.length];
     final mid = (current + next) / 2;
     path.quadraticBezierTo(current.dx, current.dy, mid.dx, mid.dy);
   }
