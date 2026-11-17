@@ -10,8 +10,14 @@ import '../../data/models/models.dart';
 import '../../shared/widgets/avatar_view.dart';
 import '../../shared/widgets/empty_state.dart';
 import '../../shared/widgets/knock_pill.dart';
+import '../../shared/widgets/paint/paint.dart';
 import '../../state/app_view_model.dart';
 import '../knocks/widgets/knock_sheet.dart';
+
+/// Captions that sit directly on a [PaintWash]. [AppColors.muted] measures
+/// 4.2:1 once the wash layers overlap, so text on paint takes this darker tone
+/// instead (5.4:1).
+const _washMuted = Color(0xFF635B6F);
 
 /// 友達 tab: everyone in the shared servers, grouped by server.
 ///
@@ -60,30 +66,9 @@ class _FriendsScreenState extends State<FriendsScreen> {
         AppSpacing.s32,
       ),
       children: [
-        Text('友達', style: AppTextStyles.sectionTitle),
+        const _ScreenHeader(),
         const SizedBox(height: AppSpacing.s12),
-        TextField(
-          controller: _search,
-          textInputAction: TextInputAction.search,
-          onChanged: (value) => setState(() => _query = value),
-          decoration: InputDecoration(
-            hintText: '名前でさがす',
-            prefixIcon: const Icon(
-              Icons.search_rounded,
-              color: AppColors.muted,
-            ),
-            suffixIcon: _query.isEmpty
-                ? null
-                : IconButton(
-                    tooltip: 'クリア',
-                    icon: const Icon(Icons.close_rounded),
-                    onPressed: () {
-                      _search.clear();
-                      setState(() => _query = '');
-                    },
-                  ),
-          ),
-        ),
+        _searchField(),
         const SizedBox(height: AppSpacing.s24),
         if (servers.isEmpty)
           if (viewModel.isRefreshingLive)
@@ -123,6 +108,83 @@ class _FriendsScreenState extends State<FriendsScreen> {
       ],
     );
   }
+
+  /// The field is a soft wash with no outline. A focus ring would put back the
+  /// hairline the rest of the screen just lost, so focus is shown by the caret
+  /// and by the text the user is typing.
+  Widget _searchField() => PaintWash(
+    seed: paintSeedOf('friends-search'),
+    color: AppColors.purpleSoft,
+    // Zero padding: the field's own content padding keeps the text off the
+    // paint's edge, and the wash is then exactly the field's box.
+    padding: EdgeInsets.zero,
+    corner: AppSpacing.radiusPill,
+    // The pooling rim reads as an outline at this size, which is the one thing
+    // the field is losing.
+    rim: false,
+    child: TextField(
+      controller: _search,
+      textInputAction: TextInputAction.search,
+      onChanged: (value) => setState(() => _query = value),
+      decoration: InputDecoration(
+        hintText: '名前でさがす',
+        hintStyle: AppTextStyles.body.copyWith(color: _washMuted),
+        // The wash is the field's background, so the theme's fill and its
+        // outline borders are both turned off.
+        filled: false,
+        border: InputBorder.none,
+        enabledBorder: InputBorder.none,
+        focusedBorder: InputBorder.none,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.s16,
+          vertical: 14,
+        ),
+        prefixIcon: const Icon(Icons.search_rounded, color: _washMuted),
+        suffixIcon: _query.isEmpty
+            ? null
+            : IconButton(
+                tooltip: 'クリア',
+                icon: const Icon(Icons.close_rounded),
+                onPressed: () {
+                  _search.clear();
+                  setState(() => _query = '');
+                },
+              ),
+      ),
+    ),
+  );
+}
+
+/// The tab title with a brush-stroke underline and a flick of paint, the same
+/// header the home screen uses for its sections.
+class _ScreenHeader extends StatelessWidget {
+  const _ScreenHeader();
+
+  @override
+  Widget build(BuildContext context) => Row(
+    children: [
+      Expanded(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('友達', style: AppTextStyles.sectionTitle),
+            BrushStroke(
+              seed: 61,
+              size: const Size(84, 9),
+              color: AppColors.purple.withValues(alpha: 0.55),
+            ),
+          ],
+        ),
+      ),
+      const SplatterDots(
+        seed: 67,
+        size: Size(22, 18),
+        color: AppColors.coral,
+        count: 5,
+      ),
+    ],
+  );
 }
 
 class _ServerSection extends StatelessWidget {
@@ -131,6 +193,12 @@ class _ServerSection extends StatelessWidget {
   final FriendServer server;
   final ValueChanged<FriendMember> onKnock;
 
+  /// The group's hue, picked from the guild id so a server keeps its colour
+  /// across rebuilds and the list does not look striped.
+  Color get _tint =>
+      AppColors.friendTints[paintSeedOf(server.guild.id) %
+          AppColors.friendTints.length];
+
   @override
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -138,27 +206,36 @@ class _ServerSection extends StatelessWidget {
       Row(
         children: [
           Expanded(
-            child: Text(
-              server.guild.name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: AppTextStyles.friendName.copyWith(fontSize: 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  server.guild.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTextStyles.friendName.copyWith(fontSize: 16),
+                ),
+                BrushStroke(
+                  seed: paintSeedOf('guild-stroke-${server.guild.id}'),
+                  size: const Size(88, 8),
+                  color: paintTone(_tint, -0.3),
+                ),
+              ],
             ),
           ),
           if (!server.guild.visible) ...[
-            Container(
+            PaintDab(
+              seed: paintSeedOf('guild-hidden-${server.guild.id}'),
+              color: AppColors.purpleSoft,
               padding: const EdgeInsets.symmetric(
                 horizontal: AppSpacing.s8,
-                vertical: 2,
-              ),
-              decoration: BoxDecoration(
-                color: AppColors.purpleSoft,
-                borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
+                vertical: 3,
               ),
               child: Text(
                 '非表示',
                 style: AppTextStyles.caption.copyWith(
-                  color: AppColors.muted,
+                  color: AppColors.ink,
                   fontWeight: FontWeight.w700,
                 ),
               ),
@@ -169,20 +246,19 @@ class _ServerSection extends StatelessWidget {
         ],
       ),
       const SizedBox(height: AppSpacing.s8),
-      Container(
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(AppSpacing.radiusCard),
-          border: Border.all(
-            color: AppColors.purpleSoft,
-            width: AppSpacing.borderWidth,
-          ),
-        ),
+      // One wash for the whole group instead of a bordered white box: the wash
+      // is the group's edge, and the rows are separated by spacing rather than
+      // by dividers. A wash per row would double the paint and cost a
+      // RepaintBoundary per row while scrolling.
+      PaintWash(
+        seed: paintSeedOf('guild-${server.guild.id}'),
+        color: _tint,
+        padding: const EdgeInsets.all(AppSpacing.s8),
+        corner: AppSpacing.radiusCard,
         child: Column(
           children: [
             for (var index = 0; index < server.members.length; index++) ...[
-              if (index > 0)
-                const Divider(height: 1, indent: 16, endIndent: 16),
+              if (index > 0) const SizedBox(height: AppSpacing.s4),
               _MemberTile(
                 member: server.members[index],
                 showStatus: server.guild.visible,
@@ -217,7 +293,7 @@ class _MemberTile extends StatelessWidget {
         : '${hima.mood.emoji} ${hima.activity?.label ?? 'ひま'}';
     return Padding(
       padding: const EdgeInsets.fromLTRB(
-        AppSpacing.s12,
+        AppSpacing.s8,
         AppSpacing.s4,
         AppSpacing.s8,
         AppSpacing.s4,
@@ -245,7 +321,7 @@ class _MemberTile extends StatelessWidget {
                     status,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: AppTextStyles.caption,
+                    style: AppTextStyles.caption.copyWith(color: _washMuted),
                   ),
               ],
             ),
