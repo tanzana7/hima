@@ -6,7 +6,7 @@ import threading
 
 from sqlalchemy import text
 
-from . import notify, suggestions
+from . import domain, notify, suggestions
 from .db import SessionLocal, engine
 
 log = logging.getLogger("atsumaro.worker")
@@ -15,10 +15,24 @@ TICK_SECONDS = 30
 ADVISORY_LOCK_KEY = 81140501  # arbitrary fixed key for "atsumaro api worker"
 
 
-def _close_expired_sessions() -> int:
-    """Close sessions whose expires_at passed and which are still open."""
+def _close_expired_sessions() -> list[int]:
+    """Close sessions whose expires_at passed and which are still open.
+
+    Returns the closed user ids (used for knock DM cleanup)."""
     with SessionLocal() as session:
-        result = session.execute(
+        rows = session.execute(
+            text(
+                """
+                SELECT user_id FROM hima_sessions
+                WHERE ended_at IS NULL AND expires_at <= now()
+                FOR UPDATE
+                """
+            )
+        ).all()
+        if not rows:
+            return []
+        user_ids = [int(r[0]) for r in rows]
+        session.execute(
             text(
                 """
                 UPDATE hima_sessions
@@ -28,14 +42,16 @@ def _close_expired_sessions() -> int:
             )
         )
         session.commit()
-        return result.rowcount or 0
+        return user_ids
 
 
 def run_tick(rest=None) -> int:
-    """One unit of periodic work: close expired sessions then refresh counters."""
-    closed = _close_expired_sessions()
+    """One unit of periodic work: close expired sessions, expire knocks + clean up DMs, refresh counters."""
+    closed_users = _close_expired_sessions()
+    if closed_users:
+        domain.expire_knocks_and_cleanup_dms(closed_users, rest=rest)
     notify.refresh_all_counters(rest=rest)
-    return closed
+    return len(closed_users)
 
 
 def _run(stop_event: threading.Event) -> None:

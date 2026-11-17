@@ -1,12 +1,16 @@
 """Shared domain operations used by both the Bot and App routes (single implementation)."""
 from __future__ import annotations
 
+import logging
 from datetime import timedelta
 
 from fastapi import HTTPException
 from sqlalchemy import text
 
 from . import matching, notify
+from . import discord_rest as _discord_rest
+from .discord_rest import knock_reply_components
+from .db import SessionLocal
 from .models import HimaSession, Knock, User
 from .push import send_push
 from .services import (
@@ -20,6 +24,8 @@ from .services import (
     visible_guild_ids,
 )
 from .vocab import ACTIVITIES, HIMA_SOURCES, MOODS
+
+log = logging.getLogger("atsumaro.domain")
 
 ACTION_STATUS = {"accept": "accepted", "later": "later", "pass": "passed"}
 RESULT_LABELS = {"accepted": "いいよ！", "later": "あとで", "passed": "今回はパス"}
@@ -39,7 +45,7 @@ def declare_session(
     guild_id: int | None = None,
     rest=None,
 ) -> dict:
-    """宣言（新規 or 延長）。マッチング評価・見守りキュー・人数表示トピック更新も行う。"""
+    """宣言（新規 or 延長）。マッチング評価・見守りキュー・人数メッセージ更新も行う。"""
     if mood not in MOODS:
         raise HTTPException(status_code=400, detail="invalid mood")
     if activity not in ACTIVITIES:
@@ -79,7 +85,7 @@ def declare_session(
 
 
 def end_session(db, user_id: int, rest=None) -> dict:
-    """有効セッション終了。宛ノックを expired にし、人数表示トピックを更新する。"""
+    """有効セッション終了。宛ノックを expired にし（着信 DM も削除）、人数メッセージを更新する。"""
     row = active_session(db, user_id)
     ended = row is not None
     if ended:
@@ -90,6 +96,7 @@ def end_session(db, user_id: int, rest=None) -> dict:
         {"u": user_id},
     )
     db.commit()
+    cleanup_knock_dms([user_id], rest=rest)
     notify.update_counters_for_user(db, user_id, rest=rest)
     return {"user_id": user_id, "ended": ended}
 
@@ -121,8 +128,98 @@ def create_knock(db, *, from_user: int, to_user: int, template: str, rest=None) 
     db.commit()
     sender = db.get(User, from_user)
     sender_name = sender.display_name if sender else f"discord:{from_user}"
+    _send_knock_dm(db, knock, sender_name, template, rest)
     send_push(db, to_user, "🚪 ノックが届いたよ！", f"{sender_name} さんが「{template}」")
     return {"id": knock.id, "from_user": knock.from_user, "to_user": knock.to_user, "status": knock.status}
+
+
+MOOD_EMOJI = {"fire": "🔥", "ok": "🙂", "moon": "🌙"}
+
+
+def _send_knock_dm(db, knock, sender_name: str, template: str, rest=None) -> None:
+    """ノック着信 DM（🌙 宛は送らない）。失敗はログのみでノック作成自体は成功。"""
+    rest = rest or _discord_rest.rest
+    if rest is None:
+        return
+    try:
+        receiver_session = active_session(db, knock.to_user)
+        if receiver_session is None or receiver_session.mood == "moon":
+            return  # 🌙 は通知を受けない役割（受信箱で見る）
+        channel = rest.open_dm_channel(knock.to_user)
+        if channel is None:
+            return
+        lines = [f"🚪 {sender_name} さんからノック：「{template}」"]
+        sender_session = active_session(db, knock.from_user)
+        if sender_session is not None:
+            remaining = max(0, int((sender_session.expires_at - utcnow()).total_seconds() // 60))
+            lines.append(
+                f"{sender_name} さんは今 {MOOD_EMOJI.get(sender_session.mood, '')} "
+                f"{ACTIVITIES.get(sender_session.activity, sender_session.activity)} 中・あと{remaining}分"
+            )
+        msg = rest.send_message(channel, "\n".join(lines), components=knock_reply_components(knock.id))
+        if isinstance(msg, dict) and msg.get("id"):
+            knock.dm_message_id = int(msg["id"])
+            db.commit()
+    except Exception:  # noqa: BLE001 - DM 失敗でもノック作成は成功扱い
+        log.exception("knock arrival DM failed knock_id=%s (ignored)", knock.id)
+
+
+def cleanup_knock_dms(user_ids: list[int] | None = None, rest=None) -> int:
+    """期限切れになったノックの着信 DM を削除する（チャンネルは宛先との DM を開き直して特定）。
+
+    user_ids を指定すれば宛先を限定する。None なら全ての「expired かつ DM 未削除」を対象にする。
+    """
+    rest = rest or _discord_rest.rest
+    if user_ids is not None and not user_ids:
+        return 0
+    deleted = 0
+    with SessionLocal() as db:
+        if user_ids is not None:
+            rows = db.execute(
+                text(
+                    """
+                    SELECT id, to_user, dm_message_id
+                    FROM knocks
+                    WHERE status = 'expired' AND dm_message_id IS NOT NULL AND to_user = ANY(:ids)
+                    """
+                ),
+                {"ids": user_ids},
+            ).mappings().all()
+        else:
+            rows = db.execute(
+                text(
+                    """
+                    SELECT id, to_user, dm_message_id
+                    FROM knocks
+                    WHERE status = 'expired' AND dm_message_id IS NOT NULL
+                    """
+                )
+            ).mappings().all()
+        for r in rows:
+            channel = rest.open_dm_channel(int(r["to_user"]))
+            if channel is not None:
+                rest.delete_message(channel, int(r["dm_message_id"]))
+            # 削除の成否にかかわらずフラグを落とす（tick ごとの再試行を防ぐ）
+            db.execute(text("UPDATE knocks SET dm_message_id = NULL WHERE id = :i"), {"i": r["id"]})
+            deleted += 1
+        db.commit()
+    return deleted
+
+
+def expire_knocks_and_cleanup_dms(user_ids: list[int], rest=None) -> int:
+    """セッションが消えた当事者の未返答ノックを expired にし、着信 DM を削除する（ワーカー用）。"""
+    with SessionLocal() as db:
+        db.execute(
+            text(
+                """
+                UPDATE knocks SET status = 'expired'
+                WHERE status = 'sent' AND (to_user = ANY(:ids) OR from_user = ANY(:ids))
+                """
+            ),
+            {"ids": user_ids},
+        )
+        db.commit()
+    return cleanup_knock_dms(None, rest=rest)
 
 
 def reply_knock(db, knock_id: int, user_id: int, action: str, rest=None) -> dict:

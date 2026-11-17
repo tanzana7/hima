@@ -38,7 +38,7 @@ class Guild(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)  # Discord ID
     name: Mapped[str] = mapped_column(String(100))
-    list_channel_id: Mapped[int | None] = mapped_column(BigInteger)  # 人数表示トピック対象チャンネル
+    list_channel_id: Mapped[int | None] = mapped_column(BigInteger)  # 人数メッセージのチャンネル
     list_message_id: Mapped[int | None] = mapped_column(BigInteger)  # 旧方式（今後は書き込まない。掃除用に残す）
     panel_message_id: Mapped[int | None] = mapped_column(BigInteger)  # 旧方式（同上）
     base_topic: Mapped[str | None] = mapped_column(Text)  # 設置時のトピック（teardown で復元）
@@ -117,6 +117,7 @@ class Knock(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     result_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    dm_message_id: Mapped[int | None] = mapped_column(BigInteger)  # 着信 DM（🌙 宛は送らない）
 
 
 class Device(Base):

@@ -45,6 +45,15 @@
 
 `sent` → `accept`/`later`/`pass` 返答で `accepted` / `later` / `passed`。未返答のまま（①当事者の有効セッションが消えた、②宛先が宣言解除した）場合は `expired`。同一ペア（双方向）のノックは5分クールダウン（409）。
 
+### ノック着信 DM（🌙 を除く）
+
+- ノック作成が成功したら、宛先ユーザーへ DM を送る（送信は API サーバー側＝domain のノック作成処理から Discord REST で行う。**Bot 経由・アプリ経由どちらのノックでも同じ挙動**）
+- 文面：`🚪 {送信者} さんからノック：「{テンプレ}」` ＋送信者が宣言中なら `{温度感絵文字} {やりたいこと} 中・あと{n}分` の行
+- DM には返答ボタン3つ（いいよ！／あとで／パス）を付ける。custom_id は掲示板受信箱と同じ `atsumaro:knockreply:{knock_id}:{accept|later|pass}`（Bot 側 DynamicItem を流用）
+- **例外**：宛先が現在 🌙（moon）の有効セッションを持つ場合は DM を送らない（🌙 は通知を受けない役割。受信箱で見る形のまま）
+- 送信成功時は `knocks.dm_message_id` に保存（nullable）。DM が閉じられている等で失敗しても**ログのみでノック作成は成功**（受信箱に残る）
+- 痕跡を残さないための削除：①Bot 側で DM の返答ボタンを押して返答が成功したら、その DM メッセージを Bot が削除する（掲示板 ephemeral 上のボタンは従来どおり・削除しない）。②ノックが expired になったとき（宛先の宣言解除・ワーカーによるセッション期限切れ）は、dm_message_id があれば API 側で DM を削除する（チャンネルは宛先との DM を開き直して特定）。削除後は dm_message_id を NULL にして再試行しない
+
 ### knocks.template — 誘い文（自由文字列。推奨は activity キーに対応する次の3種）
 
 | key | 文面 |
@@ -110,7 +119,7 @@
 - `hima_sessions`（部分ユニークインデックスで有効セッション1人1つ。延長=同ID更新、終了→再宣言=新ID）
 - `blocks`（blocker_id+blocked_id PK。双方向に効果：掲示板・マッチング・ノック・見守りすべてで不可視/対象外）
 - `matches`（(session_a_id, session_b_id) ユニーク）
-- `knocks`（status ライフサイクル上記。`responded_at` / `result_seen_at`）
+- `knocks`（status ライフサイクル上記。`responded_at` / `result_seen_at`。着信 DM の `dm_message_id`（🌙 宛は NULL））
 - `devices`, `regular_slots`（id, user_id, weekday 0=月〜6=日, start_min, end_min。demo フラグはダメ投入スクリプトの投入物を識別）
 - **`watch_queue`**（見守り通知キュー）：id, watcher_id, session_id, created_at, sent_at(nullable)。未送信行の部分インデックスあり
 - **`suggestion_log`**（提案送信記録）：id, user_id, slot_date（ローカル日付）, weekday, start_min, sent_at。(user_id, slot_date, start_min) ユニーク＝同じ枠・同じ日は1回だけ
@@ -143,7 +152,7 @@
 
 ## 5. バックグラウンドワーカー（30秒tick・advisory lock）
 
-- 期限切れセッションのクローズ（ended_at 書き込み）
+- 期限切れセッションのクローズ（ended_at 書き込み）＋当事者の未返答ノックを expired にし、着信 DM（dm_message_id 保存済み）を削除
 - 全ギルドの人数メッセージ再計算・修正
 - **3分ごと**：未送信 watch_queue を watcher ごとにまとめ1通の DM（「👀 ヒマな人が出たよ：名前…（n人）」）を送り sent_at を記録
 - Discord REST は失敗時も例外を投げない（ログのみ）。テストでは `api.discord_rest.rest` をモックへ差し替え可能

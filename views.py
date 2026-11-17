@@ -130,16 +130,28 @@ class KnockReplyButton(ui.DynamicItem, template=r"atsumaro:knockreply:(?P<knock_
 
     async def callback(self, interaction: discord.Interaction) -> None:
         bot = interaction.client  # type: ignore[union-attr]
+        is_dm = interaction.guild_id is None  # ノック着信 DM 上のボタン（痕跡を残さない）
+        if is_dm:
+            await interaction.response.defer()
         try:
             await bot.api.reply_knock(self.knock_id, user_id=interaction.user.id, action=self.action)
         except ApiHTTPError as exc:
             if exc.status_code == 409:
-                await interaction.response.send_message("返事はもう送ったよ！", ephemeral=True)
+                if not is_dm:
+                    await interaction.response.send_message("返事はもう送ったよ！", ephemeral=True)
                 return
             await send_api_error(interaction, exc)
             return
         except Exception as exc:  # noqa: BLE001
             await send_api_error(interaction, exc)
+            return
+        if is_dm:
+            # 返せたら DM は削除する（痕跡を残さない）。409（既に返答済み）のときは DM を残す
+            try:
+                if interaction.message is not None:
+                    await interaction.message.delete()
+            except Exception as exc:  # noqa: BLE001
+                print(f"[hima-bot] ノック着信 DM の削除に失敗しました（無視します）: {exc}")
             return
         label = RESULT_LABELS[{"accept": "accepted", "later": "later", "pass": "passed"}[self.action]]
         await interaction.response.send_message(f"「{label}」を返したよ！（送り主は /board の結果欄で確認できるよ）", ephemeral=True)

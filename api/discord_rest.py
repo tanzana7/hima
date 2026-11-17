@@ -101,3 +101,17 @@ def panel_components() -> list[dict]:
             ],
         }
     ]
+
+
+def knock_reply_components(knock_id: int) -> list[dict]:
+    """ノック着信 DM 用の返答ボタン3つ。custom_id は掲示板受信箱と同じ契約。"""
+    return [
+        {
+            "type": 1,
+            "components": [
+                {"type": 2, "style": 3, "label": "いいよ！", "custom_id": f"atsumaro:knockreply:{knock_id}:accept"},
+                {"type": 2, "style": 2, "label": "あとで", "custom_id": f"atsumaro:knockreply:{knock_id}:later"},
+                {"type": 2, "style": 2, "label": "パス", "custom_id": f"atsumaro:knockreply:{knock_id}:pass"},
+            ],
+        }
+    ]
