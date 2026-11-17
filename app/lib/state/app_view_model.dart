@@ -35,10 +35,13 @@ class AppViewModel extends ChangeNotifier {
   List<HimaSession> _friends = [];
   List<FriendServer> _friendServers = [];
 
-  /// Members of my shared servers, or null while `GET /app/members` is missing
-  /// on the server. Kept apart from [FriendServer] so the hima of each member can
-  /// be re-attached on every poll without re-reading the member list.
-  List<FriendServer>? _memberServers;
+  /// Every visible member of my shared servers, from `GET /app/members`.
+  ///
+  /// The endpoint is flat, so the server name and its visibility come from
+  /// [_guilds] and the grouping happens in [_rebuildFriendServers]; keeping the
+  /// raw rows means a poll can re-attach each member's hima without re-reading
+  /// the list.
+  List<ServerMember> _memberServers = [];
   List<MatchRecord> _matches = [];
   List<Knock> _inbox = [];
   List<Knock> _sent = [];
@@ -104,6 +107,14 @@ class AppViewModel extends ChangeNotifier {
   /// it is answered, so the badge needs its own seen state.
   final Set<String> _seenInboxIds = {};
 
+  /// True once the reply to this knock has been displayed.
+  ///
+  /// `GET /app/knocks/sent` reports no per-row seen time, so the only unseen
+  /// replies the app knows about are the ones the board returned into
+  /// [_resultQueue]; everything else was already seen by an earlier run.
+  bool isResultSeen(String knockId) =>
+      !_resultQueue.any((knock) => knock.id == knockId);
+
   /// A pending incoming knock, a reply waiting to be shown, or an unread reply
   /// all light the header bell.
   bool get hasUnseenKnocks =>
@@ -112,11 +123,7 @@ class AppViewModel extends ChangeNotifier {
             knock.status == KnockStatus.pending &&
             !_seenInboxIds.contains(knock.id),
       ) ||
-      _resultQueue.isNotEmpty ||
-      _sent.any(
-        (knock) =>
-            knock.status != KnockStatus.pending && knock.resultSeenAt == null,
-      );
+      _resultQueue.isNotEmpty;
 
   /// Called when the inbox is displayed: the dot clears without pretending the
   /// knock was answered.
@@ -244,14 +251,18 @@ class AppViewModel extends ChangeNotifier {
     final me = await _api.getMe();
     final board = await _api.getBoard();
     final sent = await _api.getSentKnocks();
-    final members = await _api.getMembers();
+    final members = await _api.getMembers([
+      for (final guild in me.guilds) guild.id,
+    ]);
     final blocks = await _api.getBlocks();
     final slots = await _api.getRegularSlots();
     final forecast = await _api.getForecast();
     _applyLive(me, board, sent);
     _memberServers = members;
+    // Blocks are stored before the friend list is rebuilt: the member endpoint
+    // lists every visible membership, including people I blocked.
+    _blocks = List.of(blocks);
     _rebuildFriendServers();
-    _blocks = _withKnownNames(blocks);
     _regularSlots = List.of(slots);
     _suggestions = List.of(forecast);
     _liveError = false;
@@ -267,11 +278,11 @@ class AppViewModel extends ChangeNotifier {
     _liveError = false;
   }
 
-  void _applyLive(MeSnapshot me, BoardSnapshot board, List<Knock>? sent) {
+  void _applyLive(MeSnapshot me, BoardSnapshot board, List<Knock> sent) {
     _applyMe(me);
     _inbox = List.of(board.inbox);
     _applyResults(board.results);
-    _applySent(sent, board.results);
+    _sent = List.of(sent);
     _boardSessions = List.of(board.sessions);
     _rebuildFriends();
     _rebuildMatches();
@@ -318,29 +329,6 @@ class AppViewModel extends ChangeNotifier {
         // Best effort: the next poll sends the same batch again.
       }),
     );
-  }
-
-  void _applySent(List<Knock>? fromServer, List<Knock> results) {
-    final server = fromServer;
-    if (server != null) {
-      _sent = List.of(server);
-      return;
-    }
-    // Temporary fallback while `GET /app/knocks/sent` is not implemented: keep
-    // the knocks this app instance sent and fold in the replies the board
-    // reports, so the 送信 tab still shows 返事待ち and the answers.
-    final byId = {for (final knock in _sent) knock.id: knock};
-    for (final result in results) {
-      final existing = byId[result.id];
-      byId[result.id] = existing == null
-          ? result
-          : existing.copyWith(
-              status: result.status,
-              respondedAt: result.respondedAt,
-            );
-    }
-    _sent = byId.values.toList()
-      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
   }
 
   void _rebuildFriends() {
@@ -413,42 +401,45 @@ class AppViewModel extends ChangeNotifier {
   }
 
   void _rebuildFriendServers() {
+    final myId = _me?.id;
     final himaByUserId = {
       for (final session in _boardSessions)
-        if (session.user.id != _me?.id) session.user.id: session,
+        if (session.user.id != myId) session.user.id: session,
     };
-    final members = _memberServers;
-    if (members == null) {
-      // Temporary fallback until `GET /app/members` exists: only people who are
-      // hima right now can be listed, grouped by the servers I share. The 友達
-      // tab therefore shows nobody who is not currently free.
-      _friendServers = [
-        for (final guild in _guilds)
-          if (_friends.any((friend) => friend.guildIds.contains(guild.id)))
-            FriendServer(
-              guild: guild,
-              members: _sortedMembers([
-                for (final friend in _friends)
-                  if (friend.guildIds.contains(guild.id))
-                    FriendMember(user: friend.user, hima: friend),
-              ]),
-            ),
-      ];
-      return;
+    final blockedIds = {for (final block in _blocks) block.user.id};
+    // The member endpoint is a flat list of every visible membership, so the
+    // grouping happens here: the server name and its visibility only exist in my
+    // `/app/me` memberships. A member of a server missing from those memberships
+    // has no name to show under, so it is dropped.
+    final membersByGuild = <String, List<UserSummary>>{};
+    for (final member in _memberServers) {
+      // The list includes me when my own membership is visible, and it includes
+      // people I blocked; neither belongs in the 友達 tab.
+      if (member.user.id == myId || blockedIds.contains(member.user.id)) {
+        continue;
+      }
+      (membersByGuild[member.guildId] ??= []).add(member.user);
     }
-    _friendServers = [
-      for (final server in members)
-        server.withMembers(
-          _sortedMembers([
-            for (final member in server.members)
-              member.withHima(
-                server.guild.visible
-                    ? himaByUserId[member.user.id]
-                    : null,
+    final servers = <FriendServer>[];
+    for (final guild in _guilds) {
+      final members = membersByGuild[guild.id];
+      if (members == null || members.isEmpty) continue;
+      servers.add(
+        FriendServer(
+          guild: guild,
+          members: _sortedMembers([
+            for (final member in members)
+              FriendMember(
+                user: member,
+                // A hidden server still lists its members, but not what they
+                // are doing right now.
+                hima: guild.visible ? himaByUserId[member.id] : null,
               ),
           ]),
         ),
-    ];
+      );
+    }
+    _friendServers = servers;
   }
 
   static List<FriendMember> _sortedMembers(List<FriendMember> members) =>
@@ -641,8 +632,8 @@ class AppViewModel extends ChangeNotifier {
     // reported as a failed send, or a retry would send a duplicate.
     final knock = await _api.createKnock(to: to, template: template);
     _invalidateLiveReads();
-    // Kept locally so 「さそった」 shows at once and the 送信 tab has something to
-    // list while `GET /app/knocks/sent` is missing.
+    // Kept locally so 「さそった」 shows at once, before the next read of
+    // `GET /app/knocks/sent` returns.
     if (!_sent.any((item) => item.id == knock.id)) _sent.insert(0, knock);
     notifyListeners();
     await _refreshKnocksQuietly();
@@ -662,7 +653,7 @@ class AppViewModel extends ChangeNotifier {
       final sent = await _api.getSentKnocks();
       _inbox = List.of(board.inbox);
       _applyResults(board.results);
-      _applySent(sent, board.results);
+      _sent = List.of(sent);
       notifyListeners();
     } catch (_) {
       // Keep the committed state instead of surfacing a false failure.
@@ -677,16 +668,11 @@ class AppViewModel extends ChangeNotifier {
 
   /// Marks a reply as seen locally.
   ///
-  /// The server marks results in bulk as soon as the board returns them, so
-  /// there is no per-id endpoint to call; this only drops the reply from the
-  /// local queue and clears its 「新着」 state.
+  /// The server marks results in bulk as soon as the board returns them, and
+  /// `GET /app/knocks/sent` reports no per-row seen time, so dropping the reply
+  /// from the queue is what clears its 「新着」 state and the header badge.
   Future<void> markKnockResultSeen(String knockId) async {
     _resultQueue.removeWhere((knock) => knock.id == knockId);
-    final seenAt = DateTime.now().toUtc();
-    _sent = [
-      for (final knock in _sent)
-        knock.id == knockId ? knock.copyWith(resultSeenAt: seenAt) : knock,
-    ];
     notifyListeners();
   }
 
@@ -735,37 +721,11 @@ class AppViewModel extends ChangeNotifier {
   }
 
   Future<void> _reloadBlocks() async {
-    // The member list excludes blocked people, so it is read again as well.
-    final blocks = await _api.getBlocks();
-    _memberServers = await _api.getMembers();
-    _blocks = _withKnownNames(blocks);
+    // A block also hides the person from the 友達 tab, so the friend list is
+    // rebuilt from the list just read.
+    _blocks = List.of(await _api.getBlocks());
     _rebuildFriendServers();
   }
-
-  /// `GET /app/blocks` currently returns bare ids, so a name is filled in from
-  /// the members already loaded, or a neutral placeholder when the person is
-  /// unknown to this app instance.
-  List<BlockedUser> _withKnownNames(List<BlockedUser> blocks) {
-    if (blocks.every((block) => block.user.displayName.isNotEmpty)) {
-      return blocks;
-    }
-    return [
-      for (final block in blocks)
-        if (block.user.displayName.isNotEmpty)
-          block
-        else
-          block.withUser(
-            UserSummary(
-              id: block.user.id,
-              displayName: _knownUser(block.user.id)?.displayName ?? _unknownName,
-              avatarUrl:
-                  block.user.avatarUrl ?? _knownUser(block.user.id)?.avatarUrl,
-            ),
-          ),
-    ];
-  }
-
-  static const _unknownName = '名前不明';
 
   /// Looks a person up in what the app already knows, for the places where the
   /// server only gives an id.
@@ -839,7 +799,7 @@ class AppViewModel extends ChangeNotifier {
     _boardSessions = [];
     _friends = [];
     _friendServers = [];
-    _memberServers = null;
+    _memberServers = [];
     _matches = [];
     _matchCreatedAt.clear();
     _inbox = [];

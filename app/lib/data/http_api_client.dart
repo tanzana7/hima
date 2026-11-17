@@ -24,9 +24,6 @@ class HttpApiClient implements ApiClient {
 
   String? _token;
 
-  /// My own user id, remembered from `/app/me` / the OAuth response.
-  String? _userId;
-
   @override
   void Function()? onUnauthorized;
 
@@ -57,7 +54,6 @@ class HttpApiClient implements ApiClient {
       // The token expired or was revoked and there is no refresh endpoint, so
       // drop it and tell the app to go back to the login screen.
       _token = null;
-      _userId = null;
       await _tokenStore.clear();
       onUnauthorized?.call();
     }
@@ -133,14 +129,12 @@ class HttpApiClient implements ApiClient {
     );
     final token = readString(response, 'token');
     _token = token;
-    _userId = readOptionalId(readJsonMap(response['user']), 'id');
     await _tokenStore.write(token);
   }
 
   @override
   Future<void> logout() async {
     _token = null;
-    _userId = null;
     await _tokenStore.clear();
   }
 
@@ -148,7 +142,6 @@ class HttpApiClient implements ApiClient {
   Future<MeSnapshot> getMe() async {
     final json = _map(await _request('GET', '/app/me'));
     final profile = UserProfile.fromJson(json);
-    _userId = profile.id;
     final session = json['session'];
     return MeSnapshot(
       profile: profile,
@@ -212,28 +205,23 @@ class HttpApiClient implements ApiClient {
   }
 
   @override
-  Future<List<FriendServer>?> getMembers() async {
-    try {
-      final json = _map(await _request('GET', '/app/members'));
-      return [
-        for (final entry in readJsonList(json['guilds']))
-          _friendServer(readJsonMap(entry)),
-      ];
-    } on ApiException catch (error) {
-      // Not implemented by the server yet (docs/app-api-requests.md #2); the
-      // caller falls back to the people it can see on the board.
-      if (error.statusCode == 404) return null;
-      rethrow;
-    }
+  Future<List<ServerMember>> getMembers(List<String> guildIds) async {
+    // One call per membership: the endpoint without a `guild_id` only answers
+    // for the servers whose own membership is visible, so a server I hid would
+    // lose every member. The contract answers 404 only when I am not a member of
+    // the guild, which `/app/me` just listed.
+    final responses = await Future.wait([
+      for (final guildId in guildIds)
+        _request(
+          'GET',
+          '/app/members?guild_id=${Uri.encodeComponent(guildId)}',
+        ),
+    ]);
+    return [
+      for (final response in responses)
+        ..._array(response, 'members', ServerMember.fromJson),
+    ];
   }
-
-  FriendServer _friendServer(JsonMap json) => FriendServer(
-    guild: Guild.fromJson(json),
-    members: [
-      for (final entry in readJsonList(json['members']))
-        FriendMember(user: UserSummary.fromJson(readJsonMap(entry))),
-    ],
-  );
 
   @override
   Future<Knock> createKnock({
@@ -262,33 +250,19 @@ class HttpApiClient implements ApiClient {
   }
 
   @override
-  Future<List<Knock>?> getSentKnocks() async {
-    try {
-      final json = _map(await _request('GET', '/app/knocks/sent'));
-      return readModelList(json['knocks'], Knock.fromSentJson);
-    } on ApiException catch (error) {
-      // Not implemented by the server yet (docs/app-api-requests.md #4).
-      if (error.statusCode == 404) return null;
-      rethrow;
-    }
-  }
+  Future<List<Knock>> getSentKnocks() async => _array(
+    await _request('GET', '/app/knocks/sent'),
+    'knocks',
+    Knock.fromSentJson,
+  );
 
   @override
   Future<void> respondToKnock(String knockId, KnockStatus response) async {
-    final userId = _userId;
-    if (userId == null) {
-      throw StateError('Cannot reply to a knock before /app/me was loaded.');
-    }
+    // The responder is taken from the JWT, so only the action is accepted here.
     await _request(
       'POST',
       '/app/knocks/${Uri.encodeComponent(knockId)}/reply',
-      body: {
-        // The app route still reuses the Bot's `ReplyIn`, which requires
-        // `user_id` (docs/app-api-requests.md #1). The server ignores it and
-        // uses the JWT, but leaving it out returns 422 until that is fixed.
-        'user_id': _idAsNumber(userId),
-        'action': knockReplyAction(response),
-      },
+      body: {'action': knockReplyAction(response)},
     );
   }
 
@@ -298,13 +272,11 @@ class HttpApiClient implements ApiClient {
   }
 
   @override
-  Future<List<BlockedUser>> getBlocks() async {
-    final json = _map(await _request('GET', '/app/blocks'));
-    return [
-      for (final entry in readJsonList(json['blocked']))
-        BlockedUser.fromBlockedEntry(entry),
-    ];
-  }
+  Future<List<BlockedUser>> getBlocks() async => _array(
+    await _request('GET', '/app/blocks'),
+    'blocked_users',
+    BlockedUser.fromJson,
+  );
 
   @override
   Future<void> createBlock(String userId) async {
