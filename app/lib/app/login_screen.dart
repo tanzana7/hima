@@ -75,87 +75,133 @@ class LoginScreen extends StatelessWidget {
                   // landed across it. A stroke is what the rest of the app is
                   // painted with; the splash that used to be here read as a
                   // wide rectangle with drips hanging off it.
-                  Stack(
-                    // The column above stretches the stack to the full width,
-                    // so the stroke is centred explicitly: the default
-                    // top-start would park it against the left edge whenever it
-                    // ends up narrower than the stack.
-                    alignment: Alignment.center,
-                    clipBehavior: Clip.none,
-                    children: [
-                      Positioned.fill(
-                        child: Transform.rotate(
-                          // A couple of degrees is enough to read as a second
-                          // pass of the brush instead of a second layer.
-                          angle: -0.035,
-                          child: BrushSwipe(
-                            seed: 8123,
-                            colors: const [
-                              AppColors.lemonSoft,
-                              AppColors.skySoft,
-                            ],
-                            padding: const EdgeInsets.all(AppSpacing.s24),
-                            droplets: 12,
-                          ),
-                        ),
-                      ),
-                      // The width is forced: a Stack sizes to its largest
-                      // non-positioned child, and without this the stroke would
-                      // shrink to the logo's intrinsic width while the tilted
-                      // pass behind it kept the full width.
-                      SizedBox(
-                        width: double.infinity,
-                        child: BrushSwipe(
-                          seed: 4211,
-                          colors: const [
-                            AppColors.lemonSoft,
-                            AppColors.coralLight,
-                          ],
-                          padding: const EdgeInsets.all(AppSpacing.s24),
-                          droplets: 16,
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              // The wordmark keeps its fixed size: it is a mark,
-                              // not body text, and the headline below carries
-                              // the message at every text scale.
-                              Center(
-                                child: MediaQuery.withNoTextScaling(
-                                  child: const HimaLogo(fontSize: 56),
+                  //
+                  // A stroke keeps the same paper on both ends (see
+                  // [paintSwipeContentInset]), so the content is inset by the dry
+                  // end on the left as well and is centred on the stroke's box
+                  // rather than on the safe rect. That is what puts 「hima.」 and
+                  // 「いま、ひま？」 on the same axis as the caption and the login
+                  // button below them; the right-only inset used to leave them
+                  // about 23dp left of it. The box is widened by the outer margin
+                  // on each side to buy the lost width back, so the headline keeps
+                  // its full size on a normal phone.
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final strokeWidth =
+                          constraints.maxWidth + AppSpacing.s12 * 2;
+                      // One value for both passes: the tilted lemon stroke
+                      // behind and the coral one in front share the box and the
+                      // inset, so the two silhouettes stay aligned.
+                      final contentInset = paintSwipeContentInset(strokeWidth);
+                      return OverflowBox(
+                        minWidth: strokeWidth,
+                        maxWidth: strokeWidth,
+                        child: Stack(
+                          // The column above stretches the stack to the full
+                          // width, so the stroke is centred explicitly: the
+                          // default top-start would park it against the left edge
+                          // whenever it ends up narrower than the stack.
+                          alignment: Alignment.center,
+                          clipBehavior: Clip.none,
+                          children: [
+                            Positioned.fill(
+                              child: Transform.rotate(
+                                // A couple of degrees is enough to read as a
+                                // second pass of the brush instead of a second
+                                // layer.
+                                angle: -0.035,
+                                child: BrushSwipe(
+                                  seed: 8123,
+                                  colors: const [
+                                    AppColors.lemonSoft,
+                                    AppColors.skySoft,
+                                  ],
+                                  padding: const EdgeInsets.all(
+                                    AppSpacing.s24,
+                                  ),
+                                  endInset: contentInset,
+                                  droplets: 12,
                                 ),
                               ),
-                              const SizedBox(height: AppSpacing.s16),
-                              Text(
-                                'いま、ひま？',
-                                textAlign: TextAlign.center,
-                                style: AppTextStyles.heroTitle,
+                            ),
+                            // The width is forced: a Stack sizes to its largest
+                            // non-positioned child, and without this the stroke
+                            // would shrink to the logo's intrinsic width while
+                            // the tilted pass behind it kept the full width.
+                            SizedBox(
+                              width: double.infinity,
+                              child: BrushSwipe(
+                                seed: 4211,
+                                colors: const [
+                                  AppColors.lemonSoft,
+                                  AppColors.coralLight,
+                                ],
+                                padding: const EdgeInsets.all(AppSpacing.s24),
+                                endInset: contentInset,
+                                centerContent: true,
+                                droplets: 16,
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    // The wordmark keeps its fixed size: it is a
+                                    // mark, not body text, and the headline below
+                                    // carries the message at every text scale.
+                                    Center(
+                                      child: MediaQuery.withNoTextScaling(
+                                        child: const HimaLogo(fontSize: 56),
+                                      ),
+                                    ),
+                                    const SizedBox(height: AppSpacing.s16),
+                                    // One line at every width. The content rect
+                                    // is inset by the dry end on both sides, so
+                                    // on a 320dp screen it is only about 170dp
+                                    // wide while 「いま、ひま？」 needs about 215dp
+                                    // at 36sp. Widening the box cannot close that
+                                    // gap — the inset has to stay clear of the
+                                    // fingers — so the headline scales down
+                                    // instead of breaking onto a second line.
+                                    // `scaleDown` leaves it at 36sp wherever it
+                                    // fits, which is every normal phone.
+                                    FittedBox(
+                                      fit: BoxFit.scaleDown,
+                                      child: Text(
+                                        'いま、ひま？',
+                                        maxLines: 1,
+                                        softWrap: false,
+                                        textAlign: TextAlign.center,
+                                        style: AppTextStyles.heroTitle,
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
-                            ],
-                          ),
+                            ),
+                            // Droplets thrown clear of the paint, kept off the
+                            // text.
+                            const Positioned(
+                              top: 0,
+                              left: 0,
+                              child: SplatterDots(
+                                seed: 91,
+                                size: Size(26, 22),
+                                color: AppColors.coral,
+                                count: 6,
+                              ),
+                            ),
+                            const Positioned(
+                              bottom: 4,
+                              right: 0,
+                              child: SplatterDots(
+                                seed: 93,
+                                size: Size(24, 20),
+                                color: AppColors.purple,
+                                count: 5,
+                              ),
+                            ),
+                          ],
                         ),
-                      ),
-                      // Droplets thrown clear of the paint, kept off the text.
-                      const Positioned(
-                        top: 0,
-                        left: 0,
-                        child: SplatterDots(
-                          seed: 91,
-                          size: Size(26, 22),
-                          color: AppColors.coral,
-                          count: 6,
-                        ),
-                      ),
-                      const Positioned(
-                        bottom: 4,
-                        right: 0,
-                        child: SplatterDots(
-                          seed: 93,
-                          size: Size(24, 20),
-                          color: AppColors.purple,
-                          count: 5,
-                        ),
-                      ),
-                    ],
+                      );
+                    },
                   ),
                   // The splatter stays inside the band, but the lemon pass is
                   // tilted a couple of degrees, so its corner dips below the

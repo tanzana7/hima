@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -138,12 +139,20 @@ class _MyStatusHeroState extends State<MyStatusHero>
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        // The frayed end and its splatter are paid for out of the card's own
-        // width, not out of the screen: the content is inset by exactly the
-        // band the stroke keeps for its dry end, so nothing is ever cut off by
-        // the edge. Both strokes get the same band so their silhouettes line
-        // up.
-        final endBand = paintSwipeEndBand(constraints.maxWidth);
+        // The paper the stroke keeps for its dry end and its splatter. It is a
+        // floor on the content's right padding, not an addition to it: the two
+        // used to be summed, which pushed the content — and the declare button
+        // under it — about 25dp left of the stroke's own centre. Both strokes
+        // get the same value so their silhouettes line up.
+        final contentInset = math.max(
+          _padding.right,
+          paintSwipeContentInset(constraints.maxWidth),
+        );
+        // The content rect is inset on the right only, so its centre sits left
+        // of the box centre by half the difference. The declare button and its
+        // hint are centred on the box instead, to share the axis of the centred
+        // cards and chips below them; the rest of the hero stays left-aligned.
+        final centerOffset = math.max(0.0, contentInset - _padding.left);
         return Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -172,7 +181,7 @@ class _MyStatusHeroState extends State<MyStatusHero>
                         AppColors.heroIdleBottom,
                       ],
                       padding: _padding,
-                      endBand: endBand,
+                      endInset: contentInset,
                       droplets: 12,
                     ),
                   ),
@@ -197,30 +206,24 @@ class _MyStatusHeroState extends State<MyStatusHero>
                           AppColors.heroDeclaredBottom,
                         ],
                         padding: _padding,
-                        endBand: endBand,
+                        endInset: contentInset,
                         droplets: 16,
                         progress: bursting ? _burstController.value : 1,
                       ),
                     ),
                   ),
-                // The marks sit in the band the stroke leaves around the content,
-                // so they can never land on the text however far the text scale
-                // grows. They are drawn in palette colours rather than white: white
-                // on the pale idle stroke is barely a mark at all.
+                // The mark sits in the paper the stroke leaves around the
+                // content, so it can never land on the text however far the text
+                // scale grows. It is drawn in a palette colour rather than
+                // white: white on the pale idle stroke is barely a mark at all.
                 //
-                // Keyed on the phase so they reappear when the hero switches state:
-                // a declaration is the moment worth celebrating.
-                Positioned(
-                  top: 4,
-                  right: 4,
-                  child: SplatterDots(
-                    key: ValueKey('hero-dots-$declared'),
-                    seed: declared ? 41 : 17,
-                    color: declared ? AppColors.yellow : AppColors.purple,
-                    size: const Size(30, 24),
-                    count: 7,
-                  ),
-                ),
+                // Only the bottom-left star is left. The top-right splatter dots
+                // that used to sit here landed on the same side as the stroke's
+                // own splatter, which made the right end read as twice as busy
+                // as the left; the stroke already carries that corner.
+                //
+                // Keyed on the phase so it reappears when the hero switches
+                // state: a declaration is the moment worth celebrating.
                 Positioned(
                   bottom: 4,
                   left: 4,
@@ -232,13 +235,18 @@ class _MyStatusHeroState extends State<MyStatusHero>
                     size: 16,
                   ),
                 ),
-                // The content ends where the frayed end begins: the same inset the
+                // The content ends where the dry end begins: the same inset the
                 // stroke uses, so the strands and the streaks are never under a
                 // label.
                 _revealWithPaint(
                   Padding(
-                    padding: _padding.add(EdgeInsets.only(right: endBand)),
-                    child: _content(state, declared, reduceMotion),
+                    padding: _padding.copyWith(right: contentInset),
+                    child: _content(
+                      state,
+                      declared,
+                      reduceMotion,
+                      centerOffset,
+                    ),
                   ),
                   bursting,
                 ),
@@ -302,6 +310,7 @@ class _MyStatusHeroState extends State<MyStatusHero>
     HeroState state,
     bool declared,
     bool reduceMotion,
+    double centerOffset,
   ) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -327,9 +336,9 @@ class _MyStatusHeroState extends State<MyStatusHero>
               ),
             const SizedBox(width: AppSpacing.s12),
             Expanded(
-              // No right padding here any more: the content is already inset
-              // by the stroke's frayed end, which is past the spark doodle, so
-              // the heading cannot run under it.
+              // No right padding here: the content is already inset by the
+              // stroke's dry end, which is past the fingers and the streaks, so
+              // the heading cannot run under them.
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -440,11 +449,19 @@ class _MyStatusHeroState extends State<MyStatusHero>
           ),
         ] else ...[
           const SizedBox(height: AppSpacing.s16),
-          DeclareButton(
-            lastMood: widget.lastMood,
-            busy: widget.busy,
-            shakeToken: widget.shakeToken,
-            onDeclare: widget.onDeclare,
+          // The primary action and its hint are centred on the stroke's box,
+          // not on the content rect. The rect is inset by the dry end on the
+          // right only, so centring inside it put the one thing the screen is
+          // asking for about 25dp left of the screen centre. The button gives up
+          // the difference in width; it stays the widest thing in the card.
+          Padding(
+            padding: EdgeInsets.only(left: centerOffset),
+            child: DeclareButton(
+              lastMood: widget.lastMood,
+              busy: widget.busy,
+              shakeToken: widget.shakeToken,
+              onDeclare: widget.onDeclare,
+            ),
           ),
           AnimatedSwitcher(
             duration: reduceMotion
@@ -453,7 +470,10 @@ class _MyStatusHeroState extends State<MyStatusHero>
             child: widget.showHint
                 ? Padding(
                     key: const ValueKey('hint'),
-                    padding: const EdgeInsets.only(top: AppSpacing.s8),
+                    padding: EdgeInsets.only(
+                      top: AppSpacing.s8,
+                      left: centerOffset,
+                    ),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
