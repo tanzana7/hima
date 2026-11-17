@@ -690,7 +690,7 @@ class Knock {
       recipient: UserSummary(
         id: readId(json, 'to_user_id'),
         displayName: readOptionalString(json, 'to_display_name') ?? '',
-        avatarUrl: readAvatar(json),
+        avatarUrl: readOptionalString(json, 'to_avatar') ?? readAvatar(json),
       ),
       template: template,
       status: knockStatusFromJson(readString(json, 'status')),
