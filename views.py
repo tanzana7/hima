@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 log = logging.getLogger("atsumaro.views")
 
 MOOD_EMOJI = {"fire": "🔥", "ok": "🙂", "moon": "🌙"}
-MOOD_OPTIONS = [("fire", "🔥 誘う人（自分から誘う）"), ("ok", "🙂 誘われ待ち"), ("moon", "🌙 静か（マッチング通知なし）")]
+MOOD_OPTIONS = [("ok", "🙂 誘われ待ち"), ("moon", "🌙 静か（マッチング通知なし）")]  # fire は廃止
 ACTIVITY_LABELS = {"game": "ゲーム", "chat": "雑談・通話", "work": "作業通話", "out": "外出", "any": "なんでもOK"}
 RESULT_LABELS = {"accepted": "いいよ！", "later": "あとで", "passed": "今回はパス"}
 KNOCK_TEMPLATES = ["ゲームしない？", "ちょっと話さない？", "作業通話しない？"]
@@ -404,6 +404,10 @@ class JoinView(ui.View):
     async def note_button(self, interaction: discord.Interaction, _: ui.Button) -> None:
         await interaction.response.send_modal(JoinNoteModal(self))
 
+    @ui.button(label="時間を指定する", style=discord.ButtonStyle.secondary, row=3, emoji="⏱️")
+    async def custom_duration_button(self, interaction: discord.Interaction, _: ui.Button) -> None:
+        await interaction.response.send_modal(JoinMinutesModal(self))
+
     @ui.button(label="確定", style=discord.ButtonStyle.success, row=4)
     async def decide(self, interaction: discord.Interaction, _: ui.Button) -> None:
         if self.guild_id is None:
@@ -425,7 +429,41 @@ class JoinView(ui.View):
         kind = "掲示板に載せたよ！" if data.get("created") else "延長したよ！"
         suffix = f"（ひとこと：{self.note}）" if self.note else ""
         await interaction.response.send_message(
-            f"{kind} あと{self.duration_min}分ヒマ宣言中。マッチした相手にはDMが届くよ🚀{suffix}", ephemeral=True
+            f"{kind} あと{self.duration_min}分ヒマ宣言中。マッチしたらDMが届くよ🚀{suffix}", ephemeral=True
+        )
+
+
+class JoinMinutesModal(ui.Modal):
+    """ヒマ時間のカスタム指定（5〜720分の整数）。"""
+
+    minutes_input = ui.TextInput(
+        label="ヒマな時間（分・5〜720）",
+        max_length=4,
+        required=True,
+        style=discord.TextStyle.short,
+    )
+
+    def __init__(self, join_view: JoinView) -> None:
+        super().__init__(title="時間を指定する", timeout=300)
+        self.join_view = join_view
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        raw = str(self.minutes_input.value or "").strip()
+        try:
+            minutes = int(raw)
+        except ValueError:
+            await interaction.response.send_message(
+                "時間は半角数字（分）で入れてね。例：45", ephemeral=True
+            )
+            return
+        if not 5 <= minutes <= 720:
+            await interaction.response.send_message(
+                "時間は 5〜720 分の間で指定してね。", ephemeral=True
+            )
+            return
+        self.join_view.duration_min = minutes
+        await interaction.response.send_message(
+            f"時間を「あと{minutes}分」に設定したよ。「確定」を押してね！", ephemeral=True
         )
 
 

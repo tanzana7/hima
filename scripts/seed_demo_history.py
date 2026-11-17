@@ -87,7 +87,7 @@ def seed(real_ids: list[int], guild_id: int) -> None:
                     ended = now
                 if ended <= started:
                     continue
-                mood = ["fire", "ok", "moon"][_pick(rng, [0.3, 0.5, 0.2])]
+                mood = ["ok", "moon"][_pick(rng, [0.7, 0.3])]  # fire 廃止により 2 値
                 source = ["manual", "suggested", "auto"][_pick(rng, [0.7, 0.2, 0.1])]
                 db.add(
                     HimaSession(
