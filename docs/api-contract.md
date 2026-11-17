@@ -1,528 +1,200 @@
-# API契約案
+# Atsumaro API 契約書（api-contract）
 
-atsumaro モバイルアプリと API サーバー間の初版契約案です。以下のパスは API_BASE_URL からの相対パスで、JSON は UTF-8 とします。
+この文書は Atsumaro API とクライアント（Discord Bot / アプリ）の間の契約です。
+語彙は厳守し、新規追加はこの文書の更新とセットで行います。
 
-> 2026-11-16 追記: `activity` を任意（null 可）に、`duration_min` を 30 / 60 / 120 に変更し、`GET /friends` を追加しました。
+## 1. 語彙（固定キー）
 
-## 共通仕様
+### mood（hima_sessions.mood / users.auto_mood）— 3種固定
 
-- POST /auth/discord 以外は Authorization: Bearer <session_token> が必要です。
-- Discord のユーザー ID・サーバー ID などの Snowflake は JSON で必ず文字列にします。API が発行するヒマセッション ID とノック ID も文字列です。
-- 日時は UTC の ISO 8601 形式（例: 2026-11-16T12:34:56Z）。残り時間は expires_at と端末時刻から算出します。
-- Bot から API への認証はアプリ用 token と分離し、別途共有するサーバー間シークレットを使います。Bot 専用 API はこの契約の対象外です。
-- mood は次の値です。
-
-| 値 | 表示 |
-| --- | --- |
-| fire | 🔥 今すぐ遊びたい |
-| ok | 🙂 誘われたら行く |
-| quiet | 🌙 ひっそり暇 |
-
-- activity は任意項目です。未選択は null（または項目の省略）で、表示は単に「ひま」とし、`any` と決めつけません。
-
-| 値 | 表示 |
-| --- | --- |
-| game | 🎮 ゲーム |
-| chat | 💬 雑談・通話 |
-| work | 💻 作業通話 |
-| out | 🚶 外出 |
-| any | ✨ なんでもOK |
-
-- duration_min は 30 / 60 / 120 のいずれかです（表示は順に 30分 / 1時間 / 2時間）。省略時の既定値は 60 です。source は manual / suggested / auto です。
-- note は省略または null 可。文字列は Unicode コードポイント数で 50 文字以内とし、空文字は null に正規化します。
-- 定期時間の weekday は月曜 0〜日曜 6、時刻は日本時間（Asia/Tokyo）の 0:00 からの分数です。
-
-共通エラーは次の形式です。details は項目別の理由がある場合だけ付け、クライアントは message ではなく code で分岐します。
-
-    {
-      "error": {
-        "code": "validation_error",
-        "message": "入力内容を確認してください。",
-        "details": {"duration_min": "must_be_one_of_30_60_120"}
-      }
-    }
-
-| HTTP | code の例 | 意味 |
+| key | 絵文字 | 意味 |
 | --- | --- | --- |
-| 400 | validation_error | JSON や値が不正 |
-| 401 | unauthorized | token 不在・無効・期限切れ |
-| 403 | forbidden | 操作権限がない |
-| 404 | not_found | 存在しない、または公開対象ではない |
-| 409 | conflict | 現在の状態では操作できない |
-| 429 | rate_limited | 呼び出し上限超過 |
-| 500 | internal_error | サーバー内部エラー |
+| `fire` | 🔥 | 誘う人（自分から誘う） |
+| `ok` | 🙂 | 誘われ待ち（既定値） |
+| `moon` | 🌙 | 静か（掲示板には出るが、マッチング通知は一切受けない） |
 
-## 認証
+### activity（hima_sessions.activity）— 5種固定
 
-### POST /auth/discord
-
-アプリが Discord OAuth2 PKCE で取得した認可 code を受け取ります。サーバーは設定済みの Discord client ID、許可済み redirect URI、受け取った code_verifier を使い、Discord token endpoint で code を交換します。続けて Discord の GET /users/@me を呼んで利用者を特定し、Discord token はアプリへ返さず API 独自の session token を発行します。redirect_uri は登録値との完全一致を検証します。
-
-リクエスト:
-
-    {
-      "code": "discord_authorization_code",
-      "code_verifier": "pkce_original_verifier",
-      "redirect_uri": "atsumaro://oauth2/callback"
-    }
-
-200 OK:
-
-    {
-      "access_token": "api_session_token",
-      "token_type": "Bearer",
-      "expires_at": "2026-11-17T12:34:56Z",
-      "me": {
-        "id": "123456789012345678",
-        "display_name": "あつまろユーザー",
-        "avatar_url": null,
-        "settings": {
-          "auto_mode": false,
-          "auto_mood": "ok",
-          "notify_on_hima": true
-        }
-      }
-    }
-
-無効・使用済み code、PKCE 失敗、redirect URI 不一致は 400 invalid_oauth_code とします。
-
-## アカウントと設定
-
-### GET /me
-
-200 OK:
-
-    {
-      "user": {
-        "id": "123456789012345678",
-        "display_name": "あつまろユーザー",
-        "avatar_url": null
-      },
-      "settings": {
-        "auto_mode": false,
-        "auto_mood": "ok",
-        "notify_on_hima": true
-      }
-    }
-
-新規アカウントの auto_mode は false、auto_mood は ok です。notify_on_hima は友達の新しいヒマ宣言通知の設定です。
-
-### PATCH /me/settings
-
-auto_mode、auto_mood、notify_on_hima のうち 1 項目以上を部分更新します。auto_mood は fire / ok / quiet のみです。
-
-リクエスト例:
-
-    {"auto_mode": true, "auto_mood": "ok", "notify_on_hima": false}
-
-200 OK は更新後の GET /me と同じ形式です。auto_mode 有効時に宣言する条件と実行時刻はサーバーが管理します。
-
-## Discord サーバー
-
-### GET /guilds
-
-Bot と共有しているサーバーと、呼び出し元の公開設定を返します。visible は、そのサーバー上の友達に自分の宣言を公開するかを示します。
-
-200 OK:
-
-    {
-      "guilds": [
-        {"id": "234567890123456789", "name": "週末ゲーム部", "visible": true}
-      ]
-    }
-
-### PATCH /guilds/{id}
-
-id は Discord guild Snowflake です。リクエストは {"visible": false}。200 OK:
-
-    {"id": "234567890123456789", "visible": false}
-
-## 友達
-
-### GET /friends
-
-共通サーバーのメンバーをサーバーごとに返します。友達申請の概念はなく、メンバー全員が友達です。各メンバーの hima は、そのサーバーが visible で本人が現在ヒマな場合だけ入り、それ以外は null です。ブロック中の相手は含めません。メンバーは各サーバー内でひまな人を先に並べます。
-
-200 OK:
-
-    {
-      "servers": [
-        {
-          "id": "234567890123456789",
-          "name": "週末ゲーム部",
-          "visible": true,
-          "members": [
-            {
-              "user": {
-                "id": "345678901234567890",
-                "display_name": "みな",
-                "avatar_url": null
-              },
-              "hima": {
-                "session_id": "hima_01JCVB1AB2CD",
-                "user": {
-                  "id": "345678901234567890",
-                  "display_name": "みな",
-                  "avatar_url": null
-                },
-                "mood": "ok",
-                "activity": null,
-                "note": null,
-                "duration_min": 60,
-                "started_at": "2026-11-16T12:01:00Z",
-                "expires_at": "2026-11-16T13:01:00Z",
-                "guild_ids": ["234567890123456789"]
-              }
-            },
-            {
-              "user": {
-                "id": "456789012345678901",
-                "display_name": "はる",
-                "avatar_url": null
-              },
-              "hima": null
-            }
-          ]
-        }
-      ]
-    }
-
-## ヒマ宣言
-
-### GET /hima/me
-
-自分の宣言を返します。宣言中でなければ {"hima": null} です。本人の宣言には source を含めます。
-
-200 OK の例:
-
-    {
-      "hima": {
-        "session_id": "hima_01JCV9R4M5Q8",
-        "user": {
-          "id": "123456789012345678",
-          "display_name": "あつまろユーザー",
-          "avatar_url": null
-        },
-        "mood": "fire",
-        "activity": "game",
-        "note": "30分だけ",
-        "duration_min": 30,
-        "guild_ids": ["234567890123456789"],
-        "source": "manual",
-        "started_at": "2026-11-16T12:00:00Z",
-        "expires_at": "2026-11-16T12:30:00Z"
-      }
-    }
-
-### PUT /hima/me
-
-新規作成または現在の宣言の延長・更新です。アカウントごとに有効な宣言は最大 1 件です。
-
-リクエスト:
-
-    {
-      "mood": "fire",
-      "activity": "game",
-      "note": "30分だけ",
-      "duration_min": 30,
-      "source": "manual"
-    }
-
-200 OK は GET /hima/me と同じ形式です。duration_min は 30 / 60 / 120 のみ受け付け、expires_at はサーバー受理時刻を基準に設定します。有効な宣言中の PUT は session_id と started_at を維持して内容と期限を更新します。温度感だけを変える場合も同じセッション ID のままで、この延長・変更では同じセッションペアを再通知しません。source は必須入力ですが、延長時は最初のセッション作成時の値を維持します。宣言がない場合は新しい session_id を発行し、再マッチ判定します。
-
-### DELETE /hima/me
-
-宣言を終了します。200 OK:
-
-    {
-      "ended_session_id": "hima_01JCV9R4M5Q8",
-      "ended_at": "2026-11-16T12:10:00Z"
-    }
-
-宣言がない場合も成功とし、ended_session_id は null です。終了後に再宣言すると新しい session_id になります。
-
-### GET /hima
-
-現在ヒマな友達を返します。quiet も一覧に含みます。双方が公開中の共通サーバー経由で見える相手に限り、いずれかが相手をマッチング対象外にしているペアは含めません。同じ activity、次にどちらかが any の相手を先に並べます。activity が null の相手は「指定なし」として any より後ろに並べます（自分が未指定のときも、any の相手は他の activity より先です）。同順位は expires_at 昇順です。他人の source は含めません。
-
-200 OK:
-
-    {
-      "hima": [
-        {
-          "session_id": "hima_01JCVB1AB2CD",
-          "user": {
-            "id": "345678901234567890",
-            "display_name": "みな",
-            "avatar_url": null
-          },
-          "mood": "quiet",
-          "activity": "chat",
-          "note": "聞き専かも",
-          "duration_min": 60,
-          "started_at": "2026-11-16T12:01:00Z",
-          "expires_at": "2026-11-16T13:01:00Z",
-          "guild_ids": ["234567890123456789"]
-        }
-      ]
-    }
-
-## マッチ
-
-### GET /matches?since={UTC timestamp}
-
-since は任意です。指定時は created_at > since の記録を返し、省略時は現在有効な宣言セッション同士のマッチを返します。activity の一致度を優先して並べます。マッチは自分の session と相手の session のペアで特定します。
-
-200 OK:
-
-    {
-      "matches": [
-        {
-          "my_session_id": "hima_01JCV9R4M5Q8",
-          "other_session_id": "hima_01JCVB1AB2CD",
-          "kind": "fire_ok",
-          "other_user": {
-            "id": "345678901234567890",
-            "display_name": "みな",
-            "avatar_url": null
-          },
-          "other_hima": {
-            "mood": "ok",
-            "activity": "game",
-            "note": null,
-            "expires_at": "2026-11-16T13:01:00Z"
-          },
-          "created_at": "2026-11-16T12:01:00Z"
-        }
-      ]
-    }
-
-kind と表示・通知対象は次のとおりです。
-
-| kind | 対象と表示文 |
+| key | 表示 |
 | --- | --- |
-| fire_fire | 双方。「二人とも今すぐ遊びたい！」 |
-| fire_ok | fire 側のみ。「誘えば来る人がいるよ」 |
-| ok_ok | 双方。「お互い誘われ待ちだよ」 |
+| `game` | 🎮 ゲーム |
+| `chat` | 💬 雑談・通話 |
+| `work` | 💻 作業通話 |
+| `out` | 🚶 外出 |
+| `any` | ✨ なんでもOK |
 
-quiet を含む組み合わせはマッチ・通知しません。候補が複数なら同じ activity、次に any を優先しますが、該当する全候補を返します。マッチの一意性は順序を問わない session ID のペアで、同一ペアを再通知しません。終了・失効後に新 session ID で再宣言した場合は再度マッチ可能です。相手の source は含めません。
+### hima_sessions.source — 宣言元
 
-## ノック
+| key | 意味 |
+| --- | --- |
+| `manual` | 自分の意思での宣言（**Bot 経由の宣言は常に manual**） |
+| `suggested` | サジェストからの宣言（次段の提案機能用） |
+| `auto` | regular_slots（よくヒマになる時間帯）による自動宣言 |
 
-template と本文の対応は固定です: game = 「ゲームしない？」、chat = 「ちょっと話さない？」、work = 「作業通話しない？」。status は pending / accepted / later / passed で、日本語表示は「返事待ち」/「いいよ！」/「あとで」/「今回はパス」です。
+### matches.kind — マッチングの役割組み合わせ
 
-### POST /knocks
+| key | 意味 |
+| --- | --- |
+| `fire_fire` | 🔥×🔥 両方にDM |
+| `fire_ok` | 🔥×🙂 🔥 側にだけDM |
+| `ok_ok` | 🙂×🙂 両方にDM |
 
-現在ヒマで、可視の共通サーバーにいる相手に送ります。サーバーは可視の共通サーバーから送信先を選びます。ブロック中・非公開・条件不一致の相手は 404 not_found とし、存在を推測できないようにします。
+※ `moon`（🌙）はマッチング対象外（宣言者・候補のどちらかが 🌙 なら成立しない）。ブロック関係にあるペアも対象外。`matches` は (session_a_id, session_b_id) の小さい方を a として保存し、同じペアの行が既にあれば温度感が変わっても再通知しない。1回の宣言で送るマッチ DM は最大3件（activity 一致の相手を優先）。
 
-リクエスト:
+### knocks.status — ノックのライフサイクル
 
-    {
-      "to_user_id": "345678901234567890",
-      "template": "game"
-    }
+`sent` → `accept`/`later`/`pass` 返答で `accepted` / `later` / `passed`。未返答のまま（①当事者の有効セッションが消えた、②宛先が宣言解除した）場合は `expired`。同一ペア（双方向）のノックは5分クールダウン（409）。
 
-201 Created:
+### ノック着信 DM（🌙 を除く）
 
-    {
-      "knock": {
-        "id": "knock_01JCVB9XYZ12",
-        "from_user": {
-          "id": "123456789012345678",
-          "display_name": "あつまろユーザー",
-          "avatar_url": null
-        },
-        "to_user": {
-          "id": "345678901234567890",
-          "display_name": "みな",
-          "avatar_url": null
-        },
-        "guild": {
-          "id": "234567890123456789",
-          "name": "週末ゲーム部"
-        },
-        "template": "game",
-        "message": "ゲームしない？",
-        "recipient_note": "スルーしてOK",
-        "status": "pending",
-        "created_at": "2026-11-16T12:02:00Z",
-        "responded_at": null,
-        "result_seen_at": null
-      }
-    }
+- ノック作成が成功したら、宛先ユーザーへ DM を送る（送信は API サーバー側＝domain のノック作成処理から Discord REST で行う。**Bot 経由・アプリ経由どちらのノックでも同じ挙動**）
+- 文面：`🚪 {送信者} さんからノック：「{テンプレ}」` ＋送信者が宣言中なら `{温度感絵文字} {やりたいこと} 中・あと{n}分` の行
+- DM には返答ボタン3つ（いいよ！／あとで／パス）を付ける。custom_id は掲示板受信箱と同じ `atsumaro:knockreply:{knock_id}:{accept|later|pass}`（Bot 側 DynamicItem を流用）
+- **例外**：宛先が現在 🌙（moon）の有効セッションを持つ場合は DM を送らない（🌙 は通知を受けない役割。受信箱で見る形のまま）
+- 送信成功時は `knocks.dm_message_id` に保存（nullable）。DM が閉じられている等で失敗しても**ログのみでノック作成は成功**（受信箱に残る）
+- 痕跡を残さないための削除：①Bot 側で DM の返答ボタンを押して返答が成功したら、その DM メッセージを Bot が削除する（掲示板 ephemeral 上のボタンは従来どおり・削除しない）。②ノックが expired になったとき（宛先の宣言解除・ワーカーによるセッション期限切れ）は、dm_message_id があれば API 側で DM を削除する（チャンネルは宛先との DM を開き直して特定）。削除後は dm_message_id を NULL にして再試行しない
 
-送信時点で相手が quiet なら recipient_note は必ず「スルーしてOK」、それ以外は null です。アプリも quiet の相手への送信確認に同じ文言を表示します。
+### knocks.template — 誘い文（自由文字列。推奨は activity キーに対応する次の3種）
 
-### GET /knocks/inbox
+| key | 文面 |
+| --- | --- |
+| `game` | ゲームしない？ |
+| `chat` | ちょっと話さない？ |
+| `work` | 作業通話しない？ |
 
-自分宛てを新しい順に返します。200 OK:
+### 個人用掲示板のボタン custom_id（Bot が components に埋め込む値）
 
-    {
-      "knocks": [
-        {
-          "id": "knock_01JCVB9XYZ12",
-          "from_user": {
-            "id": "123456789012345678",
-            "display_name": "あつまろユーザー",
-            "avatar_url": null
-          },
-          "guild": {
-            "id": "234567890123456789",
-            "name": "週末ゲーム部"
-          },
-          "template": "game",
-          "message": "ゲームしない？",
-          "recipient_note": "スルーしてOK",
-          "status": "pending",
-          "created_at": "2026-11-16T12:02:00Z",
-          "responded_at": null
-        }
-      ]
-    }
+| custom_id | ボタン |
+| --- | --- |
+| `atsumaro:knockreply:{knock_id}:{accept\|later\|pass}` | ノック返答（いいよ！／あとで／パス。DynamicItem・再起動後も有効） |
+| `atsumaro:watchtoggle:{0\|1}` | 見守り ON/OFF トグル（状態を custom_id に埋め込む） |
+| `atsumaro:suggest:declare` | 提案 DM の「このまま宣言する」（押すと `POST /bot/suggest-declare` を呼び、source=suggested / 30分 / auto_mood（未設定なら ok）で宣言。DynamicItem・再起動後も有効） |
+| `board:declare` / `board:knock` / `board:blocks` / `board:leave` | 掲示板下部ボタン（Bot 内部用） |
 
-### GET /knocks/sent
+### 公開パネルのボタン custom_id（Discord components に埋め込む値）
 
-自分が送ったものを新しい順に返します。相手を to_user として返し、result_seen_at を含みます。応答済みで result_seen_at が null のものが未確認です。200 OK:
+| custom_id | ボタン |
+| --- | --- |
+| `atsumaro:board` | 掲示板を見る（押した本人にだけ詳細を表示） |
+| `atsumaro:join` | 今ヒマ！ |
+| `atsumaro:leave` | やめる |
 
-    {
-      "knocks": [
-        {
-          "id": "knock_01JCVB9XYZ12",
-          "to_user": {
-            "id": "345678901234567890",
-            "display_name": "みな",
-            "avatar_url": null
-          },
-          "guild": {
-            "id": "234567890123456789",
-            "name": "週末ゲーム部"
-          },
-          "template": "game",
-          "message": "ゲームしない？",
-          "recipient_note": null,
-          "status": "accepted",
-          "created_at": "2026-11-16T12:02:00Z",
-          "responded_at": "2026-11-16T12:04:00Z",
-          "result_seen_at": null
-        }
-      ]
-    }
+※ トピック人数方式（人数をチャンネルトピックに表示）は一時採用後に不採用（revert: back to counter and panel messages）。guilds の base_topic / topic_counter 列は未使用のまま残置
 
-### POST /knocks/{id}/respond
+### 共有メッセージの形式
 
-受信者が pending のノックに応答します。リクエストは {"response": "accepted"}。response は accepted / later / passed のいずれかです。200 OK は id、更新後の status、responded_at を返します。送信者へ結果通知を行います。すでに応答済みなら 409 conflict です。
+- 人数メッセージ：`いま{n}人ヒマ`（n = visible な membership を持つ有効セッション中のユーザー数。宣言・解除の直後とワーカーtickで編集・更新）
+- パネルメッセージ：上記3ボタン付き。**チャンネルに残る Bot メッセージはこの2件のみ**で、それ以外の応答はコマンド／ボタン＋ephemeral で完結する
 
-200 OK の例:
+## 2. 認証
 
-    {
-      "id": "knock_01JCVB9XYZ12",
-      "status": "accepted",
-      "responded_at": "2026-11-16T12:04:00Z"
-    }
+- **Bot→API**：`Authorization: Bearer <BOT_API_SECRET>`。この検証を通ったリクエストのみ、ボディ／ヘッダーで渡された Discord ユーザーID を信用できる。guild_id と user_id を含むリクエストでは membership が upsert され（last_seen_at 更新）、users 行が無ければ作られる
+- **アプリ→API**：API 独自のセッショントークン = JWT（HS256、`API_JWT_SECRET`、有効期限30日）。`sub` にユーザーID。`POST /auth/discord` で発行する。**全 `/app/*` エンドポイントで必須**。JWT から取得したユーザーIDのみを信用し、リクエストで送られた user_id は採用しない
 
-### POST /knocks/{id}/seen
+## 3. 実装済みエンドポイント（すべて Bot 認証必須）
 
-送信者が応答結果を確認した時に呼びます。本文なし。200 OK:
+| Method | Path | 概要 |
+| --- | --- | --- |
+| GET | `/health` | 疎通確認。DB 接続込みで 200 を返す（認証不要） |
+| GET | `/bot/ping` | Bot→API 認証の動作確認 |
+| POST | `/bot/guilds/{guild_id}/setup` | guilds を upsert し、人数メッセージ＋パネルメッセージを REST 投稿して ID を保存 |
+| POST | `/bot/guilds/{guild_id}/teardown` | 2つのメッセージを REST 削除（失敗は無視）し、メッセージID を NULL に |
+| POST | `/bot/sessions` | ヒマ宣言（延長=同ID更新／新規は source=manual）。マッチング評価＋見守りキュー登録＋人数メッセージ更新 |
+| DELETE | `/bot/sessions` | 有効セッション終了。宛ノックを expired に、人数メッセージを更新 |
+| GET | `/bot/board?guild_id=&user_id=` | 閲覧者に見える有効セッション一覧（共有可視・ブロック除外・source非表示）＋宛ノック（最大5件。**`to_moon` は宛先＝受信者が現在🌙の有効セッションを持つときのみ true**）＋未見結果。レスポンスに `viewer.notify_on_hima` を含む |
+| POST | `/bot/knocks/results/seen` | 未見結果に `result_seen_at` を打つ |
+| POST | `/bot/knocks` | ノック作成（相手が有効セッション中・共有可視・非ブロック必須。5分クールダウンは 409） |
+| POST | `/bot/knocks/{id}/reply` | 返答（accept/later/pass）。to_user 本人のみ。status と responded_at を更新 |
+| POST | `/bot/blocks` | ブロック登録（効果は双方向） |
+| DELETE | `/bot/blocks` | ブロック解除 |
+| GET | `/bot/blocks?user_id=` | 自分がブロックしているユーザー一覧 |
+| PUT | `/bot/users/{user_id}/settings` | `notify_on_hima` の更新 |
+| PUT | `/bot/memberships/visibility` | membership の visible 更新（人数メッセージを即更新） |
+| POST | `/bot/suggest-declare` | 提案 DM の「このまま宣言する」ボタン用。`{user_id}`。そのユーザーの auto_mood（未設定・無効値なら ok）/ activity=any / 30分 / source=suggested で宣言（マッチング・人数更新は通常宣言と同一）。応答は `/bot/sessions` と同じ形 |
+| GET | `/bot/guilds/{guild_id}/count` | 人数の取得（デバッグ用） |
 
-    {"id": "knock_01JCVB9XYZ12", "result_seen_at": "2026-11-16T12:05:00Z"}
+## 4. データモデル（主要テーブル）
 
-送信者以外、pending、または参照できないノックは 404 not_found です。ブロック中の相手とのノックは双方の一覧・通知から除外します。ブロック時にペア間の pending ノックを無効化し、以後応答・通知しません。ブロックした事実は相手に通知しません。
+- `users`, `guilds`, `memberships`（PK: guild_id+user_id, visible, last_seen_at）
+- `hima_sessions`（部分ユニークインデックスで有効セッション1人1つ。延長=同ID更新、終了→再宣言=新ID）
+- `blocks`（blocker_id+blocked_id PK。双方向に効果：掲示板・マッチング・ノック・見守りすべてで不可視/対象外）
+- `matches`（(session_a_id, session_b_id) ユニーク）
+- `knocks`（status ライフサイクル上記。`responded_at` / `result_seen_at`。着信 DM の `dm_message_id`（🌙 宛は NULL））
+- `devices`, `regular_slots`（id, user_id, weekday 0=月〜6=日, start_min, end_min。demo フラグはダメ投入スクリプトの投入物を識別）
+- **`watch_queue`**（見守り通知キュー）：id, watcher_id, session_id, created_at, sent_at(nullable)。未送信行の部分インデックスあり
+- **`suggestion_log`**（提案送信記録）：id, user_id, slot_date（ローカル日付）, weekday, start_min, sent_at。(user_id, slot_date, start_min) ユニーク＝同じ枠・同じ日は1回だけ
+- `hima_sessions.demo` / `regular_slots.demo`：`scripts/seed_demo_history.py` が投入したデモデータの識別用（`--reset` で demo=true の行だけ削除）
 
-## マッチング対象外の相手
+## 5.5 自由時間の推定と提案（Phase C）
 
-画面上の表記は「この人とはマッチングしない」です。対象者へ設定した事実を通知しません。
+### GET /app/free-time/forecast（JWT 必須）
 
-### GET /blocks
+- 過去8週間の終了済み hima_sessions を集計する（Python 側で素直に集計。キャッシュや専用テーブルは作らない）
+- 曜日 × 30分刻みの枠ごとに「その曜日に宣言が枠と重なった日の数 ÷ その曜日が期間内にあった日数」をスコアにする
+- スコア 0.5 以上かつ実績3日以上の枠を、連続する枠はマージして返す（タイムゾーンは Asia/Tokyo）
+- 各枠に `basis` を付ける：`history`（集計のみ）／`manual`（regular_slots のみ）／`both`。manual のみの枠は score=0 / days=0
+- 応答：`{user_id, slots: [{weekday, start_min, end_min, basis, score, days}]}`
 
-自分が設定した相手を返します。200 OK:
+### 提案（ワーカー）
 
-    {
-      "blocks": [
-        {
-          "user": {
-            "id": "345678901234567890",
-            "display_name": "みな",
-            "avatar_url": null
-          },
-          "created_at": "2026-11-16T12:06:00Z"
-        }
-      ]
-    }
+- ワーカーは **15分ごと**（30秒tick × 30）に判定する
+- いまが「forecast（history/manual/both いずれも）または regular_slots の枠の**開始15分前**」に当たるユーザーがいて、
+  ①そのユーザーが宣言中でなく、②同じ枠・同じ日に suggestion_log の送信実績がなければ、提案を1回送る
+- 送信先：devices があればプッシュ（dry-run 可）。あわせて Discord DM も送る。DM には「このまま宣言する」ボタン（`atsumaro:suggest:declare`）を付ける。文面は「そろそろヒマな時間じゃない？ HH:MM 頃のあなたのいつもの時間だよ。このまま宣言する？」
+- DM 送信は Discord REST 失敗でも例外を投げない（ログのみ）
 
-### POST /blocks
+### デモ用ダミー履歴（scripts/seed_demo_history.py）
 
-リクエストは {"user_id": "345678901234567890"}。自分自身は指定できません。201 Created:
+- 実ユーザー2人（引数）＋ダミーユーザー3人（ID 990000000000000001〜003、表示名「デモ・みか／そら／かい」）
+- 過去4週間分の終了済みセッションを投入：平日は22時台、週末は午後の偏り付き。mood / activity / source を混ぜる（source は manual 中心）
+- 実ユーザー2人には regular_slots（平日22:00〜23:59）も登録
+- `--reset` で demo=true の投入分だけを削除
 
-    {"user_id": "345678901234567890", "created_at": "2026-11-16T12:06:00Z"}
+## 5. バックグラウンドワーカー（30秒tick・advisory lock）
 
-すでに登録済みの場合も既存登録を返す冪等操作です（新規作成は 201 Created、既存の場合は 200 OK）。
+- 期限切れセッションのクローズ（ended_at 書き込み）＋当事者の未返答ノックを expired にし、着信 DM（dm_message_id 保存済み）を削除
+- 全ギルドの人数メッセージ再計算・修正
+- **3分ごと**：未送信 watch_queue を watcher ごとにまとめ1通の DM（「👀 ヒマな人が出たよ：名前…（n人）」）を送り sent_at を記録
+- Discord REST は失敗時も例外を投げない（ログのみ）。テストでは `api.discord_rest.rest` をモックへ差し替え可能
 
-### DELETE /blocks/{user_id}
+## 6. アプリ向けエンドポイント（JWT 認証。`/auth/discord` のみ認証不要）
 
-自分が登録した設定を解除します。200 OK:
+### Discord OAuth
 
-    {"user_id": "345678901234567890", "blocked": false}
+| Method | Path | 概要 |
+| --- | --- | --- |
+| POST | `/auth/discord` | ボディ `{code, redirect_uri, code_verifier}`（PKCE）。Discord v10 `/oauth2/token` で交換（`DISCORD_CLIENT_ID`/`DISCORD_CLIENT_SECRET` は環境変数）→ `/users/@me` で users を upsert（`display_name` は global_name があればそれ、無ければ username。`avatar` は CDN URL `https://cdn.discordapp.com/avatars/{id}/{hash}.png`、hash 無しは null）→ `/users/@me/guilds` と guilds テーブルの**共通サーバーのみ** memberships を upsert（visible 既定 true、last_seen_at 更新）→ 第1段の JWT を発行し `{token, user, guilds}` を返す |
 
-いずれか一方が相手を対象外にしたら、双方の友達一覧、マッチ、ノック、通知から相手を除外します。解除できるのは設定した側だけです。対象者へ設定・解除を伝えません。
+### アプリ本体（すべて JWT 必須。user_id は常に JWT から取得）
 
-## デバイス
+| Method | Path | 概要 |
+| --- | --- | --- |
+| GET | `/app/me` | プロフィール・設定・**自分の有効セッション（source を含む）**・memberships 一覧 |
+| PUT | `/app/me/settings` | `notify_on_hima` / `auto_mode` / `auto_mood` の部分更新 |
+| PUT | `/app/memberships/{guild_id}/visibility` | 自分の membership visible 更新（人数メッセージを即更新） |
+| GET | `/app/board` | **横断掲示板**：自分が member の全サーバーを統合。共有可視・ブロック除外判定は Bot 側と同じ。各行に `shared_guild_ids`（共通の visible サーバーID一覧）を付ける。ノック受信箱（最大5件、`to_moon` 付き）＋未見結果も返す。**他人のセッション行に source は含めない**（自分の行のみ `/app/me` で返す） |
+| POST | `/app/sessions` | ヒマ宣言 `{mood, activity, note, minutes, source}`（source は manual/suggested/auto）。Bot 側と**同一のサービス関数**を使うためマッチング・見守りキュー・人数メッセージ更新も同じに発火 |
+| DELETE | `/app/sessions` | 有効セッション終了（Bot 側と同一挙動） |
+| POST | `/app/knocks` | ノック作成（from_user は JWT 本人） |
+| POST | `/app/knocks/{id}/reply` | 返答（accept/later/pass）。to_user 本人のみ |
+| POST | `/app/knocks/results/seen` | 未見結果に `result_seen_at` を打つ |
+| GET | `/app/blocks` | 自分がブロックしている一覧 |
+| POST | `/app/blocks` | ブロック登録 `{blocked_user_id}`（効果は双方向） |
+| DELETE | `/app/blocks` | ブロック解除 |
+| POST | `/app/devices` | FCM トークン upsert `{platform, fcm_token}`（updated_at 更新） |
+| DELETE | `/app/devices` | FCM トークン削除 |
+| GET | `/app/regular-slots` | 自分の登録済み時間帯一覧 `{id, weekday, start_min, end_min}` |
+| POST | `/app/regular-slots` | 時間帯追加 `{weekday, start_min, end_min}`（weekday は 0=月曜〜6=日曜、分は 0〜1439、start < end を検証。違反は 400） |
+| DELETE | `/app/regular-slots/{id}` | 自分の枠のみ削除可（存在しない・他人のは 404） |
+| GET | `/app/free-time/forecast` | 自分のヒマ時間帯の推定（下記「自由時間の推定」参照） |
 
-### PUT /devices
+### プッシュ通知（FCM）
 
-FCM token を登録・更新します。同じ利用者と platform の登録を置き換えます。
+- `api/push.py` の `send_push` がマッチ成立時・ノック着信時・ノック返答時に、**相手が devices を持っていれば**送る
+- `FCM_SERVICE_ACCOUNT_JSON`（サービスアカウント JSON のファイルパス）未設定なら **dry-run**：通知は送らず `[push dry-run] user=… devices=… title=… body=…` をログ出力するだけ（**ハッカソン期間の既定**）
+- プッシュはどのような失敗（例外・HTTP エラー）でも**リクエストを失敗させない**（ログのみ）
 
-リクエスト:
+### 実装上の注記
 
-    {"platform": "android", "fcm_token": "fcm_registration_token"}
-
-platform は android / ios。200 OK:
-
-    {"registered": true, "platform": "android", "updated_at": "2026-11-16T12:07:00Z"}
-
-## 定期的なヒマ時間
-
-### GET /regular-slots
-
-200 OK:
-
-    {"slots": [{"weekday": 5, "start_min": 1080, "end_min": 1320}]}
-
-### PUT /regular-slots
-
-全スロットを置き換えます。空配列は全削除です。start_min と end_min は 0〜1440 の範囲で start_min < end_min とします。日をまたぐ時間は曜日ごとに分割します。曜日・範囲の不正や重複は 400 validation_error です。
-
-リクエストと 200 OK の形式:
-
-    {
-      "slots": [
-        {"weekday": 5, "start_min": 1080, "end_min": 1320},
-        {"weekday": 6, "start_min": 600, "end_min": 720}
-      ]
-    }
-
-## ヒマ時間の提案
-
-### GET /suggestions/hima-times
-
-過去の自分の宣言から、曜日と時間ごとの宣言しやすさをサーバー側で算出します。Asia/Tokyo 基準、likelihood は 0.0〜1.0。履歴が足りない場合は空配列です。
-
-200 OK:
-
-    {
-      "suggestions": [
-        {"weekday": 5, "hour": 20, "likelihood": 0.82}
-      ]
-    }
-
-weekday は月曜 0〜日曜 6、hour は 0〜23 です。アプリ側で学習・再計算しません。
-
-## 公開範囲とプライバシー
-
-- 判定対象は有効期限内の宣言です。fire × fire は双方、fire × ok は fire 側、ok × ok は双方に前述の kind を作成します。
-- quiet は友達一覧には表示しますが、自動マッチせず、マッチ通知も送りません。
-- 同じ activity、次にいずれかが any のペアを優先します。activity が null の相手は指定なしとして any より後ろに置きます（自分が未指定のときも any を優先します）。activity が異なり双方 any でないペアもマッチ対象です。
-- 共通サーバーで双方が visible の場合だけ、そのサーバー経由の一覧・マッチ・ノックを表示します。
-- 片側だけの対象外設定でも相互に隠し、一覧・マッチ・ノック・通知から除外します。誰が設定したかを相手に知らせません。
-- 他人の source は全レスポンス・通知から除外します。source は本人向けの GET /hima/me と PUT /hima/me に限り返します。
-- アプリはフォアグラウンド中、約 30 秒ごとに一覧・マッチ・ノックを再取得します。push 対応後も公開範囲とブロック判定は同じ規則を適用します。
-
+- 宣言・終了・マッチング・ノックのロジックは Bot / アプリで**同一のサービス層**（`api/domain.py`）を共有し、二重実装はない。Bot 側の外部仕様（パス・項目・ステータスコード）は不変
+- `GET /bot/board` は `/bot/board`（単一ギルド版）と `/app/board`（横断版）で同じ除外ロジック（共有可視・ブロック）を共有

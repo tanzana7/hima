@@ -1,5 +1,6 @@
 # secrets / local data
 .env
+api/.env
 data.db
 *.db
 *.db.bak
