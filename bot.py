@@ -76,7 +76,14 @@ class HimaBot(commands.Bot):
         command = interaction.command
         name = command.name if command is not None else "<unknown>"
         print(f"[hima-bot][cmd-error] /{name}: {type(error).__name__}: {error}")
-        # ユーザーへの応答試行で二次例外を出さないよう握る
+        # defer 済み（考え中…のまま）なら followup で利用者にエラーを返す。未 defer は従来どおり握る
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(
+                    "エラーが発生しました。しばらくしてからもう一度試してください。", ephemeral=True
+                )
+        except discord.HTTPException:
+            pass
 
     async def on_disconnect(self) -> None:
         print("[hima-bot][gateway] disconnected")

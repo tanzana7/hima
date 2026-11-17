@@ -1,6 +1,7 @@
 """UI parts for the Atsumaro bot (thin client over the Atsumaro API)."""
 from __future__ import annotations
 
+import functools
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -26,6 +27,8 @@ CANDIDATE_LIMIT = 25
 INBOX_LIMIT = 5
 
 CONNECTION_ERROR_TEXT = "APIサーバーに接続できませんでした。しばらくしてからもう一度試してください。"
+ERROR_FOLLOWUP_TEXT = "エラーが発生しました。しばらくしてからもう一度試してください。"
+TEMPLATE_NONE = "__none__"  # 「誘い文なし」の select value（Discord は value に 1〜100 文字を要求するため空文字は不可）
 
 
 async def send_api_error(target, exc: Exception) -> None:
@@ -46,6 +49,40 @@ async def send_api_error(target, exc: Exception) -> None:
         await target.followup.send(content, ephemeral=True)
     else:
         await target.response.send_message(content, ephemeral=True)
+
+
+async def send_error_followup(interaction: discord.Interaction, error: Exception, where: str = "") -> None:
+    """defer 済み（考え中…のまま）で後段が失敗したとき、framework に握られる前に利用者へエラーを返す。"""
+    log.error("interaction error %s: %s: %r", where, type(error).__name__, error)
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send(ERROR_FOLLOWUP_TEXT, ephemeral=True)
+        else:
+            await interaction.response.send_message(ERROR_FOLLOWUP_TEXT, ephemeral=True)
+    except Exception:  # noqa: BLE001 - エラー応答の送信自体の失敗は握る（ログのみ）
+        log.exception("failed to send error followup")
+
+
+class ErrorFollowupView(ui.View):
+    """View 共通 on_error：component callback の例外を握らず、defer 後は followup で利用者に通知する。"""
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception, item: ui.Item, /) -> None:
+        await send_error_followup(
+            interaction, error, f"{type(self).__name__}.{getattr(item, 'custom_id', type(item).__name__)}"
+        )
+
+
+def guarded(callback):
+    """DynamicItem 用：callback の例外を framework が握る前に受け止め、利用者へエラーを返す。"""
+
+    @functools.wraps(callback)
+    async def wrapper(self, interaction: discord.Interaction) -> None:
+        try:
+            await callback(self, interaction)
+        except Exception as error:  # noqa: BLE001
+            await send_error_followup(interaction, error, type(self).__name__)
+
+    return wrapper
 
 
 # ------------------------------------------------------------------ board render
@@ -128,6 +165,7 @@ class KnockReplyButton(ui.DynamicItem, template=r"atsumaro:knockreply:(?P<knock_
     async def from_custom_id(cls, interaction: discord.Interaction, item: ui.Item, match: Any) -> "KnockReplyButton":
         return cls(int(match["knock_id"]), match["action"])
 
+    @guarded
     async def callback(self, interaction: discord.Interaction) -> None:
         bot = interaction.client  # type: ignore[union-attr]
         is_dm = interaction.guild_id is None  # お返事着信 DM 上のボタン（痕跡を残さない）
@@ -176,6 +214,7 @@ class SuggestDeclareButton(ui.DynamicItem, template=r"atsumaro:suggest:declare")
     async def from_custom_id(cls, interaction: discord.Interaction, item: ui.Item, match: Any) -> "SuggestDeclareButton":
         return cls()
 
+    @guarded
     async def callback(self, interaction: discord.Interaction) -> None:
         bot = interaction.client  # type: ignore[union-attr]
         await interaction.response.defer(ephemeral=True, thinking=True)
@@ -215,6 +254,7 @@ class WatchToggle(ui.DynamicItem, template=r"atsumaro:watchtoggle:(?P<state>[01]
     async def from_custom_id(cls, interaction: discord.Interaction, item: ui.Item, match: Any) -> "WatchToggle":
         return cls(match["state"] == "1")
 
+    @guarded
     async def callback(self, interaction: discord.Interaction) -> None:
         bot = interaction.client  # type: ignore[union-attr]
         new_state = not self.state
@@ -233,7 +273,7 @@ class WatchToggle(ui.DynamicItem, template=r"atsumaro:watchtoggle:(?P<state>[01]
 # ------------------------------------------------------------------ board view
 
 
-class BoardView(ui.View):
+class BoardView(ErrorFollowupView):
     """個人用掲示板（ephemeral）。ヒマ宣言/お返事/ブロック/お知らせ/やめるのボタン＋受信箱の返答ボタン。"""
 
     def __init__(self, bot: "HimaBot", data: dict) -> None:
@@ -326,7 +366,7 @@ async def _build_board(bot: "HimaBot", interaction: discord.Interaction) -> tupl
 # ------------------------------------------------------------------ panel view
 
 
-class AtsumaroPanelView(ui.View):
+class AtsumaroPanelView(ErrorFollowupView):
     """共有パネル（API が投稿する atsumaro:* ボタン）への応答。永続登録済み。"""
 
     def __init__(self, bot: "HimaBot") -> None:
@@ -363,7 +403,7 @@ class AtsumaroPanelView(ui.View):
 # ------------------------------------------------------------------ join view
 
 
-class JoinView(ui.View):
+class JoinView(ErrorFollowupView):
     """登録ビュー（時間/温度感/やりたいことのセレクト＋ひとことModal＋確定）。"""
 
     def __init__(self, bot: "HimaBot", guild_id: int | None, user: discord.abc.User) -> None:
@@ -502,7 +542,7 @@ class JoinNoteModal(ui.Modal):
 # ------------------------------------------------------------------ knock send view
 
 
-class KnockSendView(ui.View):
+class KnockSendView(ErrorFollowupView):
     """お返事送信画面（相手と誘い文を選んで POST /bot/knocks）。"""
 
     def __init__(self, bot: "HimaBot", user: discord.abc.User, candidates: list[dict]) -> None:
@@ -525,12 +565,12 @@ class KnockSendView(ui.View):
 
     @ui.select(
         placeholder="誘い文はどれ？（なしでも送れるよ）",
-        options=[discord.SelectOption(label="誘い文なし", value="")] +
+        options=[discord.SelectOption(label="誘い文なし", value=TEMPLATE_NONE)] +
                  [discord.SelectOption(label=text, value=text) for text in KNOCK_TEMPLATES],
         row=1,
     )
     async def template_select(self, interaction: discord.Interaction, select: ui.Select) -> None:
-        self.template = select.values[0] or None
+        self.template = None if select.values[0] == TEMPLATE_NONE else select.values[0]
         await interaction.response.defer()
 
     @ui.button(label="お返事を送る", style=discord.ButtonStyle.primary, row=2, emoji="🚪")
@@ -559,7 +599,7 @@ class KnockSendView(ui.View):
         await interaction.followup.send("\n".join(parts), ephemeral=True)
 
 
-class KnockTemplateView(ui.View):
+class KnockTemplateView(ErrorFollowupView):
     """誘い文選択（なし / game / chat / work）→ 指定した相手にお返事を送る。/panel 参加 から使う。"""
 
     def __init__(self, bot: "HimaBot", user: discord.abc.User, target: discord.abc.User) -> None:
@@ -614,7 +654,7 @@ def _block_embed(blocked: list[int]) -> discord.Embed:
     )
 
 
-class BlockManageView(ui.View):
+class BlockManageView(ErrorFollowupView):
     """ブロック追加（ユーザーセレクト）と解除（文字セレクト）。相手には知らせない。"""
 
     def __init__(self, bot: "HimaBot", user: discord.abc.User, blocked: list[int]) -> None:
