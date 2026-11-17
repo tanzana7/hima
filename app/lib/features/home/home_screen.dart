@@ -179,6 +179,17 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  /// The declared hero hides the chip row, so the same optional choice is made
+  /// in a sheet from the meta row.
+  Future<void> _changeActivity() async {
+    final viewModel = context.read<AppViewModel>();
+    final current = viewModel.selectedActivity;
+    final choice = await showActivityPicker(context, current: current);
+    if (choice == null || !mounted) return;
+    if (choice.activity == current) return;
+    await _selectActivity(choice.activity);
+  }
+
   void _handleExpired() {
     if (!mounted) return;
     setState(() => _justExpired = true);
@@ -216,6 +227,7 @@ class _HomeScreenState extends State<HomeScreen> {
   List<MatchCard> _matchCards(
     List<MatchRecord> matches,
     Set<String> pendingUserIds,
+    Set<String> acceptedUserIds,
   ) {
     const order = [MatchKind.fireFire, MatchKind.fireOk, MatchKind.okOk];
     return [
@@ -226,6 +238,7 @@ class _HomeScreenState extends State<HomeScreen> {
             kind: kind,
             matches: matches.where((match) => match.kind == kind).toList(),
             pendingUserIds: pendingUserIds,
+            acceptedUserIds: acceptedUserIds,
             onKnock: (match) => _knock(
               match.otherUser,
               activity: match.otherHima.activity,
@@ -245,7 +258,12 @@ class _HomeScreenState extends State<HomeScreen> {
       fallbackMood: viewModel.lastMood,
     );
     final pendingUserIds = viewModel.pendingKnockUserIds;
-    final matchCards = _matchCards(viewModel.matches, pendingUserIds);
+    final acceptedUserIds = viewModel.acceptedKnockUserIds;
+    final matchCards = _matchCards(
+      viewModel.matches,
+      pendingUserIds,
+      acceptedUserIds,
+    );
     return ListView(
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.s16,
@@ -278,6 +296,7 @@ class _HomeScreenState extends State<HomeScreen> {
             onChangeMood: _changeMood,
             onChangeDuration: _changeDuration,
             onSelectActivity: _selectActivity,
+            onChangeActivity: _changeActivity,
             onExpired: _handleExpired,
           ),
         if (matchCards.isNotEmpty) ...[
@@ -292,6 +311,7 @@ class _HomeScreenState extends State<HomeScreen> {
         FriendsSection(
           friends: viewModel.friends,
           pendingUserIds: pendingUserIds,
+          acceptedUserIds: acceptedUserIds,
           loading: viewModel.isRefreshingLive,
           hasError: viewModel.hasLiveError,
           onRetry: () => unawaited(viewModel.refreshLiveData()),

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../app/theme/activity_style.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_spacing.dart';
 import '../../../app/theme/app_text_styles.dart';
@@ -10,7 +11,9 @@ import '../../../shared/haptics.dart';
 ///
 /// They sit inside the hero, directly under the main button, as one horizontally
 /// scrolling row: choosing an activity used to require scrolling past the whole
-/// friend grid, so the choice was effectively hidden.
+/// friend grid, so the choice was effectively hidden. Each activity keeps its own
+/// pastel tint and icon ([ActivityStyle]) so the row reads as a set of playful
+/// stickers instead of five identical white chips.
 class ActivityChips extends StatelessWidget {
   const ActivityChips({
     super.key,
@@ -26,11 +29,13 @@ class ActivityChips extends StatelessWidget {
     children: [
       // Kept as a compact inline label so the chips still read as the optional
       // 「なにする？」 choice (Design.md 4.4) without adding a second row.
+      const Icon(Icons.bolt_rounded, size: 15, color: AppColors.coral),
+      const SizedBox(width: 2),
       Text(
         'なにする？',
         maxLines: 1,
         style: AppTextStyles.caption.copyWith(
-          fontWeight: FontWeight.w700,
+          fontWeight: FontWeight.w800,
           color: AppColors.ink,
         ),
       ),
@@ -81,6 +86,7 @@ class _ActivityChipState extends State<_ActivityChip> {
   @override
   Widget build(BuildContext context) {
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final style = ActivityStyle.of(widget.activity);
     return Semantics(
       button: true,
       selected: widget.selected,
@@ -106,28 +112,21 @@ class _ActivityChipState extends State<_ActivityChip> {
               minHeight: AppSpacing.minTapTarget,
             ),
             padding: const EdgeInsets.symmetric(
-              horizontal: AppSpacing.s16,
+              horizontal: AppSpacing.s12 + 2,
               vertical: AppSpacing.s8,
             ),
             decoration: BoxDecoration(
-              color: widget.selected
-                  ? AppColors.purpleSoft
-                  : AppColors.surface,
+              color: style.background,
               borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
               border: Border.all(
-                color: widget.selected
-                    ? AppColors.purple
-                    : AppColors.purpleSoft,
+                color: widget.selected ? AppColors.ink : Colors.transparent,
                 width: AppSpacing.borderWidth,
               ),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(
-                  widget.activity.emoji,
-                  style: const TextStyle(fontSize: 16),
-                ),
+                Icon(style.icon, size: 16, color: style.accent),
                 const SizedBox(width: AppSpacing.s4 + 2),
                 Text(
                   widget.activity.label,
@@ -137,7 +136,7 @@ class _ActivityChipState extends State<_ActivityChip> {
                     fontWeight: widget.selected
                         ? FontWeight.w800
                         : FontWeight.w600,
-                    color: widget.selected ? AppColors.ink : AppColors.muted,
+                    color: AppColors.ink,
                   ),
                 ),
                 if (widget.selected) ...[
@@ -145,7 +144,7 @@ class _ActivityChipState extends State<_ActivityChip> {
                   const Icon(
                     Icons.check_rounded,
                     size: 16,
-                    color: AppColors.purple,
+                    color: AppColors.ink,
                   ),
                 ],
               ],

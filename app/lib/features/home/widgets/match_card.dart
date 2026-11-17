@@ -13,15 +13,17 @@ import '../../../shared/widgets/knock_pill.dart';
 /// the same people the friend grid below already shows, so the friends of a kind
 /// are grouped into one card with a row of avatars.
 ///
-/// It springs in once. For ok × ok the first avatar slides in and bumps against
-/// a small 🙂 badge, which is the visual for 「お互い誘われ待ちだよ」; the bump
-/// belongs to the card as a whole instead of pairing my own avatar with theirs.
+/// The kind is stated once, by the icon and the sentence in the header. An
+/// earlier version floated a 🙂 bubble beside the first avatar, which read as
+/// that person's mood instead of the kind's; each avatar now carries its own
+/// mood badge, so every emoji on the card belongs to somebody.
 class MatchCard extends StatefulWidget {
   const MatchCard({
     super.key,
     required this.kind,
     required this.matches,
     required this.pendingUserIds,
+    required this.acceptedUserIds,
     required this.onKnock,
   });
 
@@ -32,6 +34,9 @@ class MatchCard extends StatefulWidget {
 
   /// People whose knock from me is still waiting for an answer.
   final Set<String> pendingUserIds;
+
+  /// People whose knock was answered 「いいよ！」.
+  final Set<String> acceptedUserIds;
 
   final ValueChanged<MatchRecord> onKnock;
 
@@ -159,9 +164,10 @@ class _MatchCardState extends State<MatchCard>
                       _FriendCell(
                         match: visible[index],
                         width: cellWidth,
-                        bump: widget.kind == MatchKind.okOk && index == 0,
-                        progress: _controller,
                         pending: widget.pendingUserIds.contains(
+                          visible[index].otherUser.id,
+                        ),
+                        accepted: widget.acceptedUserIds.contains(
                           visible[index].otherUser.id,
                         ),
                         onTap: () => widget.onKnock(visible[index]),
@@ -182,43 +188,74 @@ class _MatchCardState extends State<MatchCard>
   }
 }
 
-/// One matched friend: avatar, name and its own さそう pill.
+/// One matched friend: avatar with their mood, name and its own knock pill.
 class _FriendCell extends StatelessWidget {
   const _FriendCell({
     required this.match,
     required this.width,
-    required this.bump,
-    required this.progress,
     required this.pending,
+    required this.accepted,
     required this.onTap,
   });
 
   final MatchRecord match;
   final double width;
-  final bool bump;
-  final Animation<double> progress;
   final bool pending;
+  final bool accepted;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final user = match.otherUser;
-    final avatar = GestureDetector(
-      onTap: pending ? null : onTap,
-      child: AvatarView(
-        name: user.displayName,
-        imageUrl: user.avatarUrl,
-        // 48dp keeps the avatar itself a valid tap target.
-        size: 48,
-        background: AppColors.purpleSoft,
-      ),
-    );
+    final locked = pending || accepted;
     return SizedBox(
       width: width,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (bump) _bump(context, avatar) else avatar,
+          GestureDetector(
+            onTap: locked ? null : onTap,
+            child: SizedBox(
+              width: 48,
+              height: 48,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  AvatarView(
+                    name: user.displayName,
+                    imageUrl: user.avatarUrl,
+                    // 48dp keeps the avatar itself a valid tap target.
+                    size: 48,
+                    background: AppColors.purpleSoft,
+                    ring: AppColors.surface,
+                    ringWidth: 2,
+                  ),
+                  Positioned(
+                    right: -3,
+                    bottom: -3,
+                    child: Semantics(
+                      label: match.otherHima.mood.label,
+                      child: ExcludeSemantics(
+                        child: Container(
+                          width: 18,
+                          height: 18,
+                          alignment: Alignment.center,
+                          decoration: const BoxDecoration(
+                            color: AppColors.surface,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Text(
+                            match.otherHima.mood.emoji,
+                            style: const TextStyle(fontSize: 9),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
           const SizedBox(height: AppSpacing.s4),
           Text(
             user.displayName,
@@ -234,58 +271,13 @@ class _FriendCell extends StatelessWidget {
             friendName: user.displayName,
             onTap: onTap,
             sent: pending,
+            accepted: accepted,
             dense: true,
           ),
         ],
       ),
     );
   }
-
-  /// The avatar slides in from the right until it bumps the 🙂 badge.
-  Widget _bump(BuildContext context, Widget avatar) => AnimatedBuilder(
-    animation: progress,
-    builder: (context, child) {
-      final close = CurvedAnimation(
-        parent: progress,
-        curve: const Interval(0.35, 0.95, curve: Curves.easeOutBack),
-      ).value;
-      return Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Transform.scale(scale: 0.88 + 0.12 * close, child: const _OkBadge()),
-          const SizedBox(width: 2),
-          // Only the paint offset moves, so the row never overflows its cell.
-          Transform.translate(
-            offset: Offset(14 * (1 - close), 0),
-            child: child,
-          ),
-        ],
-      );
-    },
-    child: avatar,
-  );
-}
-
-class _OkBadge extends StatelessWidget {
-  const _OkBadge();
-
-  @override
-  Widget build(BuildContext context) => ExcludeSemantics(
-    child: Container(
-      width: 20,
-      height: 20,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        shape: BoxShape.circle,
-        border: Border.all(
-          color: AppColors.purpleSoft,
-          width: AppSpacing.borderWidth,
-        ),
-      ),
-      child: const Text('🙂', style: TextStyle(fontSize: 11)),
-    ),
-  );
 }
 
 /// 「+N」 for the friends of this kind that do not fit in the row.

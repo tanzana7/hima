@@ -4,16 +4,18 @@ import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_spacing.dart';
 import '../../../app/theme/app_text_styles.dart';
 import '../../../data/models/models.dart';
-import '../../../shared/widgets/decorations.dart';
+import '../../../shared/widgets/doodles.dart';
 import '../../../shared/widgets/empty_state.dart';
 import 'friend_status_card.dart';
 
-/// 「いまひまな友達」 with the lime count badge and a responsive grid.
+/// 「いまひまな友達」 with an icon, the lime count badge, a squiggle underline and
+/// a responsive grid.
 class FriendsSection extends StatelessWidget {
   const FriendsSection({
     super.key,
     required this.friends,
     required this.pendingUserIds,
+    required this.acceptedUserIds,
     required this.loading,
     required this.hasError,
     required this.onRetry,
@@ -25,6 +27,9 @@ class FriendsSection extends StatelessWidget {
   /// People whose knock from me is still waiting for an answer.
   final Set<String> pendingUserIds;
 
+  /// People whose knock was answered 「いいよ！」.
+  final Set<String> acceptedUserIds;
+
   final bool loading;
   final bool hasError;
   final VoidCallback onRetry;
@@ -34,24 +39,52 @@ class FriendsSection extends StatelessWidget {
   /// status and the remaining time next to it.
   static const _twoColumnMinWidth = 348.0;
 
+  /// Only some cards get a mark, so the grid does not look gridded.
+  static DoodleKind? _doodleFor(int index) => switch (index % 4) {
+    1 => DoodleKind.heart,
+    3 => DoodleKind.star,
+    _ => null,
+  };
+
   @override
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
       Row(
         children: [
-          Expanded(
-            child: Text(
-              'いまひまな友達',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: AppTextStyles.sectionTitle,
+          const Icon(Icons.group_rounded, size: 22, color: AppColors.ink),
+          const SizedBox(width: AppSpacing.s8),
+          Flexible(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'いまひまな友達',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTextStyles.sectionTitle,
+                ),
+                Doodle(
+                  kind: DoodleKind.squiggle,
+                  size: const Size(120, 8),
+                  color: AppColors.purple.withValues(alpha: 0.65),
+                  strokeWidth: 2.5,
+                  delay: const Duration(milliseconds: 100),
+                ),
+              ],
             ),
           ),
           const SizedBox(width: AppSpacing.s8),
           _CountBadge(count: friends.length),
           const SizedBox(width: AppSpacing.s8),
-          const StarAccent(size: 18),
+          const Doodle(
+            kind: DoodleKind.sparks,
+            size: Size(20, 16),
+            color: AppColors.coral,
+            tilt: 0.2,
+            delay: Duration(milliseconds: 180),
+          ),
         ],
       ),
       const SizedBox(height: AppSpacing.s12),
@@ -113,6 +146,10 @@ class FriendsSection extends StatelessWidget {
                             AppColors.friendTints[index %
                                 AppColors.friendTints.length],
                         pending: pendingUserIds.contains(friends[index].user.id),
+                        accepted: acceptedUserIds.contains(
+                          friends[index].user.id,
+                        ),
+                        doodle: _doodleFor(index),
                         onKnock: () => onKnock(friends[index]),
                       ),
                     ),
