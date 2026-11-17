@@ -43,7 +43,6 @@ class HimaBot(commands.Bot):
         super().__init__(command_prefix="!", intents=discord.Intents.default())
         self.display_name = os.getenv("BOT_DISPLAY_NAME") or "今ヒマ！"
         self.api = ApiClient()
-        self.panel_setup_locks: dict[int, asyncio.Lock] = {}
         self._started_at = time.time()
 
     async def setup_hook(self) -> None:
@@ -139,55 +138,14 @@ class HimaCog(commands.Cog):
     def __init__(self, bot: HimaBot) -> None:
         self.bot = bot
 
-    # ------------------------------------------------------------------ /panel_setup
+    # ------------------------------------------------------------------ /panel_remove（旧パネル掃除用）
 
-    @app_commands.command(name="panel_setup", description="Atsumaro パネル（人数表示つき）をこのチャンネルに設置する")
-    @app_commands.guild_only()
-    async def panel_setup(self, interaction: discord.Interaction) -> None:
-        assert interaction.guild_id is not None
-        await interaction.response.defer(ephemeral=True)
-        lock = self.bot.panel_setup_locks.setdefault(interaction.guild_id, asyncio.Lock())
-        if lock.locked():
-            await interaction.followup.send("設置処理中です。少し待ってからもう一度試してね。", ephemeral=True)
-            return
-        async with lock:
-            # 旧方式のメッセージ対を先に消す（未設置なら何も起きない）
-            try:
-                await self.bot.api.teardown_guild(interaction.guild_id)
-            except ApiHTTPError as exc:
-                if exc.status_code != 404:
-                    await send_api_error(interaction, exc)
-                    return
-            except ApiConnectionError as exc:
-                await send_api_error(interaction, exc)
-                return
-            channel = interaction.channel
-            assert channel is not None and hasattr(channel, "send")
-            scanned, removed = await self.bot.sweep_legacy_messages(channel)
-            try:
-                data = await self.bot.api.setup_guild(
-                    interaction.guild_id, interaction.guild.name, channel.id
-                )
-            except (ApiConnectionError, ApiHTTPError) as exc:
-                await send_api_error(interaction, exc)
-                return
-            lines = [f"パネルを設置したよ！（掃除：{removed}件削除）"]
-            if data.get("counter_message_id"):
-                lines.append(f"人数メッセージ: {data.get('counter_message_id')}")
-            if data.get("panel_message_id"):
-                lines.append(f"パネルメッセージ: {data.get('panel_message_id')}")
-            await interaction.followup.send("\n".join(lines), ephemeral=True)
-
-    # ------------------------------------------------------------------ /panel_remove
-
-    @app_commands.command(name="panel_remove", description="このチャンネルのパネルと人数表示を削除する")
+    @app_commands.command(name="panel_remove", description="残っている旧パネル・人数メッセージを掃除する（入口は /board に一本化済み）")
     @app_commands.guild_only()
     async def panel_remove(self, interaction: discord.Interaction) -> None:
         assert interaction.guild_id is not None
         await interaction.response.defer(ephemeral=True)
-        channel = interaction.channel
-        assert channel is not None
-        scanned, removed = await self.bot.sweep_legacy_messages(channel)
+        # API 側 teardown：残っていれば旧常設メッセージ対を消す（未設置なら何も起きない）
         try:
             await self.bot.api.teardown_guild(interaction.guild_id)
         except ApiHTTPError as exc:
@@ -197,7 +155,13 @@ class HimaCog(commands.Cog):
         except ApiConnectionError as exc:
             await send_api_error(interaction, exc)
             return
-        await interaction.followup.send(f"パネルを撤去したよ！（掃除：{removed}件削除）", ephemeral=True)
+        channel = interaction.channel
+        assert channel is not None
+        scanned, removed = await self.bot.sweep_legacy_messages(channel)
+        await interaction.followup.send(
+            f"パネルを削除しました。今後は /board だけが入口です（掃除：{removed}件削除）",
+            ephemeral=True,
+        )
 
     # ------------------------------------------------------------------ /board
 

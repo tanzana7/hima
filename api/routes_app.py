@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import text
 
-from . import discord_oauth, discord_rest, domain, forecast, notify
+from . import discord_oauth, discord_rest, domain, forecast
 from .auth import issue_app_token, require_app_user
 from .db import SessionLocal
 from .models import Block, Device, Guild, RegularSlot, User
@@ -144,7 +144,6 @@ def membership_visibility(guild_id: int, body: AppVisibilityIn, user_id: int = D
             raise HTTPException(status_code=404, detail="guild not found")
         m = upsert_membership(db, guild_id, user_id, visible=body.visible)
         db.commit()
-        notify.update_counter_for_guild(db, guild_id, rest=discord_rest.rest)
         return {"guild_id": guild_id, "user_id": user_id, "visible": m.visible}
 
 

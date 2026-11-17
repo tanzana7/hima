@@ -45,7 +45,7 @@ def declare_session(
     guild_id: int | None = None,
     rest=None,
 ) -> dict:
-    """宣言（新規 or 延長）。マッチング評価・見守りキュー・人数メッセージ更新も行う。"""
+    """宣言（新規 or 延長）。マッチング評価・見守りキュー登録も行う。"""
     if mood not in MOODS:
         raise HTTPException(status_code=400, detail="invalid mood")
     if activity not in ACTIVITIES:
@@ -80,12 +80,11 @@ def declare_session(
     db.commit()
     matching.evaluate_for_session(db, row, rest=rest)
     notify.enqueue_watchers(db, row)
-    notify.update_counters_for_user(db, user_id, rest=rest)
     return {"session_id": row.id, "created": created, "expires_at": row.expires_at.isoformat()}
 
 
 def end_session(db, user_id: int, rest=None) -> dict:
-    """有効セッション終了。宛ノックを expired にし（着信 DM も削除）、人数メッセージを更新する。"""
+    """有効セッション終了。宛ノックを expired にし（着信 DM も削除）する。"""
     row = active_session(db, user_id)
     ended = row is not None
     if ended:
@@ -97,7 +96,6 @@ def end_session(db, user_id: int, rest=None) -> dict:
     )
     db.commit()
     cleanup_knock_dms([user_id], rest=rest)
-    notify.update_counters_for_user(db, user_id, rest=rest)
     return {"user_id": user_id, "ended": ended}
 
 

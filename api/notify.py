@@ -14,11 +14,10 @@ from .services import is_blocked, utcnow, visible_guild_ids
 
 log = logging.getLogger("atsumaro.notify")
 
-COUNTER_FORMAT = "いま{n}人ヒマ"
 FLUSH_INTERVAL_TICKS = 6  # 30s tick × 6 = 3 minutes
 
 
-# ------------------------------------------------------------------ counter (messages)
+# ------------------------------------------------------------------ count (debug)
 
 
 def count_visible_active_sessions(db: Session, guild_id: int) -> int:
@@ -36,48 +35,6 @@ def count_visible_active_sessions(db: Session, guild_id: int) -> int:
             {"g": guild_id},
         ).scalar_one()
     )
-
-
-def update_counter_for_guild(db: Session, guild_id: int, rest=None) -> None:
-    """人数メッセージの編集。トピック PATCH は不採用（4a3fa26 を参照）。"""
-    rest = rest or discord_rest.rest
-    guild = db.get(Guild, guild_id)
-    if guild is None or guild.list_message_id is None or guild.list_channel_id is None:
-        return
-    n = count_visible_active_sessions(db, guild_id)
-    rest.edit_message(guild.list_channel_id, guild.list_message_id, COUNTER_FORMAT.format(n=n))
-
-
-def update_counters_for_user(db: Session, user_id: int, rest=None) -> None:
-    for guild_id in visible_guild_ids(db, user_id):
-        update_counter_for_guild(db, guild_id, rest)
-
-
-def refresh_all_counters(db: Session | None = None, rest=None) -> int:
-    """Recompute and fix every guild's counter message (worker tick)."""
-    rest = rest or discord_rest.rest
-    own = db is None
-    if own:
-        db = SessionLocal()
-    updated = 0
-    try:
-        rows = db.execute(
-            text(
-                """
-                SELECT id, list_channel_id, list_message_id
-                FROM guilds
-                WHERE list_message_id IS NOT NULL AND list_channel_id IS NOT NULL
-                """
-            )
-        ).all()
-        for guild_id, channel_id, message_id in rows:
-            n = count_visible_active_sessions(db, int(guild_id))
-            rest.edit_message(int(channel_id), int(message_id), COUNTER_FORMAT.format(n=n))
-            updated += 1
-    finally:
-        if own:
-            db.close()
-    return updated
 
 
 # ------------------------------------------------------------------ watch

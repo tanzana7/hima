@@ -81,10 +81,14 @@
 
 ※ トピック人数方式（人数をチャンネルトピックに表示）は一時採用後に不採用（revert: back to counter and panel messages）。guilds の base_topic / topic_counter 列は未使用のまま残置
 
-### 共有メッセージの形式
+### チャンネル内の常設メッセージ（廃止）
 
-- 人数メッセージ：`いま{n}人ヒマ`（n = visible な membership を持つ有効セッション中のユーザー数。宣言・解除の直後とワーカーtickで編集・更新）
-- パネルメッセージ：上記3ボタン付き。**チャンネルに残る Bot メッセージはこの2件のみ**で、それ以外の応答はコマンド／ボタン＋ephemeral で完結する
+- **チャンネルに Bot の常設メッセージ（人数メッセージ・パネルメッセージ）は置かない**。人数の常時表示も廃止（現在地は `GET /bot/guilds/{id}/count` で確認可能）
+- 操作の入口は **`/board` コマンド（ephemeral）のみ**。宣言・ノック・ブロック・見守り・解除はすべて /board のボタンとそれに続く ephemeral 応答で完結する
+- `POST /bot/guilds/{id}/setup` はギルド登録のみ（メッセージは投稿しない）。`teardown` は旧パネル掃除用（ID 保存済みの常設メッセージ対が残っていれば削除）
+- `guilds.list_message_id` / `panel_message_id` / `base_topic` / `topic_counter` は**未使用列**（マイグレーションはせず、今後書き込まない）
+- 上記 `atsumaro:board/join/leave` は、掃除前に残っている旧パネルが押された場合の受け口として永続登録だけ維持する（新規に投稿されることはない）
+- トピック人数方式も一時採用後に不採用（revert: back to counter and panel messages → remove channel panel）
 
 ## 2. 認証
 
@@ -97,10 +101,10 @@
 | --- | --- | --- |
 | GET | `/health` | 疎通確認。DB 接続込みで 200 を返す（認証不要） |
 | GET | `/bot/ping` | Bot→API 認証の動作確認 |
-| POST | `/bot/guilds/{guild_id}/setup` | guilds を upsert し、人数メッセージ＋パネルメッセージを REST 投稿して ID を保存 |
-| POST | `/bot/guilds/{guild_id}/teardown` | 2つのメッセージを REST 削除（失敗は無視）し、メッセージID を NULL に |
-| POST | `/bot/sessions` | ヒマ宣言（延長=同ID更新／新規は source=manual）。マッチング評価＋見守りキュー登録＋人数メッセージ更新 |
-| DELETE | `/bot/sessions` | 有効セッション終了。宛ノックを expired に、人数メッセージを更新 |
+| POST | `/bot/guilds/{guild_id}/setup` | guilds を upsert し、name と list_channel_id を記録する。**メッセージは一切投稿しない**（応答の counter_message_id / panel_message_id は常に null） |
+| POST | `/bot/guilds/{guild_id}/teardown` | list_message_id / panel_message_id が残っていればその2件を REST 削除（失敗は無視）して NULL 化。旧パネル掃除用 |
+| POST | `/bot/sessions` | ヒマ宣言（延長=同ID更新／新規は source=manual）。マッチング評価＋見守りキュー登録 |
+| DELETE | `/bot/sessions` | 有効セッション終了。宛ノックを expired に |
 | GET | `/bot/board?guild_id=&user_id=` | 閲覧者に見える有効セッション一覧（共有可視・ブロック除外・source非表示）＋宛ノック（最大5件。**`to_moon` は宛先＝受信者が現在🌙の有効セッションを持つときのみ true**）＋未見結果。レスポンスに `viewer.notify_on_hima` を含む |
 | POST | `/bot/knocks/results/seen` | 未見結果に `result_seen_at` を打つ |
 | POST | `/bot/knocks` | ノック作成（相手が有効セッション中・共有可視・非ブロック必須。5分クールダウンは 409） |
@@ -109,7 +113,7 @@
 | DELETE | `/bot/blocks` | ブロック解除 |
 | GET | `/bot/blocks?user_id=` | 自分がブロックしているユーザー一覧 |
 | PUT | `/bot/users/{user_id}/settings` | `notify_on_hima` の更新 |
-| PUT | `/bot/memberships/visibility` | membership の visible 更新（人数メッセージを即更新） |
+| PUT | `/bot/memberships/visibility` | membership の visible 更新 |
 | POST | `/bot/suggest-declare` | 提案 DM の「このまま宣言する」ボタン用。`{user_id}`。そのユーザーの auto_mood（未設定・無効値なら ok）/ activity=any / 30分 / source=suggested で宣言（マッチング・人数更新は通常宣言と同一）。応答は `/bot/sessions` と同じ形 |
 | GET | `/bot/guilds/{guild_id}/count` | 人数の取得（デバッグ用） |
 
@@ -153,7 +157,6 @@
 ## 5. バックグラウンドワーカー（30秒tick・advisory lock）
 
 - 期限切れセッションのクローズ（ended_at 書き込み）＋当事者の未返答ノックを expired にし、着信 DM（dm_message_id 保存済み）を削除
-- 全ギルドの人数メッセージ再計算・修正
 - **3分ごと**：未送信 watch_queue を watcher ごとにまとめ1通の DM（「👀 ヒマな人が出たよ：名前…（n人）」）を送り sent_at を記録
 - Discord REST は失敗時も例外を投げない（ログのみ）。テストでは `api.discord_rest.rest` をモックへ差し替え可能
 
@@ -171,9 +174,9 @@
 | --- | --- | --- |
 | GET | `/app/me` | プロフィール・設定・**自分の有効セッション（source を含む）**・memberships 一覧 |
 | PUT | `/app/me/settings` | `notify_on_hima` / `auto_mode` / `auto_mood` の部分更新 |
-| PUT | `/app/memberships/{guild_id}/visibility` | 自分の membership visible 更新（人数メッセージを即更新） |
+| PUT | `/app/memberships/{guild_id}/visibility` | 自分の membership visible 更新 |
 | GET | `/app/board` | **横断掲示板**：自分が member の全サーバーを統合。共有可視・ブロック除外判定は Bot 側と同じ。各行に `shared_guild_ids`（共通の visible サーバーID一覧）を付ける。ノック受信箱（最大5件、`to_moon` 付き）＋未見結果も返す。**他人のセッション行に source は含めない**（自分の行のみ `/app/me` で返す） |
-| POST | `/app/sessions` | ヒマ宣言 `{mood, activity, note, minutes, source}`（source は manual/suggested/auto）。Bot 側と**同一のサービス関数**を使うためマッチング・見守りキュー・人数メッセージ更新も同じに発火 |
+| POST | `/app/sessions` | ヒマ宣言 `{mood, activity, note, minutes, source}`（source は manual/suggested/auto）。Bot 側と**同一のサービス関数**を使うためマッチング・見守りキュー登録も同じに発火 |
 | DELETE | `/app/sessions` | 有効セッション終了（Bot 側と同一挙動） |
 | POST | `/app/knocks` | ノック作成（from_user は JWT 本人） |
 | POST | `/app/knocks/{id}/reply` | 返答（accept/later/pass）。to_user 本人のみ |

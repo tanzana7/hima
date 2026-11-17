@@ -46,11 +46,10 @@ def _close_expired_sessions() -> list[int]:
 
 
 def run_tick(rest=None) -> int:
-    """One unit of periodic work: close expired sessions, expire knocks + clean up DMs, refresh counters."""
+    """One unit of periodic work: close expired sessions, expire knocks + clean up DMs."""
     closed_users = _close_expired_sessions()
     if closed_users:
         domain.expire_knocks_and_cleanup_dms(closed_users, rest=rest)
-    notify.refresh_all_counters(rest=rest)
     return len(closed_users)
 
 
