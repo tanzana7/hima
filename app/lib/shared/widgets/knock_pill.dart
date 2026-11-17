@@ -15,7 +15,6 @@ class KnockPill extends StatelessWidget {
     this.sent = false,
     this.accepted = false,
     this.expand = false,
-    this.dense = false,
   });
 
   final String friendName;
@@ -33,9 +32,6 @@ class KnockPill extends StatelessWidget {
 
   /// Stretches the pill across its parent, used by the home friend cards.
   final bool expand;
-
-  /// Smaller label for the match card, where several pills sit side by side.
-  final bool dense;
 
   @override
   Widget build(BuildContext context) {
@@ -63,12 +59,12 @@ class KnockPill extends StatelessWidget {
           constraints: const BoxConstraints(minHeight: AppSpacing.minTapTarget),
           child: Center(
             child: ConstrainedBox(
-              constraints: BoxConstraints(minHeight: dense ? 32 : 40),
+              constraints: const BoxConstraints(minHeight: 40),
               child: Container(
                 width: expand ? double.infinity : null,
-                padding: EdgeInsets.symmetric(
-                  horizontal: dense ? 6 : AppSpacing.s12,
-                  vertical: dense ? AppSpacing.s4 : AppSpacing.s8,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.s12,
+                  vertical: AppSpacing.s8,
                 ),
                 decoration: BoxDecoration(
                   color: accepted
@@ -88,7 +84,7 @@ class KnockPill extends StatelessWidget {
                   mainAxisSize: expand ? MainAxisSize.max : MainAxisSize.min,
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(icon, size: dense ? 11 : 14, color: foreground),
+                    Icon(icon, size: 14, color: foreground),
                     const SizedBox(width: AppSpacing.s4),
                     Flexible(
                       child: Text(
@@ -96,7 +92,7 @@ class KnockPill extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          fontSize: dense ? 10 : 13,
+                          fontSize: 13,
                           fontWeight: FontWeight.w800,
                           color: foreground,
                         ),

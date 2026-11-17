@@ -10,6 +10,7 @@ import '../../../app/theme/app_text_styles.dart';
 import '../../../data/models/models.dart';
 import '../../../shared/widgets/avatar_view.dart';
 import '../../../shared/widgets/doodles.dart';
+import '../../../shared/widgets/mood_badge.dart';
 import '../../../shared/widgets/shake.dart';
 import '../hero_state.dart';
 import 'activity_chips.dart';
@@ -149,9 +150,9 @@ class _MyStatusHeroState extends State<MyStatusHero>
           ),
         ),
         // The marks sit in the padding band, so they can never land on the text
-        // however far the text scale grows. They are deliberately drawn in the
-        // palette colours rather than white: at the corners they fall just
-        // outside the blob, on the page background, where white would vanish.
+        // however far the text scale grows. They are drawn in palette colours
+        // rather than white: the band is inside the blob, and white on the pale
+        // idle wash is barely a mark at all.
         //
         // Keyed on the phase so they pop in again when the hero switches state:
         // a declaration is the moment worth celebrating.
@@ -162,7 +163,9 @@ class _MyStatusHeroState extends State<MyStatusHero>
             key: ValueKey('hero-sparks-$declared'),
             kind: DoodleKind.sparks,
             size: const Size(26, 20),
-            color: AppColors.coral,
+            // Yellow rather than coral: the corner sits on the declared
+            // gradient, where a coral mark all but disappears.
+            color: AppColors.yellow,
             tilt: 0.2,
           ),
         ),
@@ -242,9 +245,8 @@ class _MyStatusHeroState extends State<MyStatusHero>
               ),
             const SizedBox(width: AppSpacing.s12),
             Expanded(
-              // The blob's top-right corner curves away from the box, so the
-              // heading stops short of it: at a large text scale a line that ran
-              // to the edge would paint white glyphs on the page background.
+              // The heading stops short of the right edge so it never runs
+              // under the spark doodle in the corner.
               child: Padding(
                 padding: const EdgeInsets.only(right: AppSpacing.s12),
                 child: Column(
@@ -320,9 +322,13 @@ class _MyStatusHeroState extends State<MyStatusHero>
         ),
         if (declared) ...[
           const SizedBox(height: AppSpacing.s12),
-          // One row: how long is left, and what I want to do. Both stay
-          // tappable, so the mood and the activity are still changeable without
-          // the extra pills the hero used to carry.
+          // One wrap: how long is left, what I want to do, and the way out. All
+          // three stay tappable, so the mood and the activity are still
+          // changeable without the extra pills the hero used to carry.
+          //
+          // The exit shares the wrap instead of taking a row of its own. Its own
+          // row left the blob's bottom-left empty, made the hero taller than its
+          // content, and put the pill in the corner where the outline cut it.
           Wrap(
             spacing: AppSpacing.s8,
             runSpacing: AppSpacing.s8,
@@ -343,11 +349,8 @@ class _MyStatusHeroState extends State<MyStatusHero>
                   onTap: widget.onChangeActivity,
                 ),
               ),
+              _EndPill(onTap: widget.onEnd),
             ],
-          ),
-          Align(
-            alignment: Alignment.centerRight,
-            child: _EndPill(onTap: widget.onEnd),
           ),
         ] else ...[
           const SizedBox(height: AppSpacing.s16),
@@ -464,26 +467,7 @@ class _MoodAvatar extends StatelessWidget {
                   padding: const EdgeInsets.all(2),
                   child: Align(
                     alignment: Alignment.bottomRight,
-                    child: Container(
-                      width: 26,
-                      height: 26,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: AppColors.surface,
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: AppColors.ink.withValues(alpha: 0.18),
-                            blurRadius: 6,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: Text(
-                        mood.emoji,
-                        style: const TextStyle(fontSize: 14),
-                      ),
-                    ),
+                    child: MoodBadge(mood: mood, size: 26, emojiSize: 14),
                   ),
                 ),
               ),
@@ -519,13 +503,15 @@ class _HeroPill extends StatelessWidget {
       borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
       // Padding instead of a centred fixed box: the pill has to shrink-wrap so
       // the Wrap can lay the pills out from the heading's left edge, and the
-      // padding still brings the tap target to 48dp.
+      // padding still brings the tap target to 48dp. The horizontal padding is
+      // the chip value from Design.md 3.3 rather than the card value: three
+      // pills have to share one line on a 411dp screen.
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: AppSpacing.s4),
         child: Container(
           constraints: const BoxConstraints(minHeight: 40),
           padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.s12,
+            horizontal: AppSpacing.s8,
             vertical: AppSpacing.s4,
           ),
           decoration: BoxDecoration(
@@ -656,10 +642,9 @@ class _ActivityPill extends StatelessWidget {
 /// 「おわる」: the quiet way out of a declaration.
 ///
 /// It used to be a full-width white button, which competed with the heading and
-/// the mood pill. It is now a small pill under the meta row: still a 48dp target
-/// and still labelled for screen readers, but no longer a primary-looking
-/// action, and far enough from the meta pills that a reach for one cannot end
-/// the declaration by accident.
+/// the mood pill. It is now the last pill in the meta wrap: still a 48dp target
+/// and still labelled for screen readers, but translucent and small enough that
+/// it reads as a way out rather than as the point of the card.
 class _EndPill extends StatelessWidget {
   const _EndPill({required this.onTap});
 
@@ -683,7 +668,7 @@ class _EndPill extends StatelessWidget {
           widthFactor: 1,
           child: Container(
             padding: const EdgeInsets.symmetric(
-              horizontal: AppSpacing.s12,
+              horizontal: AppSpacing.s8,
               vertical: AppSpacing.s4,
             ),
             decoration: BoxDecoration(

@@ -5,7 +5,40 @@ import '../../../app/theme/app_spacing.dart';
 import '../../../app/theme/app_text_styles.dart';
 import '../../../data/models/models.dart';
 import '../../../shared/widgets/avatar_view.dart';
+import '../../../shared/widgets/doodles.dart';
 import '../../../shared/widgets/knock_pill.dart';
+import '../../../shared/widgets/mood_badge.dart';
+
+/// How a match kind presents itself: the emoji pair in the header, the card's
+/// pastel and the mark in its corner.
+///
+/// The tint is decoration only. What the card is about is written in the header
+/// sentence, so a reader who cannot tell peach from lemon loses nothing.
+extension _MatchKindStyle on MatchKind {
+  String get emoji => switch (this) {
+    MatchKind.fireFire => '🔥🔥',
+    MatchKind.fireOk => '🔥🙂',
+    MatchKind.okOk => '🙂🙂',
+  };
+
+  Color get tint => switch (this) {
+    MatchKind.fireFire => AppColors.peachSoft,
+    MatchKind.fireOk => AppColors.lemonSoft,
+    MatchKind.okOk => AppColors.skySoft,
+  };
+
+  Color get accent => switch (this) {
+    MatchKind.fireFire => AppColors.coral,
+    MatchKind.fireOk => AppColors.orange,
+    MatchKind.okOk => AppColors.purple,
+  };
+
+  DoodleKind get doodle => switch (this) {
+    MatchKind.fireFire => DoodleKind.sparks,
+    MatchKind.fireOk => DoodleKind.star,
+    MatchKind.okOk => DoodleKind.heart,
+  };
+}
 
 /// One card per match kind, shown between the hero and the friend grid.
 ///
@@ -13,10 +46,13 @@ import '../../../shared/widgets/knock_pill.dart';
 /// the same people the friend grid below already shows, so the friends of a kind
 /// are grouped into one card with a row of avatars.
 ///
-/// The kind is stated once, by the icon and the sentence in the header. An
+/// The kind is stated once, by the emoji pair and the sentence in the header. An
 /// earlier version floated a 🙂 bubble beside the first avatar, which read as
 /// that person's mood instead of the kind's; each avatar now carries its own
 /// mood badge, so every emoji on the card belongs to somebody.
+///
+/// The card takes the same pastel-and-ring language as the friend cards: a
+/// white box with a thin border read as a form sitting next to the playful hero.
 class MatchCard extends StatefulWidget {
   const MatchCard({
     super.key,
@@ -49,8 +85,13 @@ class _MatchCardState extends State<MatchCard>
   /// Beyond this the row would only be scrolled, so the rest is summarised.
   static const _maxAvatars = 5;
 
-  /// Cell width at the default text scale; wider text scales the cell up.
-  static const _cellWidth = 72.0;
+  /// Cell width at the default text scale. Wide enough for the 「さそった」 and
+  /// 「いいよ！」 pills, which are the longest labels the cell ever shows.
+  static const _cellWidth = 100.0;
+
+  /// How much wider a cell gets between 100% and 200% text scale. The cell only
+  /// has to grow with the pill's label, not with the whole scale.
+  static const _cellGrowth = 56.0;
 
   late final AnimationController _controller;
   bool _started = false;
@@ -88,21 +129,14 @@ class _MatchCardState extends State<MatchCard>
     MatchKind.okOk => 'お互い誘われ待ちだよ',
   };
 
-  IconData get _icon => switch (widget.kind) {
-    MatchKind.fireFire => Icons.local_fire_department_rounded,
-    MatchKind.fireOk => Icons.bolt_rounded,
-    MatchKind.okOk => Icons.people_alt_rounded,
-  };
-
   @override
   Widget build(BuildContext context) {
+    final kind = widget.kind;
     final visible = widget.matches.take(_maxAvatars).toList();
     final extra = widget.matches.length - visible.length;
-    // The cell grows with the text scale: a fixed 72dp cell squeezed 「さそう」
-    // into an ellipsis at 200%. Scaling by the same factor as the label keeps
-    // the pill readable at any size.
     final textScale = MediaQuery.textScalerOf(context).scale(10) / 10;
-    final cellWidth = _cellWidth * (textScale < 1 ? 1.0 : textScale);
+    final cellWidth =
+        _cellWidth + (textScale - 1).clamp(0.0, 1.0) * _cellGrowth;
     final appearance = CurvedAnimation(
       parent: _controller,
       curve: const Interval(0, 0.7, curve: Curves.easeOutBack),
@@ -120,29 +154,31 @@ class _MatchCardState extends State<MatchCard>
           end: Offset.zero,
         ).animate(appearance),
         child: Container(
-          padding: const EdgeInsets.all(AppSpacing.s12 + 2),
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.s16,
+            AppSpacing.s16,
+            AppSpacing.s16,
+            AppSpacing.s12,
+          ),
           decoration: BoxDecoration(
-            color: AppColors.surface,
+            color: kind.tint,
             borderRadius: BorderRadius.circular(AppSpacing.radiusCard),
-            border: Border.all(
-              color: AppColors.purpleSoft,
-              width: AppSpacing.borderWidth,
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: AppColors.ink.withValues(alpha: 0.05),
-                blurRadius: 10,
-                offset: const Offset(0, 3),
-              ),
-            ],
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 children: [
-                  Icon(_icon, size: 16, color: AppColors.purple),
-                  const SizedBox(width: AppSpacing.s4),
+                  // Decorative: the sentence beside it already says what the
+                  // kind is, so a screen reader does not need the emoji read out.
+                  ExcludeSemantics(
+                    child: Text(
+                      kind.emoji,
+                      maxLines: 1,
+                      style: const TextStyle(fontSize: 15, height: 1.2),
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.s8),
                   Expanded(
                     child: Text(
                       _message,
@@ -151,34 +187,34 @@ class _MatchCardState extends State<MatchCard>
                       style: AppTextStyles.friendName.copyWith(fontSize: 15),
                     ),
                   ),
+                  const SizedBox(width: AppSpacing.s8),
+                  Doodle(
+                    kind: kind.doodle,
+                    size: const Size(18, 18),
+                    color: kind.accent,
+                    tilt: -0.25,
+                    delay: const Duration(milliseconds: 140),
+                  ),
                 ],
               ),
-              const SizedBox(height: AppSpacing.s8),
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    for (var index = 0; index < visible.length; index++) ...[
-                      if (index > 0) const SizedBox(width: AppSpacing.s8),
-                      _FriendCell(
-                        match: visible[index],
-                        width: cellWidth,
-                        pending: widget.pendingUserIds.contains(
-                          visible[index].otherUser.id,
-                        ),
-                        accepted: widget.acceptedUserIds.contains(
-                          visible[index].otherUser.id,
-                        ),
-                        onTap: () => widget.onKnock(visible[index]),
+              const SizedBox(height: AppSpacing.s12),
+              _AvatarRow(
+                cellWidth: cellWidth,
+                children: [
+                  for (final match in visible)
+                    _FriendCell(
+                      match: match,
+                      width: cellWidth,
+                      pending: widget.pendingUserIds.contains(
+                        match.otherUser.id,
                       ),
-                    ],
-                    if (extra > 0) ...[
-                      const SizedBox(width: AppSpacing.s8),
-                      _MoreBadge(count: extra),
-                    ],
-                  ],
-                ),
+                      accepted: widget.acceptedUserIds.contains(
+                        match.otherUser.id,
+                      ),
+                      onTap: () => widget.onKnock(match),
+                    ),
+                  if (extra > 0) _MoreBadge(count: extra, width: cellWidth),
+                ],
               ),
             ],
           ),
@@ -188,7 +224,48 @@ class _MatchCardState extends State<MatchCard>
   }
 }
 
-/// One matched friend: avatar with their mood, name and its own knock pill.
+/// The avatars of one kind.
+///
+/// They spread across the card when they fit, because a handful of people
+/// bunched against the left edge left the card looking half empty. Past that
+/// they scroll instead of shrinking, since the pill under each avatar has to
+/// stay readable.
+class _AvatarRow extends StatelessWidget {
+  const _AvatarRow({required this.cellWidth, required this.children});
+
+  /// Every child is exactly this wide, so the row can decide up front whether it
+  /// fits without measuring anything.
+  final double cellWidth;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      if (children.length * cellWidth <= constraints.maxWidth) {
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: children,
+        );
+      }
+      return SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (var index = 0; index < children.length; index++) ...[
+              if (index > 0) const SizedBox(width: AppSpacing.s8),
+              children[index],
+            ],
+          ],
+        ),
+      );
+    },
+  );
+}
+
+/// One matched friend: a ringed avatar with their mood, their name and their own
+/// knock pill.
 class _FriendCell extends StatelessWidget {
   const _FriendCell({
     required this.match,
@@ -216,41 +293,24 @@ class _FriendCell extends StatelessWidget {
           GestureDetector(
             onTap: locked ? null : onTap,
             child: SizedBox(
-              width: 48,
-              height: 48,
+              width: 56,
+              height: 56,
               child: Stack(
                 clipBehavior: Clip.none,
                 children: [
+                  // The same white ring as the friend cards, so a person looks
+                  // the same wherever they appear on the home screen.
                   AvatarView(
                     name: user.displayName,
                     imageUrl: user.avatarUrl,
-                    // 48dp keeps the avatar itself a valid tap target.
-                    size: 48,
-                    background: AppColors.purpleSoft,
+                    size: 56,
+                    background: AppColors.surface.withValues(alpha: 0.85),
                     ring: AppColors.surface,
-                    ringWidth: 2,
                   ),
                   Positioned(
-                    right: -3,
-                    bottom: -3,
-                    child: Semantics(
-                      label: match.otherHima.mood.label,
-                      child: ExcludeSemantics(
-                        child: Container(
-                          width: 18,
-                          height: 18,
-                          alignment: Alignment.center,
-                          decoration: const BoxDecoration(
-                            color: AppColors.surface,
-                            shape: BoxShape.circle,
-                          ),
-                          child: Text(
-                            match.otherHima.mood.emoji,
-                            style: const TextStyle(fontSize: 9),
-                          ),
-                        ),
-                      ),
-                    ),
+                    right: -4,
+                    bottom: -4,
+                    child: MoodBadge(mood: match.otherHima.mood),
                   ),
                 ],
               ),
@@ -272,7 +332,6 @@ class _FriendCell extends StatelessWidget {
             onTap: onTap,
             sent: pending,
             accepted: accepted,
-            dense: true,
           ),
         ],
       ),
@@ -282,27 +341,36 @@ class _FriendCell extends StatelessWidget {
 
 /// 「+N」 for the friends of this kind that do not fit in the row.
 class _MoreBadge extends StatelessWidget {
-  const _MoreBadge({required this.count});
+  const _MoreBadge({required this.count, required this.width});
 
   final int count;
+  final double width;
 
   @override
   Widget build(BuildContext context) => Semantics(
     label: 'ほかに$count人',
-    child: Container(
-      constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s8),
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        color: AppColors.purpleSoft,
-        borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
-      ),
-      child: Text(
-        '+$count',
-        maxLines: 1,
-        style: AppTextStyles.caption.copyWith(
-          color: AppColors.ink,
-          fontWeight: FontWeight.w800,
+    child: SizedBox(
+      width: width,
+      child: Center(
+        child: Container(
+          constraints: const BoxConstraints(
+            minWidth: AppSpacing.minTapTarget,
+            minHeight: AppSpacing.minTapTarget,
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s8),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: AppColors.surface.withValues(alpha: 0.9),
+            borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
+          ),
+          child: Text(
+            '+$count',
+            maxLines: 1,
+            style: AppTextStyles.caption.copyWith(
+              color: AppColors.ink,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
         ),
       ),
     ),

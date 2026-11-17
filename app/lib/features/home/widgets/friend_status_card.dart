@@ -8,6 +8,7 @@ import '../../../data/models/models.dart';
 import '../../../shared/widgets/avatar_view.dart';
 import '../../../shared/widgets/doodles.dart';
 import '../../../shared/widgets/knock_pill.dart';
+import '../../../shared/widgets/mood_badge.dart';
 import '../hero_state.dart';
 
 /// One friend in the home grid: a large ringed avatar, name and remaining time,
@@ -188,31 +189,7 @@ class _MoodAvatar extends StatelessWidget {
         Positioned(
           right: -4,
           bottom: -4,
-          child: Semantics(
-            label: friend.mood.label,
-            child: ExcludeSemantics(
-              child: Container(
-                width: 22,
-                height: 22,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: AppColors.surface,
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      color: AppColors.ink.withValues(alpha: 0.12),
-                      blurRadius: 4,
-                      offset: const Offset(0, 1),
-                    ),
-                  ],
-                ),
-                child: Text(
-                  friend.mood.emoji,
-                  style: const TextStyle(fontSize: 11),
-                ),
-              ),
-            ),
-          ),
+          child: MoodBadge(mood: friend.mood),
         ),
       ],
     ),
