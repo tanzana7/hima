@@ -339,8 +339,11 @@ class _MyStatusHeroState extends State<MyStatusHero>
                       const SizedBox(height: 2),
                       Text(
                         state.supporting,
+                        // [AppColors.muted] drops to about 4.2:1 over the
+                        // lavender stop of the idle splat. Translucent ink
+                        // stays secondary-looking but keeps about 6:1.
                         style: AppTextStyles.body.copyWith(
-                          color: AppColors.muted,
+                          color: AppColors.ink.withValues(alpha: 0.72),
                         ),
                       ),
                     ],
