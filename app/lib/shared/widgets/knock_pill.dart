@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../../app/theme/app_colors.dart';
 import '../../app/theme/app_spacing.dart';
 
-/// 「さそう」 pill, plus the 「さそった」 state shown while my knock is pending.
+/// 「さそう」 pill, plus the states a knock can put it in.
 ///
 /// The pill has no fixed height: at 200% text scale the old 36dp box clipped the
 /// label vertically. It keeps a minimum size and grows with the text instead.
@@ -13,6 +13,7 @@ class KnockPill extends StatelessWidget {
     required this.friendName,
     required this.onTap,
     this.sent = false,
+    this.accepted = false,
     this.expand = false,
     this.dense = false,
   });
@@ -25,6 +26,11 @@ class KnockPill extends StatelessWidget {
   /// invited twice from the match card or the friend grid.
   final bool sent;
 
+  /// The knock was answered 「いいよ！」. Without this the pill dropped back to
+  /// 「さそう」 as soon as the answer arrived, which hid the good news and made
+  /// the friend look like they had never been asked.
+  final bool accepted;
+
   /// Stretches the pill across its parent, used by the home friend cards.
   final bool expand;
 
@@ -33,14 +39,23 @@ class KnockPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final foreground = sent ? AppColors.muted : AppColors.purple;
+    final locked = sent || accepted;
+    final foreground = accepted
+        ? AppColors.success
+        : (sent ? AppColors.muted : AppColors.purple);
+    final label = accepted ? 'いいよ！' : (sent ? 'さそった' : 'さそう');
+    final icon = accepted
+        ? Icons.celebration_rounded
+        : (sent ? Icons.check_rounded : Icons.send_rounded);
     return Semantics(
-      button: !sent,
-      enabled: !sent,
-      label: sent ? '$friendNameさんにさそった' : '$friendNameさんをさそう',
+      button: !locked,
+      enabled: !locked,
+      label: accepted
+          ? '$friendNameさんから いいよ！'
+          : (sent ? '$friendNameさんにさそった' : '$friendNameさんをさそう'),
       excludeSemantics: true,
       child: InkWell(
-        onTap: sent ? null : onTap,
+        onTap: locked ? null : onTap,
         borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
         child: ConstrainedBox(
           // The tap target stays 48dp while the visible pill is allowed to grow
@@ -56,12 +71,16 @@ class KnockPill extends StatelessWidget {
                   vertical: dense ? AppSpacing.s4 : AppSpacing.s8,
                 ),
                 decoration: BoxDecoration(
-                  color: sent
-                      ? AppColors.surface.withValues(alpha: 0.65)
-                      : AppColors.surface,
+                  color: accepted
+                      ? AppColors.mintSoft
+                      : (sent
+                            ? AppColors.surface.withValues(alpha: 0.65)
+                            : AppColors.surface),
                   borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
                   border: Border.all(
-                    color: sent ? AppColors.purpleSoft : AppColors.purple,
+                    color: accepted
+                        ? AppColors.success
+                        : (sent ? AppColors.purpleSoft : AppColors.purple),
                     width: AppSpacing.borderWidth,
                   ),
                 ),
@@ -69,15 +88,11 @@ class KnockPill extends StatelessWidget {
                   mainAxisSize: expand ? MainAxisSize.max : MainAxisSize.min,
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(
-                      sent ? Icons.check_rounded : Icons.send_rounded,
-                      size: dense ? 11 : 14,
-                      color: foreground,
-                    ),
+                    Icon(icon, size: dense ? 11 : 14, color: foreground),
                     const SizedBox(width: AppSpacing.s4),
                     Flexible(
                       child: Text(
-                        sent ? 'さそった' : 'さそう',
+                        label,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(

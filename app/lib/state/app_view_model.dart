@@ -111,6 +111,47 @@ class AppViewModel extends ChangeNotifier {
         knock.recipient!.id,
   };
 
+  /// Knocks sent before the current declaration, whose answer no longer belongs
+  /// to it.
+  ///
+  /// The API keeps a knock and its answer forever, so without this the
+  /// 「いいよ！」 pill would come back on the next poll after the user declared
+  /// again.
+  final Set<String> _retiredKnockIds = {};
+
+  /// People whose knock was answered 「いいよ！」 and still belongs to the live
+  /// declaration, so their card can keep the happy state instead of flipping
+  /// back to さそう the moment the answer arrives.
+  ///
+  /// The answer is scoped to the declaration it belongs to: ending it, or
+  /// letting it run out, drops the pill back to さそう. A knock has no expiry of
+  /// its own in the contract, so the declaration is the boundary.
+  Set<String> get acceptedKnockUserIds {
+    // Read through [isDeclared] instead of a stored flag so a declaration that
+    // runs out while the screen is open is covered by the same check.
+    if (!isDeclared) return const {};
+    return {
+      for (final knock in _sent)
+        if (knock.status == KnockStatus.accepted &&
+            !_retiredKnockIds.contains(knock.id) &&
+            knock.recipient != null)
+          knock.recipient!.id,
+    };
+  }
+
+  /// The plan a friend agreed to belonged to the declaration that was live when
+  /// the knock was sent, so starting a new one retires every knock sent before
+  /// it.
+  ///
+  /// Pending knocks are retired too: a knock that was still unanswered when the
+  /// user declared again can be accepted afterwards by a poll, and that answer
+  /// belongs to the declaration that is already over.
+  void _retireSentKnocks() {
+    for (final knock in _sent) {
+      _retiredKnockIds.add(knock.id);
+    }
+  }
+
   /// Results already celebrated. The app shell and the knocks screen share this
   /// so a reply is celebrated exactly once, wherever the user sees it first.
   final Set<String> _celebratedResultIds = {};
@@ -293,6 +334,7 @@ class AppViewModel extends ChangeNotifier {
       ),
     );
     _invalidateLiveReads();
+    _retireSentKnocks();
     _applySession(session);
     await refreshLiveData();
     return session;
@@ -513,6 +555,7 @@ class AppViewModel extends ChangeNotifier {
     _sent = [];
     _seenInboxIds.clear();
     _celebratedResultIds.clear();
+    _retiredKnockIds.clear();
     _guilds = [];
     _blocks = [];
     _regularSlots = [];
