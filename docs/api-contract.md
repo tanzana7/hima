@@ -114,7 +114,7 @@
 | GET | `/bot/board?guild_id=&user_id=` | 閲覧者に見える有効セッション一覧（共有可視・ブロック除外・source非表示）＋受信したお返事（最大5件。**`to_moon` は宛先＝受信者が現在🌙の有効セッションを持つときのみ true**）＋未見結果。レスポンスに `viewer.notify_on_hima` を含む |
 | POST | `/bot/knocks/results/seen` | 未見結果に `result_seen_at` を打つ |
 | POST | `/bot/knocks` | ノック作成（相手が有効セッション中・共有可視・非ブロック必須。5分クールダウンは 409） |
-| POST | `/bot/knocks/{id}/reply` | 返答（accept/later/pass）。to_user 本人のみ。status と responded_at を更新 |
+| POST | `/bot/knocks/{id}/reply` | 返答（accept/later/pass）。`{user_id, action}`。to_user 本人のみ。status と responded_at を更新。**Bot 側は user_id 必須のまま（変更なし）** |
 | POST | `/bot/blocks` | ブロック登録（効果は双方向） |
 | DELETE | `/bot/blocks` | ブロック解除 |
 | GET | `/bot/blocks?user_id=` | 自分がブロックしているユーザー一覧 |
@@ -181,13 +181,15 @@
 | GET | `/app/me` | プロフィール・設定・**自分の有効セッション（source を含む）**・memberships 一覧 |
 | PUT | `/app/me/settings` | `notify_on_hima` / `auto_mode` / `auto_mood` の部分更新 |
 | PUT | `/app/memberships/{guild_id}/visibility` | 自分の membership visible 更新 |
-| GET | `/app/board` | **横断掲示板**：自分が member の全サーバーを統合。共有可視・ブロック除外判定は Bot 側と同じ。各行に `shared_guild_ids`（共通の visible サーバーID一覧）を付ける。ノック受信箱（最大5件、`to_moon` 付き）＋未見結果も返す。**他人のセッション行に source は含めない**（自分の行のみ `/app/me` で返す） |
+| GET | `/app/board` | **横断掲示板**：自分が member の全サーバーを統合。共有可視・ブロック除外判定は Bot 側と同じ。各行に `shared_guild_ids`（共通の visible サーバーID一覧）と **`avatar`** を付ける。ノック受信箱（最大5件、`to_moon` 付き・**送信者の `from_avatar` 付き**）＋未見結果も返す。**他人のセッション行に source は含めない**（自分の行のみ `/app/me` で返す） |
 | POST | `/app/sessions` | ヒマ宣言 `{mood, activity, note, minutes, source}`（source は manual/suggested/auto）。Bot 側と**同一のサービス関数**を使うためマッチング・お知らせ（watch_queue）登録も同じに発火 |
 | DELETE | `/app/sessions` | 有効セッション終了（Bot 側と同一挙動） |
 | POST | `/app/knocks` | ノック作成（from_user は JWT 本人） |
-| POST | `/app/knocks/{id}/reply` | 返答（accept/later/pass）。to_user 本人のみ |
+| POST | `/app/knocks/{id}/reply` | 返答（accept/later/pass）。**アプリ専用スキーマ `{action}` のみ**。返答者は JWT 本人から取得し、**リクエストボディの user_id は受理しない**（含めても無視されるため、別人のふりでの返答は不可能）。宛先本人（knock.to_user == JWT 本人）以外は 403 |
+| GET | `/app/knocks/sent` | 自分が送ったノックの履歴（**新しい順**）。各行: `id` / `to_user` / `to_display_name` / `to_avatar` / `template`（null 可）/ `status` / `created_at` / `responded_at`（未返答は null） |
 | POST | `/app/knocks/results/seen` | 未見結果に `result_seen_at` を打つ |
-| GET | `/app/blocks` | 自分がブロックしている一覧 |
+| GET | `/app/members` | **共有サーバーごとのメンバー一覧**。`guild_id` は任意クエリパラメータ。指定時はそのサーバーのメンバーのみ（サーバーが存在しない・または本人がそのサーバーの membership を持たない場合は **404**）。未指定時は本人が所属する全サーバーのメンバーを返す。各行: `user_id` / `display_name` / `avatar`（users の保存値・未保存は null）/ `guild_id`。**visible=true の membership のみ**を列挙（visible=false の自分は取得者になれるが一覧には出ない）。並び順は guild_id, user_id 昇順 |
+| GET | `/app/blocks` | 自分がブロックしている一覧。**`blocked_users`（各行 `user_id` / `display_name` / `avatar`）を追加**。従来の `blocked`（ID一覧）は互換のため残す |
 | POST | `/app/blocks` | ブロック登録 `{blocked_user_id}`（効果は双方向） |
 | DELETE | `/app/blocks` | ブロック解除 |
 | POST | `/app/devices` | FCM トークン upsert `{platform, fcm_token}`（updated_at 更新） |

@@ -1,17 +1,18 @@
 """App→API endpoints (all require the app JWT). The user id always comes from the JWT."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import text
 
 from . import discord_oauth, discord_rest, domain, forecast
 from .auth import issue_app_token, require_app_user
 from .db import SessionLocal
-from .models import Block, Device, Guild, RegularSlot, User
+from .models import Block, Device, Guild, Membership, RegularSlot, User
 from .schemas import (
     AppBlockIn,
     AppKnockIn,
+    AppReplyIn,
     AppSessionIn,
     AppSettingsIn,
     AppVisibilityIn,
@@ -19,9 +20,8 @@ from .schemas import (
     DeviceDeleteIn,
     DeviceIn,
     RegularSlotIn,
-    ReplyIn,
 )
-from .services import active_session, upsert_membership, upsert_user, utcnow
+from .services import active_session, upsert_membership, upsert_user, utcnow, visible_guild_ids
 from .vocab import MOODS
 
 auth_router = APIRouter(prefix="/auth")
@@ -190,9 +190,45 @@ def create_knock(body: AppKnockIn, user_id: int = Depends(require_app_user)) -> 
 
 
 @app_router.post("/knocks/{knock_id}/reply")
-def knock_reply(knock_id: int, body: ReplyIn, user_id: int = Depends(require_app_user)) -> dict:
+def knock_reply(knock_id: int, body: AppReplyIn, user_id: int = Depends(require_app_user)) -> dict:
+    """アプリ用返答。本人は JWT から取得し、ボディの user_id は受け取らない（信用しない）。"""
     with SessionLocal() as db:
         return domain.reply_knock(db, knock_id, user_id=user_id, action=body.action)
+
+
+@app_router.get("/knocks/sent")
+def knocks_sent(user_id: int = Depends(require_app_user)) -> dict:
+    """自分が送ったお返事の履歴（新しい順）。"""
+    with SessionLocal() as db:
+        rows = db.execute(
+            text(
+                """
+                SELECT k.id, k.to_user, k.template, k.status, k.created_at, k.responded_at,
+                       u.display_name, u.avatar
+                FROM knocks k
+                LEFT JOIN users u ON u.id = k.to_user
+                WHERE k.from_user = :u
+                ORDER BY k.created_at DESC, k.id DESC
+                """
+            ),
+            {"u": user_id},
+        ).mappings().all()
+        return {
+            "user_id": user_id,
+            "knocks": [
+                {
+                    "id": int(r["id"]),
+                    "to_user": int(r["to_user"]),
+                    "to_display_name": r["display_name"] or f"discord:{r['to_user']}",
+                    "to_avatar": r["avatar"],
+                    "template": r["template"],
+                    "status": r["status"],
+                    "created_at": r["created_at"].isoformat(),
+                    "responded_at": r["responded_at"].isoformat() if r["responded_at"] else None,
+                }
+                for r in rows
+            ],
+        }
 
 
 @app_router.post("/knocks/results/seen")
@@ -202,6 +238,53 @@ def knock_results_seen(user_id: int = Depends(require_app_user)) -> dict:
         return {"user_id": user_id, "marked": marked}
 
 
+# ------------------------------------------------------------------ /app/members
+
+
+@app_router.get("/members")
+def list_members(guild_id: int | None = Query(None), user_id: int = Depends(require_app_user)) -> dict:
+    """共有サーバーごとのメンバー一覧。
+
+    guild_id 指定時はそのサーバーのメンバーのみ（本人が所属していなければ 404）。
+    未指定時は本人が所属する全サーバーのメンバー。いずれも visible=true のメンバーを返す。
+    """
+    with SessionLocal() as db:
+        if guild_id is not None:
+            if db.get(Guild, guild_id) is None:
+                raise HTTPException(status_code=404, detail="guild not found")
+            if db.get(Membership, (guild_id, user_id)) is None:
+                raise HTTPException(status_code=404, detail="not a member of this guild")
+            guild_ids = [guild_id]
+        else:
+            guild_ids = visible_guild_ids(db, user_id)
+            if not guild_ids:
+                return {"user_id": user_id, "members": []}
+        rows = db.execute(
+            text(
+                """
+                SELECT m.guild_id, m.user_id, u.display_name, u.avatar
+                FROM memberships m
+                JOIN users u ON u.id = m.user_id
+                WHERE m.guild_id = ANY(:gs) AND m.visible = true
+                ORDER BY m.guild_id, m.user_id
+                """
+            ),
+            {"gs": guild_ids},
+        ).mappings().all()
+        return {
+            "user_id": user_id,
+            "members": [
+                {
+                    "user_id": int(r["user_id"]),
+                    "display_name": r["display_name"] or f"discord:{r['user_id']}",
+                    "avatar": r["avatar"],
+                    "guild_id": int(r["guild_id"]),
+                }
+                for r in rows
+            ],
+        }
+
+
 # ------------------------------------------------------------------ /app/blocks
 
 
@@ -209,10 +292,29 @@ def knock_results_seen(user_id: int = Depends(require_app_user)) -> dict:
 def list_blocks(user_id: int = Depends(require_app_user)) -> dict:
     with SessionLocal() as db:
         rows = db.execute(
-            text("SELECT blocked_id FROM blocks WHERE blocker_id = :u ORDER BY blocked_id"),
+            text(
+                """
+                SELECT b.blocked_id, u.display_name, u.avatar
+                FROM blocks b
+                LEFT JOIN users u ON u.id = b.blocked_id
+                WHERE b.blocker_id = :u
+                ORDER BY b.blocked_id
+                """
+            ),
             {"u": user_id},
-        ).scalars().all()
-        return {"user_id": user_id, "blocked": [int(x) for x in rows]}
+        ).mappings().all()
+        return {
+            "user_id": user_id,
+            "blocked": [int(r["blocked_id"]) for r in rows],
+            "blocked_users": [
+                {
+                    "user_id": int(r["blocked_id"]),
+                    "display_name": r["display_name"] or f"discord:{r['blocked_id']}",
+                    "avatar": r["avatar"],
+                }
+                for r in rows
+            ],
+        }
 
 
 @app_router.post("/blocks")
