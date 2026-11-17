@@ -10,6 +10,7 @@ import '../../app/theme/app_text_styles.dart';
 import '../../data/models/models.dart';
 import '../../shared/haptics.dart';
 import '../../shared/widgets/avatar_view.dart';
+import '../../shared/widgets/brush_title.dart';
 import '../../shared/widgets/confetti_burst.dart';
 import '../../shared/widgets/empty_state.dart';
 import '../../shared/widgets/paint/paint.dart';
@@ -17,8 +18,8 @@ import '../../shared/widgets/paint_button.dart';
 import '../../state/app_view_model.dart';
 
 /// Captions that sit directly on a [PaintWash]. [AppColors.muted] measures
-/// 4.2:1 once the wash layers overlap, so text on paint takes this darker tone
-/// instead (5.4:1).
+/// 4.2:1 on the pastel wash, so text on paint takes this darker tone instead
+/// (5.4:1).
 const _washMuted = Color(0xFF635B6F);
 
 /// Knocks inbox and sent list, reached from the header bell.
@@ -132,7 +133,13 @@ class _KnocksScreenState extends State<KnocksScreen> {
     return Scaffold(
       // No title spacing: the title sits right after the back button instead of
       // leaving the default 16dp gap on top of the 56dp leading slot.
-      appBar: AppBar(titleSpacing: 0, title: const Text('ノック')),
+      appBar: AppBar(
+        titleSpacing: 0,
+        // The title carries the same brush stroke as the tab headers, so the
+        // toolbar has to grow with the text scale or the stroke is clipped.
+        toolbarHeight: BrushTitle.toolbarHeight(context),
+        title: const BrushTitle(title: 'ノック', seed: 83),
+      ),
       body: Stack(
         children: [
           ListView(

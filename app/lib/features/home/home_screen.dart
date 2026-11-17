@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../data/models/models.dart';
 import '../../shared/haptics.dart';
+import '../../shared/widgets/app_bottom_navigation.dart';
 import '../../shared/widgets/paint/paint_geometry.dart';
 import '../../shared/widgets/shake.dart';
 import '../../state/app_view_model.dart';
@@ -266,11 +267,11 @@ class _HomeScreenState extends State<HomeScreen> {
       acceptedUserIds,
     );
     return ListView(
-      padding: const EdgeInsets.fromLTRB(
+      padding: EdgeInsets.fromLTRB(
         AppSpacing.s16,
         AppSpacing.s8,
         AppSpacing.s16,
-        AppSpacing.s32,
+        AppBottomNavigation.listBottomInset(context),
       ),
       children: [
         HomeHeader(

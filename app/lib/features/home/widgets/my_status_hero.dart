@@ -137,27 +137,37 @@ class _MyStatusHeroState extends State<MyStatusHero>
     return Stack(
       clipBehavior: Clip.none,
       children: [
-        // The idle wash is always underneath. When declared, the coral splash
-        // is drawn 3% larger on top: it covers the safe rect completely, so the
-        // white heading is always on coral, and the lavender only survives as a
-        // thin halo in the padding band — which is what layered paint looks
-        // like.
+        // The idle wash. When declared it fades out instead of staying
+        // underneath: the coral splash covers the safe rect but not the idle
+        // arms and droplets, so lavender and lemon bits kept peeking out around
+        // the coral as a leftover layer.
+        //
+        // The fade runs while the coral paint is already at its full size, so
+        // the white heading never sits on the pale wash for a frame. Reduced
+        // motion drops the fade and switches the wash off at once.
         //
         // Both splashes are drawn in the full box and their arms and droplets
         // leave it; the home screen keeps a 32dp gap around the hero so they
         // land on paper instead of on the next card.
         Positioned.fill(
-          child: PaintSplat(
-            seed: _idleSeed,
-            colors: const [AppColors.heroIdleTop, AppColors.heroIdleBottom],
-            padding: const EdgeInsets.all(_padding),
-            corner: 40,
-            wobble: 0.055,
-            // The idle state is a quieter wash: fewer arms and no drip.
-            arms: 4,
-            armLength: _armLength,
-            droplets: 6,
-            drips: 0,
+          child: AnimatedOpacity(
+            opacity: declared ? 0 : 1,
+            duration: reduceMotion
+                ? Duration.zero
+                : const Duration(milliseconds: 260),
+            curve: Curves.easeOut,
+            child: PaintSplat(
+              seed: _idleSeed,
+              colors: const [AppColors.heroIdleTop, AppColors.heroIdleBottom],
+              padding: const EdgeInsets.all(_padding),
+              corner: 40,
+              wobble: 0.055,
+              // The idle state is a quieter wash: fewer arms and no drip.
+              arms: 4,
+              armLength: _armLength,
+              droplets: 6,
+              drips: 0,
+            ),
           ),
         ),
         if (declared) ...[

@@ -61,4 +61,19 @@ abstract final class AppColors {
     peachSoft,
     mintSoft,
   ];
+
+  /// Saturated partners of [friendTints], in the same order.
+  ///
+  /// A heading's brush stroke takes its colour from here instead of darkening
+  /// the wash underneath it: lerping a pastel towards black desaturates it, and
+  /// the mint wash's underline came out grey-green and the peach one grey-brown.
+  /// These are the palette's own clean tints, so the stroke stays the same hue
+  /// as the group without turning muddy. It is decoration only (no text sits on
+  /// it), so it does not have to clear a contrast ratio.
+  static const List<Color> friendStrokeTints = [purple, sky, coral, mint];
+
+  /// The saturated partner of [skySoft], used where a pale sky would read as
+  /// grey. Kept out of the icon accents above: those are chosen for text and
+  /// icon contrast on white.
+  static const sky = Color(0xFF3FA9DC);
 }

@@ -154,7 +154,12 @@ class LoginScreen extends StatelessWidget {
                       ),
                     ],
                   ),
-                  const SizedBox(height: AppSpacing.s24),
+                  // The splash throws arms and drips up to `paintMaxBleed` past
+                  // its box, and the left drip used to run into the subtitle.
+                  // Reserving exactly that band is the only gap that holds for
+                  // every seed and text scale: a fixed 24dp put the drip
+                  // through 「ひまなら友達に知らせよう」.
+                  const SizedBox(height: paintMaxBleed + AppSpacing.s8),
                   Text(
                     'ひまなら友達に知らせよう',
                     textAlign: TextAlign.center,

@@ -13,8 +13,8 @@ import '../../shared/widgets/shake.dart';
 import '../../state/app_view_model.dart';
 
 /// Captions that sit directly on a [PaintWash]. [AppColors.muted] measures
-/// 4.2:1 once the wash layers overlap, so text on paint takes this darker tone
-/// instead (5.4:1).
+/// 4.2:1 on the pastel wash, so text on paint takes this darker tone instead
+/// (5.4:1).
 const _washMuted = Color(0xFF635B6F);
 
 /// Settings content shared by the プロフィール tab and the header gear route.
