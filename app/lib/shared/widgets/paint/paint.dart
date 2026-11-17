@@ -1,0 +1,25 @@
+/// The paint kit: small, composable `CustomPainter` primitives that give the
+/// app a wet-paint look instead of a vector one.
+///
+/// Rules that hold for every primitive here:
+///
+/// * **Seeded.** Each shape takes an `int seed` (see [paintSeedOf]) and derives
+///   its outline from it, so a card keeps the same silhouette across rebuilds,
+///   polls and scrolling. Nothing draws from an unseeded `Random`.
+/// * **Cached.** Paths are built once per (seed, size, config) and reused, so a
+///   scrolling list does not re-sample an outline per frame.
+/// * **Safe rect.** A primitive with a `child` lays it out inside the inner
+///   rect left by `padding`; the paint is drawn in the full box and spills into
+///   that band, so the decorative edge can never cover a label or a tap target.
+/// * **Reduced motion.** The animated primitives take a `progress` and paint the
+///   final state when `MediaQuery.disableAnimationsOf` is true.
+library;
+
+export 'brush_stroke.dart';
+export 'paint_dab.dart';
+export 'paint_geometry.dart';
+export 'paint_mark.dart';
+export 'paint_splat.dart';
+export 'paint_swash.dart';
+export 'paint_wash.dart';
+export 'splatter_dots.dart';

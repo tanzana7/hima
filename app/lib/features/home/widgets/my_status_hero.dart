@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -9,8 +8,8 @@ import '../../../app/theme/app_spacing.dart';
 import '../../../app/theme/app_text_styles.dart';
 import '../../../data/models/models.dart';
 import '../../../shared/widgets/avatar_view.dart';
-import '../../../shared/widgets/doodles.dart';
 import '../../../shared/widgets/mood_badge.dart';
+import '../../../shared/widgets/paint/paint.dart';
 import '../../../shared/widgets/shake.dart';
 import '../hero_state.dart';
 import 'activity_chips.dart';
@@ -80,8 +79,14 @@ class MyStatusHero extends StatefulWidget {
 
 class _MyStatusHeroState extends State<MyStatusHero>
     with SingleTickerProviderStateMixin {
-  /// Room for the doodles: they live in this band, outside the text.
+  /// The band the paint spills into. Everything the user can read or tap stays
+  /// inside the rect this leaves, so the droplets and drips can never cover it.
   static const _padding = 20.0;
+
+  /// Fixed seeds: the hero's two splashes must not change shape between
+  /// rebuilds, and the declared one has to sit over the idle one every time.
+  static const _idleSeed = 20261117;
+  static const _declaredSeed = 71119;
 
   late final AnimationController _burstController;
   bool _bursting = false;
@@ -93,7 +98,7 @@ class _MyStatusHeroState extends State<MyStatusHero>
     // when no burst ever ran, which is not a safe time to make a Ticker.
     _burstController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 450),
+      duration: const Duration(milliseconds: 520),
     );
   }
 
@@ -124,94 +129,117 @@ class _MyStatusHeroState extends State<MyStatusHero>
     return Stack(
       clipBehavior: Clip.none,
       children: [
+        // The idle wash is always underneath. When declared, the coral splash
+        // is drawn 3% larger on top: it covers the safe rect completely, so the
+        // white heading is always on coral, and the lavender only survives as a
+        // thin halo in the padding band — which is what layered paint looks
+        // like.
         Positioned.fill(
-          // The two states cross-fade their backdrop instead of swapping a
-          // colour, so declaring reads as the card warming up.
-          child: TweenAnimationBuilder<double>(
-            tween: Tween<double>(begin: declared ? 0 : 1, end: declared ? 1 : 0),
-            duration: reduceMotion
-                ? Duration.zero
-                : const Duration(milliseconds: 320),
-            curve: Curves.easeOutCubic,
-            builder: (context, value, _) => BlobBackdrop(
-              colors: [
-                Color.lerp(
-                  AppColors.heroIdleTop,
-                  AppColors.heroDeclaredTop,
-                  value,
-                )!,
-                Color.lerp(
-                  AppColors.heroIdleBottom,
-                  AppColors.heroDeclaredBottom,
-                  value,
-                )!,
+          child: PaintSplat(
+            seed: _idleSeed,
+            colors: const [AppColors.heroIdleTop, AppColors.heroIdleBottom],
+            padding: const EdgeInsets.all(_padding),
+            corner: 40,
+            wobble: 0.05,
+            droplets: 5,
+            drips: 1,
+          ),
+        ),
+        if (declared) ...[
+          // The final paint, drawn at full size from the first frame. It has to
+          // be there immediately: the heading is white, and a body that grew
+          // from nothing would leave the white text on the pale idle wash for
+          // the length of the animation.
+          Positioned.fill(
+            child: PaintSplat(
+              seed: _declaredSeed,
+              colors: const [
+                AppColors.heroDeclaredTop,
+                AppColors.heroDeclaredBottom,
               ],
+              padding: const EdgeInsets.all(_padding),
+              corner: 40,
+              wobble: 0.05,
+              droplets: 8,
+              drips: 2,
+              grow: 1.03,
             ),
           ),
-        ),
+          // The ビチャ itself: a deeper body of the same silhouette that flies
+          // in from 55% over the paint, overshoots, and settles into it while
+          // the droplets fly out and the drips extend. It is decoration on top
+          // of the opaque paint, so it can shrink without exposing the text.
+          //
+          // It is *darker* than the paint, not lighter: a lighter body under
+          // the white heading would drop it to about 3.5:1 at the moment it
+          // lands, while a deeper one only raises the contrast.
+          if (_bursting)
+            Positioned.fill(
+              child: AnimatedBuilder(
+                animation: _burstController,
+                builder: (context, _) {
+                  final t = _burstController.value;
+                  // Fades into the paint it lands on, so the resting hero is
+                  // exactly the declared colour.
+                  final fade = (1 - t).clamp(0.0, 1.0);
+                  return PaintSplat(
+                    seed: _declaredSeed,
+                    colors: [
+                      paintTone(
+                        AppColors.heroDeclaredTop,
+                        -0.22,
+                      ).withValues(alpha: fade),
+                      paintTone(
+                        AppColors.heroDeclaredBottom,
+                        -0.18,
+                      ).withValues(alpha: fade),
+                    ],
+                    padding: const EdgeInsets.all(_padding),
+                    corner: 40,
+                    wobble: 0.05,
+                    droplets: 8,
+                    drips: 2,
+                    grow: 1.03,
+                    minScale: 0.55,
+                    progress: t,
+                  );
+                },
+              ),
+            ),
+        ],
         // The marks sit in the padding band, so they can never land on the text
         // however far the text scale grows. They are drawn in palette colours
-        // rather than white: the band is inside the blob, and white on the pale
+        // rather than white: the band is inside the paint, and white on the pale
         // idle wash is barely a mark at all.
         //
-        // Keyed on the phase so they pop in again when the hero switches state:
+        // Keyed on the phase so they reappear when the hero switches state:
         // a declaration is the moment worth celebrating.
         Positioned(
-          top: 10,
-          right: 10,
-          child: Doodle(
-            key: ValueKey('hero-sparks-$declared'),
-            kind: DoodleKind.sparks,
+          top: 6,
+          right: 6,
+          child: SplatterDots(
+            key: ValueKey('hero-dots-$declared'),
+            seed: declared ? 41 : 17,
+            color: declared ? AppColors.yellow : AppColors.purple,
             size: const Size(26, 20),
-            // Yellow rather than coral: the corner sits on the declared
-            // gradient, where a coral mark all but disappears.
-            color: AppColors.yellow,
-            tilt: 0.2,
+            count: 5,
           ),
         ),
         Positioned(
-          top: 8,
-          left: 2,
-          child: Doodle(
-            key: ValueKey('hero-bang-$declared'),
-            kind: DoodleKind.bang,
-            size: const Size(14, 18),
-            color: AppColors.purple,
-            tilt: -0.14,
-            delay: const Duration(milliseconds: 70),
-          ),
-        ),
-        Positioned(
-          bottom: 10,
-          left: 10,
-          child: Doodle(
+          bottom: 6,
+          left: 6,
+          child: PaintMark(
             key: ValueKey('hero-star-$declared'),
-            kind: DoodleKind.star,
-            size: const Size(16, 16),
+            kind: PaintMarkKind.star,
+            seed: 9,
             color: AppColors.yellow,
-            tilt: -0.3,
-            delay: const Duration(milliseconds: 140),
+            size: 15,
           ),
         ),
         Padding(
           padding: const EdgeInsets.all(_padding),
           child: _content(state, declared, reduceMotion),
         ),
-        if (_bursting)
-          Positioned.fill(
-            child: IgnorePointer(
-              child: RepaintBoundary(
-                child: AnimatedBuilder(
-                  animation: _burstController,
-                  builder: (context, _) => CustomPaint(
-                    painter: _HeroBurstPainter(
-                      progress: _burstController.value,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
       ],
     );
   }
@@ -298,11 +326,13 @@ class _MyStatusHeroState extends State<MyStatusHero>
                     if (declared)
                       Padding(
                         padding: const EdgeInsets.only(top: 2),
-                        child: Doodle(
-                          kind: DoodleKind.squiggle,
+                        // A brush stroke rather than a thin squiggle: the
+                        // underline is paint now, thick in the middle and
+                        // tapering at both ends.
+                        child: BrushStroke(
+                          seed: 23,
                           size: const Size(116, 9),
                           color: AppColors.surface.withValues(alpha: 0.85),
-                          delay: const Duration(milliseconds: 90),
                         ),
                       )
                     else ...[
@@ -482,14 +512,18 @@ class _MoodAvatar extends StatelessWidget {
 /// Shared shell of the small controls in the declared meta row.
 ///
 /// It keeps a 48dp tap target and a 40dp minimum height but no fixed height, so
-/// the label can grow with the text scale instead of being clipped.
+/// the label can grow with the text scale instead of being clipped. The white
+/// background is a paint dab, not a stadium: on the coral splash a perfect pill
+/// was the last vector shape left in the hero.
 class _HeroPill extends StatelessWidget {
   const _HeroPill({
+    required this.seed,
     required this.semanticsLabel,
     required this.onTap,
     required this.child,
   });
 
+  final int seed;
   final String semanticsLabel;
   final VoidCallback onTap;
   final Widget child;
@@ -508,16 +542,11 @@ class _HeroPill extends StatelessWidget {
       // pills have to share one line on a 411dp screen.
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: AppSpacing.s4),
-        child: Container(
-          constraints: const BoxConstraints(minHeight: 40),
-          padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.s8,
-            vertical: AppSpacing.s4,
-          ),
-          decoration: BoxDecoration(
-            color: AppColors.surface.withValues(alpha: 0.9),
-            borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
-          ),
+        child: PaintDab(
+          seed: seed,
+          color: AppColors.surface.withValues(alpha: 0.92),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 11),
+          wobble: 0.03,
           child: child,
         ),
       ),
@@ -574,6 +603,7 @@ class _RemainingPillState extends State<_RemainingPill> {
 
   @override
   Widget build(BuildContext context) => _HeroPill(
+    seed: 61,
     semanticsLabel: 'ひまの長さを変更',
     onTap: widget.onTap,
     child: Row(
@@ -609,6 +639,7 @@ class _ActivityPill extends StatelessWidget {
   Widget build(BuildContext context) {
     final style = activity == null ? null : ActivityStyle.of(activity!);
     return _HeroPill(
+      seed: 62,
       semanticsLabel: activity == null ? 'やりたいことを選ぶ' : 'やりたいことを変更',
       onTap: onTap,
       child: Row(
@@ -666,15 +697,11 @@ class _EndPill extends StatelessWidget {
         child: Center(
           // Shrink-wraps horizontally so the tap area is the pill, not the row.
           widthFactor: 1,
-          child: Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: AppSpacing.s8,
-              vertical: AppSpacing.s4,
-            ),
-            decoration: BoxDecoration(
-              color: AppColors.surface.withValues(alpha: 0.55),
-              borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
-            ),
+          child: PaintDab(
+            seed: 63,
+            color: AppColors.surface.withValues(alpha: 0.6),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            wobble: 0.035,
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -700,62 +727,3 @@ class _EndPill extends StatelessWidget {
   );
 }
 
-class _HeroBurstPainter extends CustomPainter {
-  _HeroBurstPainter({required this.progress});
-
-  final double progress;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (progress <= 0 || progress >= 1) return;
-    final center = Offset(size.width * 0.5, size.height * 0.42);
-    final fade = (1 - progress).clamp(0.0, 1.0);
-    final linePaint = Paint()
-      ..color = AppColors.yellow.withValues(alpha: fade)
-      ..strokeWidth = 3
-      ..strokeCap = StrokeCap.round;
-    final inner = size.shortestSide * (0.30 + progress * 0.10);
-    final outer = inner + size.shortestSide * 0.10 * (1 - progress);
-    for (var i = 0; i < 12; i++) {
-      final angle = i * math.pi * 2 / 12;
-      final direction = Offset(math.cos(angle), math.sin(angle));
-      canvas.drawLine(
-        center + direction * inner,
-        center + direction * outer,
-        linePaint,
-      );
-    }
-    for (var i = 0; i < 5; i++) {
-      final angle = -math.pi / 2 + i * math.pi * 2 / 5 + 0.3;
-      final distance = size.shortestSide * (0.2 + progress * 0.38);
-      final position =
-          center + Offset(math.cos(angle), math.sin(angle)) * distance;
-      _drawStar(
-        canvas,
-        position,
-        2 + 5 * (1 - progress),
-        AppColors.surface.withValues(alpha: fade),
-      );
-    }
-  }
-
-  void _drawStar(Canvas canvas, Offset center, double radius, Color color) {
-    final path = Path();
-    for (var i = 0; i < 8; i++) {
-      final r = i.isEven ? radius : radius * 0.34;
-      final angle = -math.pi / 2 + i * math.pi / 4;
-      final point = center + Offset(math.cos(angle), math.sin(angle)) * r;
-      if (i == 0) {
-        path.moveTo(point.dx, point.dy);
-      } else {
-        path.lineTo(point.dx, point.dy);
-      }
-    }
-    path.close();
-    canvas.drawPath(path, Paint()..color = color);
-  }
-
-  @override
-  bool shouldRepaint(_HeroBurstPainter oldDelegate) =>
-      oldDelegate.progress != progress;
-}

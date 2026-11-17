@@ -5,9 +5,9 @@ import '../../../app/theme/app_spacing.dart';
 import '../../../app/theme/app_text_styles.dart';
 import '../../../data/models/models.dart';
 import '../../../shared/widgets/avatar_view.dart';
-import '../../../shared/widgets/doodles.dart';
 import '../../../shared/widgets/knock_pill.dart';
 import '../../../shared/widgets/mood_badge.dart';
+import '../../../shared/widgets/paint/paint.dart';
 
 /// How a match kind presents itself: the emoji pair in the header, the card's
 /// pastel and the mark in its corner.
@@ -33,10 +33,10 @@ extension _MatchKindStyle on MatchKind {
     MatchKind.okOk => AppColors.purple,
   };
 
-  DoodleKind get doodle => switch (this) {
-    MatchKind.fireFire => DoodleKind.sparks,
-    MatchKind.fireOk => DoodleKind.star,
-    MatchKind.okOk => DoodleKind.heart,
+  PaintMarkKind get mark => switch (this) {
+    MatchKind.fireFire => PaintMarkKind.star,
+    MatchKind.fireOk => PaintMarkKind.heart,
+    MatchKind.okOk => PaintMarkKind.star,
   };
 }
 
@@ -86,11 +86,11 @@ class _MatchCardState extends State<MatchCard>
   static const _maxAvatars = 5;
 
   /// Cell width at the default text scale. Wide enough for the 「さそった」 and
-  /// 「いいよ！」 pills, which are the longest labels the cell ever shows.
+  /// 「いいよ！」 dabs, which are the longest labels the cell ever shows.
   static const _cellWidth = 100.0;
 
   /// How much wider a cell gets between 100% and 200% text scale. The cell only
-  /// has to grow with the pill's label, not with the whole scale.
+  /// has to grow with the dab's label, not with the whole scale.
   static const _cellGrowth = 56.0;
 
   late final AnimationController _controller;
@@ -153,17 +153,16 @@ class _MatchCardState extends State<MatchCard>
           begin: const Offset(0.12, 0.25),
           end: Offset.zero,
         ).animate(appearance),
-        child: Container(
+        child: PaintWash(
+          seed: paintSeedOf('match-${kind.name}'),
+          color: kind.tint,
           padding: const EdgeInsets.fromLTRB(
             AppSpacing.s16,
             AppSpacing.s16,
             AppSpacing.s16,
             AppSpacing.s12,
           ),
-          decoration: BoxDecoration(
-            color: kind.tint,
-            borderRadius: BorderRadius.circular(AppSpacing.radiusCard),
-          ),
+          corner: AppSpacing.radiusCard,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -188,12 +187,11 @@ class _MatchCardState extends State<MatchCard>
                     ),
                   ),
                   const SizedBox(width: AppSpacing.s8),
-                  Doodle(
-                    kind: kind.doodle,
-                    size: const Size(18, 18),
+                  PaintMark(
+                    kind: kind.mark,
+                    seed: paintSeedOf('match-mark-${kind.name}'),
                     color: kind.accent,
-                    tilt: -0.25,
-                    delay: const Duration(milliseconds: 140),
+                    size: 18,
                   ),
                 ],
               ),
@@ -228,7 +226,7 @@ class _MatchCardState extends State<MatchCard>
 ///
 /// They spread across the card when they fit, because a handful of people
 /// bunched against the left edge left the card looking half empty. Past that
-/// they scroll instead of shrinking, since the pill under each avatar has to
+/// they scroll instead of shrinking, since the dab under each avatar has to
 /// stay readable.
 class _AvatarRow extends StatelessWidget {
   const _AvatarRow({required this.cellWidth, required this.children});
@@ -265,7 +263,7 @@ class _AvatarRow extends StatelessWidget {
 }
 
 /// One matched friend: a ringed avatar with their mood, their name and their own
-/// knock pill.
+/// knock dab.
 class _FriendCell extends StatelessWidget {
   const _FriendCell({
     required this.match,
@@ -352,17 +350,11 @@ class _MoreBadge extends StatelessWidget {
     child: SizedBox(
       width: width,
       child: Center(
-        child: Container(
-          constraints: const BoxConstraints(
-            minWidth: AppSpacing.minTapTarget,
-            minHeight: AppSpacing.minTapTarget,
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s8),
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: AppColors.surface.withValues(alpha: 0.9),
-            borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
-          ),
+        child: PaintDab(
+          seed: 71,
+          color: AppColors.surface.withValues(alpha: 0.94),
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s8, vertical: 6),
+          wobble: 0.05,
           child: Text(
             '+$count',
             maxLines: 1,

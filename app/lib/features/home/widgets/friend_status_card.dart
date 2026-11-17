@@ -6,18 +6,19 @@ import '../../../app/theme/app_spacing.dart';
 import '../../../app/theme/app_text_styles.dart';
 import '../../../data/models/models.dart';
 import '../../../shared/widgets/avatar_view.dart';
-import '../../../shared/widgets/doodles.dart';
 import '../../../shared/widgets/knock_pill.dart';
 import '../../../shared/widgets/mood_badge.dart';
+import '../../../shared/widgets/paint/paint.dart';
 import '../hero_state.dart';
 
 /// One friend in the home grid: a large ringed avatar, name and remaining time,
-/// a pastel tag for what they want to do, and さそう across the bottom.
+/// a small dab for what they want to do, and さそう across the bottom.
 ///
-/// The card tint rotates per card and carries no meaning; the state is always
-/// written out in text as well. The tag takes the activity's own colour and icon
-/// ([ActivityStyle]) so the grid reads like a set of stickers instead of four
-/// identical white cards.
+/// The background is a [PaintWash] instead of a bordered pastel box: the wash
+/// is the card's edge, so there is no hairline to separate it from the page.
+/// Its seed comes from the friend's id, so a card keeps the same silhouette
+/// across rebuilds, polls and scrolling, and the hue still rotates per card and
+/// carries no meaning — the state is always written out in text as well.
 class FriendStatusCard extends StatelessWidget {
   const FriendStatusCard({
     super.key,
@@ -26,7 +27,7 @@ class FriendStatusCard extends StatelessWidget {
     required this.pending,
     required this.accepted,
     required this.onKnock,
-    this.doodle,
+    this.mark,
   });
 
   final HimaSession friend;
@@ -41,25 +42,22 @@ class FriendStatusCard extends StatelessWidget {
   final VoidCallback onKnock;
 
   /// A small mark on some cards only, so the grid does not look gridded.
-  final DoodleKind? doodle;
+  final PaintMarkKind? mark;
 
   @override
   Widget build(BuildContext context) {
     final activity = friend.activity;
     final style = activity == null ? null : ActivityStyle.of(activity);
-    return Container(
-      // The pill brings its own tap-target padding, so the card only needs a
-      // little room underneath it.
+    return PaintWash(
+      seed: paintSeedOf(friend.user.id),
+      color: tint,
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.s12,
         AppSpacing.s12,
         AppSpacing.s12,
-        AppSpacing.s4,
+        AppSpacing.s8,
       ),
-      decoration: BoxDecoration(
-        color: tint,
-        borderRadius: BorderRadius.circular(AppSpacing.radiusCard),
-      ),
+      corner: AppSpacing.radiusCard,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
@@ -99,19 +97,18 @@ class FriendStatusCard extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Flexible(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: AppSpacing.s8,
-                    vertical: 3,
-                  ),
-                  // White rather than the activity tint: a card's tint rotates
-                  // through the same pastels, so a tinted tag vanished on the
+                child: PaintDab(
+                  seed: paintSeedOf('tag-${friend.sessionId}'),
+                  // White rather than the activity tint: a card's wash rotates
+                  // through the same pastels, so a tinted dab vanished on the
                   // card that happened to share its colour. The icon keeps the
                   // activity's own colour.
-                  decoration: BoxDecoration(
-                    color: AppColors.surface.withValues(alpha: 0.92),
-                    borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
+                  color: AppColors.surface.withValues(alpha: 0.94),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.s8,
+                    vertical: 4,
                   ),
+                  wobble: 0.04,
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -137,16 +134,15 @@ class FriendStatusCard extends StatelessWidget {
                   ),
                 ),
               ),
-              if (doodle != null) ...[
+              if (mark != null) ...[
                 const SizedBox(width: AppSpacing.s4),
-                Doodle(
-                  kind: doodle!,
-                  size: const Size(14, 14),
-                  color: doodle == DoodleKind.heart
+                PaintMark(
+                  kind: mark!,
+                  seed: paintSeedOf('mark-${friend.user.id}'),
+                  color: mark == PaintMarkKind.heart
                       ? AppColors.coral
                       : AppColors.yellow,
-                  tilt: -0.25,
-                  delay: const Duration(milliseconds: 160),
+                  size: 14,
                 ),
               ],
             ],

@@ -2,11 +2,18 @@ import 'package:flutter/material.dart';
 
 import '../../app/theme/app_colors.dart';
 import '../../app/theme/app_spacing.dart';
+import 'paint/paint.dart';
 
-/// 「さそう」 pill, plus the states a knock can put it in.
+/// 「さそう」, plus the states a knock can put it in.
 ///
-/// The pill has no fixed height: at 200% text scale the old 36dp box clipped the
-/// label vertically. It keeps a minimum size and grows with the text instead.
+/// Each state is a filled paint dab with readable text rather than a white pill
+/// with a purple outline: the stroke was the last hairline on the home screen,
+/// and a filled dab is what the rest of the screen is made of now.
+///
+/// The dab has no fixed height. At 200% text scale a fixed box clipped the
+/// label vertically, so it keeps a minimum tap target and grows with the text
+/// instead. Its seed comes from the friend's name, so one person's button keeps
+/// the same silhouette across rebuilds and scrolling.
 class KnockPill extends StatelessWidget {
   const KnockPill({
     super.key,
@@ -36,9 +43,12 @@ class KnockPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final locked = sent || accepted;
-    final foreground = accepted
-        ? AppColors.success
-        : (sent ? AppColors.muted : AppColors.purple);
+    // White on the primary purple is 6.3:1 and ink on the muted or mint dab is
+    // above 12:1, so every state clears 4.5:1 without touching the text.
+    final fill = accepted
+        ? AppColors.mint
+        : (sent ? AppColors.mutedSoft : AppColors.purple);
+    final foreground = accepted || sent ? AppColors.ink : AppColors.surface;
     final label = accepted ? 'いいよ！' : (sent ? 'さそった' : 'さそう');
     final icon = accepted
         ? Icons.celebration_rounded
@@ -54,52 +64,34 @@ class KnockPill extends StatelessWidget {
         onTap: locked ? null : onTap,
         borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
         child: ConstrainedBox(
-          // The tap target stays 48dp while the visible pill is allowed to grow
+          // The tap target stays 48dp while the visible dab is allowed to grow
           // past it.
           constraints: const BoxConstraints(minHeight: AppSpacing.minTapTarget),
           child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(minHeight: 40),
-              child: Container(
-                width: expand ? double.infinity : null,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: AppSpacing.s12,
-                  vertical: AppSpacing.s8,
-                ),
-                decoration: BoxDecoration(
-                  color: accepted
-                      ? AppColors.mintSoft
-                      : (sent
-                            ? AppColors.surface.withValues(alpha: 0.65)
-                            : AppColors.surface),
-                  borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
-                  border: Border.all(
-                    color: accepted
-                        ? AppColors.success
-                        : (sent ? AppColors.purpleSoft : AppColors.purple),
-                    width: AppSpacing.borderWidth,
-                  ),
-                ),
-                child: Row(
-                  mainAxisSize: expand ? MainAxisSize.max : MainAxisSize.min,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(icon, size: 14, color: foreground),
-                    const SizedBox(width: AppSpacing.s4),
-                    Flexible(
-                      child: Text(
-                        label,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w800,
-                          color: foreground,
-                        ),
+            child: PaintDab(
+              seed: paintSeedOf('knock-$friendName'),
+              color: fill,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+              wobble: 0.035,
+              child: Row(
+                mainAxisSize: expand ? MainAxisSize.max : MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(icon, size: 14, color: foreground),
+                  const SizedBox(width: AppSpacing.s4),
+                  Flexible(
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
+                        color: foreground,
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           ),
