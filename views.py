@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 log = logging.getLogger("atsumaro.views")
 
 MOOD_EMOJI = {"fire": "🔥", "ok": "🙂", "moon": "🌙"}
-MOOD_OPTIONS = [("fire", "🔥 誘う人（自分から誘う）"), ("ok", "🙂 誘われ待ち"), ("moon", "🌙 静か（マッチング通知なし）")]
+MOOD_OPTIONS = [("ok", "🙂 誘われ待ち"), ("moon", "🌙 静か（マッチング通知なし）")]  # fire は廃止
 ACTIVITY_LABELS = {"game": "ゲーム", "chat": "雑談・通話", "work": "作業通話", "out": "外出", "any": "なんでもOK"}
 RESULT_LABELS = {"accepted": "いいよ！", "later": "あとで", "passed": "今回はパス"}
 KNOCK_TEMPLATES = ["ゲームしない？", "ちょっと話さない？", "作業通話しない？"]
@@ -65,7 +65,7 @@ def render_board(data: dict) -> list[discord.Embed]:
             line += "（スルーしてOK）"
         inbox_lines.append(line)
     inbox = discord.Embed(
-        title="📬 ノック受信箱",
+        title="📬 お返事受信箱",
         description="\n".join(inbox_lines) if inbox_lines else "今は届いていないよ",
         color=discord.Color.gold(),
     )
@@ -74,7 +74,7 @@ def render_board(data: dict) -> list[discord.Embed]:
         for k in data.get("results", [])
     ]
     results = discord.Embed(
-        title="🔔 ノックの結果",
+        title="🔔 お返事の結果",
         description="\n".join(result_lines) if result_lines else "まだ結果はないよ",
         color=discord.Color.green(),
     )
@@ -195,13 +195,13 @@ class SuggestDeclareButton(ui.DynamicItem, template=r"atsumaro:suggest:declare")
 
 
 class WatchToggle(ui.DynamicItem, template=r"atsumaro:watchtoggle:(?P<state>[01])"):
-    """見守り ON/OFF トグル。custom_id に現在の状態を埋め込む。"""
+    """お知らせ ON/OFF トグル。custom_id に現在の状態を埋め込む（内部名 notify_on_hima は変更なし）。"""
 
     def __init__(self, state: bool, row: int | None = 0) -> None:
         self.state = bool(state)
         super().__init__(
             ui.Button(
-                label=f"見守り: {'ON' if state else 'OFF'}",
+                label=f"お知らせ: {'ON' if state else 'OFF'}",
                 style=discord.ButtonStyle.success if state else discord.ButtonStyle.secondary,
                 custom_id=f"atsumaro:watchtoggle:{1 if state else 0}",
                 row=row,
@@ -230,7 +230,7 @@ class WatchToggle(ui.DynamicItem, template=r"atsumaro:watchtoggle:(?P<state>[01]
 
 
 class BoardView(ui.View):
-    """個人用掲示板（ephemeral）。ヒマ宣言/ノック/ブロック/見守り/やめるのボタン＋受信箱の返答ボタン。"""
+    """個人用掲示板（ephemeral）。ヒマ宣言/お返事/ブロック/お知らせ/やめるのボタン＋受信箱の返答ボタン。"""
 
     def __init__(self, bot: "HimaBot", data: dict) -> None:
         super().__init__(timeout=None)
@@ -253,7 +253,7 @@ class BoardView(ui.View):
             view=JoinView(self.bot, interaction.guild_id, interaction.user), ephemeral=True
         )
 
-    @ui.button(label="ノックする", style=discord.ButtonStyle.primary, custom_id="board:knock", emoji="🚪", row=0)
+    @ui.button(label="お返事する", style=discord.ButtonStyle.primary, custom_id="board:knock", emoji="🚪", row=0)
     async def knock(self, interaction: discord.Interaction, _: ui.Button) -> None:
         guild_id = interaction.guild_id
         assert guild_id is not None
@@ -265,7 +265,7 @@ class BoardView(ui.View):
         candidates = [s for s in data.get("sessions", []) if s["user_id"] != interaction.user.id][:CANDIDATE_LIMIT]
         if not candidates:
             await interaction.response.send_message(
-                "今ヒマな人はいないよ。自分が宣言してみよう！", ephemeral=True
+                "お返事できる人がいないよ。自分が募集してみよう！", ephemeral=True
             )
             return
         await interaction.response.send_message(
@@ -404,6 +404,10 @@ class JoinView(ui.View):
     async def note_button(self, interaction: discord.Interaction, _: ui.Button) -> None:
         await interaction.response.send_modal(JoinNoteModal(self))
 
+    @ui.button(label="時間を指定する", style=discord.ButtonStyle.secondary, row=3, emoji="⏱️")
+    async def custom_duration_button(self, interaction: discord.Interaction, _: ui.Button) -> None:
+        await interaction.response.send_modal(JoinMinutesModal(self))
+
     @ui.button(label="確定", style=discord.ButtonStyle.success, row=4)
     async def decide(self, interaction: discord.Interaction, _: ui.Button) -> None:
         if self.guild_id is None:
@@ -425,7 +429,41 @@ class JoinView(ui.View):
         kind = "掲示板に載せたよ！" if data.get("created") else "延長したよ！"
         suffix = f"（ひとこと：{self.note}）" if self.note else ""
         await interaction.response.send_message(
-            f"{kind} あと{self.duration_min}分ヒマ宣言中。マッチした相手にはDMが届くよ🚀{suffix}", ephemeral=True
+            f"{kind} あと{self.duration_min}分ヒマ宣言中。マッチしたらDMが届くよ🚀{suffix}", ephemeral=True
+        )
+
+
+class JoinMinutesModal(ui.Modal):
+    """ヒマ時間のカスタム指定（5〜720分の整数）。"""
+
+    minutes_input = ui.TextInput(
+        label="ヒマな時間（分・5〜720）",
+        max_length=4,
+        required=True,
+        style=discord.TextStyle.short,
+    )
+
+    def __init__(self, join_view: JoinView) -> None:
+        super().__init__(title="時間を指定する", timeout=300)
+        self.join_view = join_view
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        raw = str(self.minutes_input.value or "").strip()
+        try:
+            minutes = int(raw)
+        except ValueError:
+            await interaction.response.send_message(
+                "時間は半角数字（分）で入れてね。例：45", ephemeral=True
+            )
+            return
+        if not 5 <= minutes <= 720:
+            await interaction.response.send_message(
+                "時間は 5〜720 分の間で指定してね。", ephemeral=True
+            )
+            return
+        self.join_view.duration_min = minutes
+        await interaction.response.send_message(
+            f"時間を「あと{minutes}分」に設定したよ。「確定」を押してね！", ephemeral=True
         )
 
 
@@ -455,13 +493,13 @@ class JoinNoteModal(ui.Modal):
 
 
 class KnockSendView(ui.View):
-    """ノック送信画面（相手とテンプレを選んで POST /bot/knocks）。"""
+    """お返事送信画面（相手と誘い文を選んで POST /bot/knocks）。"""
 
     def __init__(self, bot: "HimaBot", user: discord.abc.User, candidates: list[dict]) -> None:
         super().__init__(timeout=300)
         self.bot = bot
         self.user = user
-        self.template = KNOCK_TEMPLATES[0]
+        self.template: str | None = None  # 誘い文なしでも送れる
         self.user_select.options = [
             discord.SelectOption(
                 label=s["display_name"],
@@ -471,23 +509,24 @@ class KnockSendView(ui.View):
             for s in candidates
         ]
 
-    @ui.select(cls=ui.UserSelect, placeholder="誰にノックする？（最大25人まで）", min_values=1, max_values=CANDIDATE_LIMIT, row=0)
+    @ui.select(cls=ui.UserSelect, placeholder="誰にお返事する？（最大25人まで）", min_values=1, max_values=CANDIDATE_LIMIT, row=0)
     async def user_select(self, interaction: discord.Interaction, select: ui.UserSelect) -> None:
         await interaction.response.defer()
 
     @ui.select(
-        placeholder="誘い文はどれ？",
-        options=[discord.SelectOption(label=text, value=text) for text in KNOCK_TEMPLATES],
+        placeholder="誘い文はどれ？（なしでも送れるよ）",
+        options=[discord.SelectOption(label="誘い文なし", value="")] +
+                 [discord.SelectOption(label=text, value=text) for text in KNOCK_TEMPLATES],
         row=1,
     )
     async def template_select(self, interaction: discord.Interaction, select: ui.Select) -> None:
-        self.template = select.values[0]
+        self.template = select.values[0] or None
         await interaction.response.defer()
 
-    @ui.button(label="ノックを送る", style=discord.ButtonStyle.primary, row=2, emoji="🚪")
+    @ui.button(label="お返事を送る", style=discord.ButtonStyle.primary, row=2, emoji="🚪")
     async def send(self, interaction: discord.Interaction, _: ui.Button) -> None:
         if not self.user_select.values:
-            await interaction.response.send_message("先にノックする相手を選んでね！", ephemeral=True)
+            await interaction.response.send_message("先にお返事する相手を選んでね！", ephemeral=True)
             return
         parts = []
         for member in self.user_select.values:
@@ -505,8 +544,50 @@ class KnockSendView(ui.View):
             except ApiConnectionError:
                 parts.append(f"⚠️ {member.display_name}: {CONNECTION_ERROR_TEXT}")
             else:
-                parts.append(f"✅ {member.display_name}: 届けたよ！（相手の /board 受信箱に表示されるよ）")
+                parts.append(f"✅ {member.display_name}: 届けたよ！（相手の受信箱と DM に届くよ）")
         await interaction.response.send_message("\n".join(parts), ephemeral=True)
+
+
+class KnockTemplateView(ui.View):
+    """誘い文選択（なし / game / chat / work）→ 指定した相手にお返事を送る。/panel 参加 から使う。"""
+
+    def __init__(self, bot: "HimaBot", user: discord.abc.User, target: discord.abc.User) -> None:
+        super().__init__(timeout=180)
+        self.bot = bot
+        self.user = user
+        self.target = target
+
+    async def _knock(self, interaction: discord.Interaction, template: str) -> None:
+        try:
+            await self.bot.api.create_knock(from_user=self.user.id, to_user=self.target.id, template=template)
+        except ApiHTTPError as exc:
+            if exc.status_code == 409:
+                content = "⏳ さっき送ったばかりだよ。5分待ってからもう一度ね。"
+            elif exc.status_code == 403:
+                content = "🚫 その人には送れません。"
+            else:
+                content = f"⚠️ {exc.detail}"
+        except ApiConnectionError:
+            content = f"⚠️ {CONNECTION_ERROR_TEXT}"
+        else:
+            content = f"✅ {self.target.display_name} さんにお返事を送ったよ！（相手の受信箱と DM に届くよ）"
+        await interaction.response.edit_message(content=content, view=None)
+
+    @ui.button(label="✉️ 誘い文なし", style=discord.ButtonStyle.secondary, row=0)
+    async def none_template(self, interaction: discord.Interaction, _: ui.Button) -> None:
+        await self._knock(interaction, None)
+
+    @ui.button(label="🎮 ゲームしない？", style=discord.ButtonStyle.primary, row=0)
+    async def game(self, interaction: discord.Interaction, _: ui.Button) -> None:
+        await self._knock(interaction, KNOCK_TEMPLATES[0])
+
+    @ui.button(label="💬 ちょっと話さない？", style=discord.ButtonStyle.primary, row=0)
+    async def chat(self, interaction: discord.Interaction, _: ui.Button) -> None:
+        await self._knock(interaction, KNOCK_TEMPLATES[1])
+
+    @ui.button(label="💻 作業通話しない？", style=discord.ButtonStyle.primary, row=0)
+    async def work(self, interaction: discord.Interaction, _: ui.Button) -> None:
+        await self._knock(interaction, KNOCK_TEMPLATES[2])
 
 
 # ------------------------------------------------------------------ block manage view

@@ -5,13 +5,14 @@
 
 ## 1. 語彙（固定キー）
 
-### mood（hima_sessions.mood / users.auto_mood）— 3種固定
+### mood（hima_sessions.mood / users.auto_mood）— 2種固定（**fire は廃止。アプリ側の追随が必要な変更**）
 
 | key | 絵文字 | 意味 |
 | --- | --- | --- |
-| `fire` | 🔥 | 誘う人（自分から誘う） |
 | `ok` | 🙂 | 誘われ待ち（既定値） |
 | `moon` | 🌙 | 静か（掲示板には出るが、マッチング通知は一切受けない） |
+
+※ `fire`（🔥 誘う人）は廃止。宣言 API（Bot／アプリ共通）で `mood=fire` は **400**。users.auto_mood が fire の既存行はマイグレーションで ok に寄せた。旧データの fire 有効セッションは ok として扱われる
 
 ### activity（hima_sessions.activity）— 5種固定
 
@@ -31,17 +32,17 @@
 | `suggested` | サジェストからの宣言（次段の提案機能用） |
 | `auto` | regular_slots（よくヒマになる時間帯）による自動宣言 |
 
-### matches.kind — マッチングの役割組み合わせ
+### matches.kind — マッチングの役割組み合わせ（fire 廃止により ok_ok のみ）
 
 | key | 意味 |
 | --- | --- |
-| `fire_fire` | 🔥×🔥 両方にDM |
-| `fire_ok` | 🔥×🙂 🔥 側にだけDM |
 | `ok_ok` | 🙂×🙂 両方にDM |
 
-※ `moon`（🌙）はマッチング対象外（宣言者・候補のどちらかが 🌙 なら成立しない）。ブロック関係にあるペアも対象外。`matches` は (session_a_id, session_b_id) の小さい方を a として保存し、同じペアの行が既にあれば温度感が変わっても再通知しない。1回の宣言で送るマッチ DM は最大3件（activity 一致の相手を優先）。
+※ `moon`（🌙）はマッチング対象外（宣言者・候補のどちらかが 🌙 なら成立しない）。旧 fire 行（matches の過去データ）はそのまま残す。ブロック関係にあるペアも対象外。`matches` は (session_a_id, session_b_id) の小さい方を a として保存し、同じペアの行が既にあれば温度感が変わっても再通知しない。1回の宣言で送るマッチ DM は最大3件（activity 一致の相手を優先）。
 
-### knocks.status — ノックのライフサイクル
+### knocks.status — ノック（**ユーザー向け呼称は「お返事」**。API 名・custom_id・テーブル名は不変）のライフサイクル
+
+誘い文なしでも送れる（`template` は NULL。着信 DM は「{送信者} さんからお返事が届いたよ」の形）。
 
 `sent` → `accept`/`later`/`pass` 返答で `accepted` / `later` / `passed`。未返答のまま（①当事者の有効セッションが消えた、②宛先が宣言解除した）場合は `expired`。同一ペア（双方向）のノックは5分クールダウン（409）。
 
@@ -54,7 +55,7 @@
 - 送信成功時は `knocks.dm_message_id` に保存（nullable）。DM が閉じられている等で失敗しても**ログのみでノック作成は成功**（受信箱に残る）
 - 痕跡を残さないための削除：①Bot 側で DM の返答ボタンを押して返答が成功したら、その DM メッセージを Bot が削除する（掲示板 ephemeral 上のボタンは従来どおり・削除しない）。②ノックが expired になったとき（宛先の宣言解除・ワーカーによるセッション期限切れ）は、dm_message_id があれば API 側で DM を削除する（チャンネルは宛先との DM を開き直して特定）。削除後は dm_message_id を NULL にして再試行しない
 
-### knocks.template — 誘い文（自由文字列。推奨は activity キーに対応する次の3種）
+### knocks.template — 誘い文（**nullable＝なし可**。自由文字列。推奨は activity キーに対応する次の3種）
 
 | key | 文面 |
 | --- | --- |
@@ -67,8 +68,8 @@
 | custom_id | ボタン |
 | --- | --- |
 | `atsumaro:knockreply:{knock_id}:{accept\|later\|pass}` | ノック返答（いいよ！／あとで／パス。DynamicItem・再起動後も有効） |
-| `atsumaro:watchtoggle:{0\|1}` | 見守り ON/OFF トグル（状態を custom_id に埋め込む） |
-| `atsumaro:suggest:declare` | 提案 DM の「このまま宣言する」（押すと `POST /bot/suggest-declare` を呼び、source=suggested / 30分 / auto_mood（未設定なら ok）で宣言。DynamicItem・再起動後も有効） |
+| `atsumaro:watchtoggle:{0\|1}` | お知らせ（notify_on_hima）ON/OFF トグル（状態を custom_id に埋め込む。表記は「お知らせ：ON／OFF」） |
+| `atsumaro:suggest:declare` | 提案 DM の「このまま宣言する」（押すと `POST /bot/suggest-declare` を呼び、source=suggested / 30分 / auto_mood（ok / moon 以外は ok にフォールバック）で宣言。DynamicItem・再起動後も有効） |
 | `board:declare` / `board:knock` / `board:blocks` / `board:leave` | 掲示板下部ボタン（Bot 内部用） |
 
 ### 公開パネルのボタン custom_id（Discord components に埋め込む値）
@@ -81,10 +82,19 @@
 
 ※ トピック人数方式（人数をチャンネルトピックに表示）は一時採用後に不採用（revert: back to counter and panel messages）。guilds の base_topic / topic_counter 列は未使用のまま残置
 
-### 共有メッセージの形式
+### チャンネル内の常設メッセージ（廃止）
 
-- 人数メッセージ：`いま{n}人ヒマ`（n = visible な membership を持つ有効セッション中のユーザー数。宣言・解除の直後とワーカーtickで編集・更新）
-- パネルメッセージ：上記3ボタン付き。**チャンネルに残る Bot メッセージはこの2件のみ**で、それ以外の応答はコマンド／ボタン＋ephemeral で完結する
+- **チャンネルに Bot の常設メッセージ（人数メッセージ・パネルメッセージ）は置かない**。人数の常時表示も廃止（現在地は `GET /bot/guilds/{id}/count` で確認可能）
+- 操作の入口は **`/panel` コマンドグループの4サブコマンド（すべて ephemeral）のみ**：
+  - `/panel 確認`：いま募集している人と自分の状態を見る（旧 /board と同一内容。掲示板＋受信箱＋ボタン群）
+  - `/panel 募集`：募集をはじめる（温度感・やりたいこと・時間の選択フローを起動）
+  - `/panel 取り消し`：募集を取り消す（未宣言なら「いまは募集していません」）
+  - `/panel 参加 相手`：募集している人にノックで参加を申し込む（相手が募集していなければ「いまは募集していないみたいです」）
+- **廃止したコマンド**：`/board`（/panel 確認 に統合）、`/panel_remove`（API の teardown エンドポイントは残る）、`/hima` / `/hima_off` / `/hima_list`
+- `POST /bot/guilds/{id}/setup` はギルド登録のみ（メッセージは投稿しない）。`teardown` は旧パネル掃除用（ID 保存済みの常設メッセージ対が残っていれば削除）
+- `guilds.list_message_id` / `panel_message_id` / `base_topic` / `topic_counter` は**未使用列**（マイグレーションはせず、今後書き込まない）
+- 上記 `atsumaro:board/join/leave` は、残っている旧パネルが押された場合の受け口として永続登録だけ維持する（新規に投稿されることはない）
+- トピック人数方式も一時採用後に不採用（revert: back to counter and panel messages → remove channel panel）
 
 ## 2. 認証
 
@@ -97,31 +107,31 @@
 | --- | --- | --- |
 | GET | `/health` | 疎通確認。DB 接続込みで 200 を返す（認証不要） |
 | GET | `/bot/ping` | Bot→API 認証の動作確認 |
-| POST | `/bot/guilds/{guild_id}/setup` | guilds を upsert し、人数メッセージ＋パネルメッセージを REST 投稿して ID を保存 |
-| POST | `/bot/guilds/{guild_id}/teardown` | 2つのメッセージを REST 削除（失敗は無視）し、メッセージID を NULL に |
-| POST | `/bot/sessions` | ヒマ宣言（延長=同ID更新／新規は source=manual）。マッチング評価＋見守りキュー登録＋人数メッセージ更新 |
-| DELETE | `/bot/sessions` | 有効セッション終了。宛ノックを expired に、人数メッセージを更新 |
-| GET | `/bot/board?guild_id=&user_id=` | 閲覧者に見える有効セッション一覧（共有可視・ブロック除外・source非表示）＋宛ノック（最大5件。**`to_moon` は宛先＝受信者が現在🌙の有効セッションを持つときのみ true**）＋未見結果。レスポンスに `viewer.notify_on_hima` を含む |
+| POST | `/bot/guilds/{guild_id}/setup` | guilds を upsert し、name と list_channel_id を記録する。**メッセージは一切投稿しない**（応答の counter_message_id / panel_message_id は常に null） |
+| POST | `/bot/guilds/{guild_id}/teardown` | list_message_id / panel_message_id が残っていればその2件を REST 削除（失敗は無視）して NULL 化。旧パネル掃除用 |
+| POST | `/bot/sessions` | ヒマ宣言（延長=同ID更新／新規は source=manual）。minutes は整数分（**5〜720 分を想定**。API は 1〜1440 にクランプ）。マッチング評価＋お知らせ（watch_queue）登録 |
+| DELETE | `/bot/sessions` | 有効セッション終了。宛ノックを expired に |
+| GET | `/bot/board?guild_id=&user_id=` | 閲覧者に見える有効セッション一覧（共有可視・ブロック除外・source非表示）＋受信したお返事（最大5件。**`to_moon` は宛先＝受信者が現在🌙の有効セッションを持つときのみ true**）＋未見結果。レスポンスに `viewer.notify_on_hima` を含む |
 | POST | `/bot/knocks/results/seen` | 未見結果に `result_seen_at` を打つ |
 | POST | `/bot/knocks` | ノック作成（相手が有効セッション中・共有可視・非ブロック必須。5分クールダウンは 409） |
 | POST | `/bot/knocks/{id}/reply` | 返答（accept/later/pass）。to_user 本人のみ。status と responded_at を更新 |
 | POST | `/bot/blocks` | ブロック登録（効果は双方向） |
 | DELETE | `/bot/blocks` | ブロック解除 |
 | GET | `/bot/blocks?user_id=` | 自分がブロックしているユーザー一覧 |
-| PUT | `/bot/users/{user_id}/settings` | `notify_on_hima` の更新 |
-| PUT | `/bot/memberships/visibility` | membership の visible 更新（人数メッセージを即更新） |
-| POST | `/bot/suggest-declare` | 提案 DM の「このまま宣言する」ボタン用。`{user_id}`。そのユーザーの auto_mood（未設定・無効値なら ok）/ activity=any / 30分 / source=suggested で宣言（マッチング・人数更新は通常宣言と同一）。応答は `/bot/sessions` と同じ形 |
+| PUT | `/bot/users/{user_id}/settings` | `notify_on_hima` の更新（**デフォルトは ON**。お知らせ ON のユーザーは、共有サーバーで誰かが宣言するたびに 3分バッチの DM まとめを受け取る） |
+| PUT | `/bot/memberships/visibility` | membership の visible 更新 |
+| POST | `/bot/suggest-declare` | 提案 DM の「このまま宣言する」ボタン用。`{user_id}`。そのユーザーの auto_mood（ok / moon 以外は ok にフォールバック）/ activity=any / 30分 / source=suggested で宣言（マッチング・人数更新は通常宣言と同一）。応答は `/bot/sessions` と同じ形 |
 | GET | `/bot/guilds/{guild_id}/count` | 人数の取得（デバッグ用） |
 
 ## 4. データモデル（主要テーブル）
 
 - `users`, `guilds`, `memberships`（PK: guild_id+user_id, visible, last_seen_at）
 - `hima_sessions`（部分ユニークインデックスで有効セッション1人1つ。延長=同ID更新、終了→再宣言=新ID）
-- `blocks`（blocker_id+blocked_id PK。双方向に効果：掲示板・マッチング・ノック・見守りすべてで不可視/対象外）
+- `blocks`（blocker_id+blocked_id PK。双方向に効果：掲示板・マッチング・ノック・お知らせですべてで不可視/対象外）
 - `matches`（(session_a_id, session_b_id) ユニーク）
 - `knocks`（status ライフサイクル上記。`responded_at` / `result_seen_at`。着信 DM の `dm_message_id`（🌙 宛は NULL））
 - `devices`, `regular_slots`（id, user_id, weekday 0=月〜6=日, start_min, end_min。demo フラグはダメ投入スクリプトの投入物を識別）
-- **`watch_queue`**（見守り通知キュー）：id, watcher_id, session_id, created_at, sent_at(nullable)。未送信行の部分インデックスあり
+- **`watch_queue`**（お知らせ通知キュー。ユーザー向け文言は「お知らせ」で統一）：id, watcher_id, session_id, created_at, sent_at(nullable)。未送信行の部分インデックスあり
 - **`suggestion_log`**（提案送信記録）：id, user_id, slot_date（ローカル日付）, weekday, start_min, sent_at。(user_id, slot_date, start_min) ユニーク＝同じ枠・同じ日は1回だけ
 - `hima_sessions.demo` / `regular_slots.demo`：`scripts/seed_demo_history.py` が投入したデモデータの識別用（`--reset` で demo=true の行だけ削除）
 
@@ -153,7 +163,6 @@
 ## 5. バックグラウンドワーカー（30秒tick・advisory lock）
 
 - 期限切れセッションのクローズ（ended_at 書き込み）＋当事者の未返答ノックを expired にし、着信 DM（dm_message_id 保存済み）を削除
-- 全ギルドの人数メッセージ再計算・修正
 - **3分ごと**：未送信 watch_queue を watcher ごとにまとめ1通の DM（「👀 ヒマな人が出たよ：名前…（n人）」）を送り sent_at を記録
 - Discord REST は失敗時も例外を投げない（ログのみ）。テストでは `api.discord_rest.rest` をモックへ差し替え可能
 
@@ -171,9 +180,9 @@
 | --- | --- | --- |
 | GET | `/app/me` | プロフィール・設定・**自分の有効セッション（source を含む）**・memberships 一覧 |
 | PUT | `/app/me/settings` | `notify_on_hima` / `auto_mode` / `auto_mood` の部分更新 |
-| PUT | `/app/memberships/{guild_id}/visibility` | 自分の membership visible 更新（人数メッセージを即更新） |
+| PUT | `/app/memberships/{guild_id}/visibility` | 自分の membership visible 更新 |
 | GET | `/app/board` | **横断掲示板**：自分が member の全サーバーを統合。共有可視・ブロック除外判定は Bot 側と同じ。各行に `shared_guild_ids`（共通の visible サーバーID一覧）を付ける。ノック受信箱（最大5件、`to_moon` 付き）＋未見結果も返す。**他人のセッション行に source は含めない**（自分の行のみ `/app/me` で返す） |
-| POST | `/app/sessions` | ヒマ宣言 `{mood, activity, note, minutes, source}`（source は manual/suggested/auto）。Bot 側と**同一のサービス関数**を使うためマッチング・見守りキュー・人数メッセージ更新も同じに発火 |
+| POST | `/app/sessions` | ヒマ宣言 `{mood, activity, note, minutes, source}`（source は manual/suggested/auto）。Bot 側と**同一のサービス関数**を使うためマッチング・お知らせ（watch_queue）登録も同じに発火 |
 | DELETE | `/app/sessions` | 有効セッション終了（Bot 側と同一挙動） |
 | POST | `/app/knocks` | ノック作成（from_user は JWT 本人） |
 | POST | `/app/knocks/{id}/reply` | 返答（accept/later/pass）。to_user 本人のみ |

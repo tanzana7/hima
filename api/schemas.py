@@ -30,7 +30,7 @@ class ResultsSeenIn(BaseModel):
 class KnockIn(BaseModel):
     from_user: int
     to_user: int
-    template: str
+    template: str | None = None
 
 
 class ReplyIn(BaseModel):
@@ -81,7 +81,7 @@ class AppSettingsIn(BaseModel):
 
 class AppKnockIn(BaseModel):
     to_user: int
-    template: str
+    template: str | None = None
 
 
 class AppBlockIn(BaseModel):

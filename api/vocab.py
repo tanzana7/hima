@@ -1,9 +1,8 @@
 """Vocabulary shared with the Discord bot and the app. Contract source: docs/api-contract.md."""
 from __future__ import annotations
 
-# mood keys (fixed 3): fire=🔥 誘う人 / ok=🙂 誘われ待ち / moon=🌙 静か
+# mood keys (fixed 2): ok=🙂 誘われ待ち / moon=🌙 静か（fire は廃止。旧データは ok として扱う）
 MOODS = {
-    "fire": "🔥 誘う人（自分から誘う）",
     "ok": "🙂 誘われ待ち",
     "moon": "🌙 静か（掲示板には出るが、マッチング通知は一切受けない）",
 }
@@ -21,8 +20,8 @@ ACTIVITIES = {
 # hima_sessions.source: how the session was declared (Bot 側の宣言は常に manual)
 HIMA_SOURCES = {"manual", "suggested", "auto"}
 
-# matches.kind: role combination of the paired sessions
-MATCH_KINDS = {"fire_fire", "fire_ok", "ok_ok"}
+# matches.kind: role combination of the paired sessions (fire 廃止により ok_ok のみ)
+MATCH_KINDS = {"ok_ok"}
 
 # knocks.status lifecycle
 KNOCK_STATUSES = {"sent", "accepted", "later", "passed", "expired"}

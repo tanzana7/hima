@@ -30,7 +30,7 @@ class User(Base):
     avatar: Mapped[str | None] = mapped_column(String(255))
     auto_mode: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     auto_mood: Mapped[str] = mapped_column(String(10), default="ok", server_default="ok")
-    notify_on_hima: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    notify_on_hima: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
 
 
 class Guild(Base):
@@ -112,7 +112,7 @@ class Knock(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)  # BIGSERIAL
     from_user: Mapped[int] = mapped_column(BigInteger)
     to_user: Mapped[int] = mapped_column(BigInteger)
-    template: Mapped[str] = mapped_column(String(50))
+    template: Mapped[str | None] = mapped_column(String(50))  # None は「誘い文なし」
     status: Mapped[str] = mapped_column(String(20), default="sent", server_default="sent")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

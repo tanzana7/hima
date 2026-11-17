@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import text
 
-from . import discord_rest, domain, notify
+from . import discord_rest, domain
 from .auth import require_bot_secret
 from .db import SessionLocal
 from .models import Block, Guild, User
@@ -23,7 +23,6 @@ from .schemas import (
 from .services import upsert_membership, upsert_user
 from .notify import count_visible_active_sessions
 from .vocab import MOODS
-
 router = APIRouter(prefix="/bot", dependencies=[Depends(require_bot_secret)])
 
 
@@ -32,27 +31,17 @@ router = APIRouter(prefix="/bot", dependencies=[Depends(require_bot_secret)])
 
 @router.post("/guilds/{guild_id}/setup")
 def guild_setup(guild_id: int, body: SetupIn) -> dict:
+    """ギルド登録のみ（メッセージは投稿しない）。入口は /board（ephemeral）に一本化。"""
     with SessionLocal() as db:
         guild = db.get(Guild, guild_id)
         if guild is None:
-            guild = Guild(id=guild_id, name=body.name)
+            guild = Guild(id=guild_id, name=body.name, list_channel_id=body.channel_id)
             db.add(guild)
         else:
             guild.name = body.name
-        db.flush()
-        counter = discord_rest.rest.send_message(body.channel_id, notify.COUNTER_FORMAT.format(n=0))
-        panel = discord_rest.rest.send_message(
-            body.channel_id, discord_rest.PANEL_CONTENT, components=discord_rest.panel_components()
-        )
-        guild.list_channel_id = body.channel_id
-        guild.list_message_id = int(counter["id"]) if counter else None
-        guild.panel_message_id = int(panel["id"]) if panel else None
+            guild.list_channel_id = body.channel_id
         db.commit()
-        return {
-            "guild_id": guild_id,
-            "counter_message_id": guild.list_message_id,
-            "panel_message_id": guild.panel_message_id,
-        }
+        return {"guild_id": guild_id, "counter_message_id": None, "panel_message_id": None}
 
 
 @router.post("/guilds/{guild_id}/teardown")
@@ -102,9 +91,8 @@ def end_session(body: EndSessionIn) -> dict:
 
 @router.get("/board")
 def board(guild_id: int = Query(...), user_id: int = Query(...)) -> dict:
+    """ギルド登録が無くても掲示板は参照できる（/panel_setup 廃止により setup を経由しない入口が存在するため）。"""
     with SessionLocal() as db:
-        if db.get(Guild, guild_id) is None:
-            raise HTTPException(status_code=404, detail="guild not found")
         return domain.board_for_guild(db, guild_id=guild_id, viewer_id=user_id)
 
 
@@ -187,7 +175,6 @@ def membership_visibility(body: VisibilityIn) -> dict:
         upsert_user(db, body.user_id)
         m = upsert_membership(db, body.guild_id, body.user_id, visible=body.visible)
         db.commit()
-        notify.update_counter_for_guild(db, body.guild_id, rest=discord_rest.rest)
         return {"guild_id": body.guild_id, "user_id": body.user_id, "visible": m.visible}
 
 

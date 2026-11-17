@@ -15,28 +15,18 @@ from .vocab import ACTIVITIES
 log = logging.getLogger("atsumaro.matching")
 
 KIND = {
-    ("fire", "fire"): "fire_fire",
-    ("fire", "ok"): "fire_ok",
-    ("ok", "fire"): "fire_ok",
     ("ok", "ok"): "ok_ok",
 }
+# fire は廃止（宣言 API では 400）。旧データの fire は ok として扱う
 MAX_DMS_PER_DECLARATION = 3
 
 
 def _dm_targets(kind: str, me_user: int, other_user: int, me_is_fire: bool) -> list[int]:
-    if kind == "fire_fire":
-        return [me_user, other_user]
-    if kind == "fire_ok":
-        return [me_user if me_is_fire else other_user]
-    return [me_user, other_user]  # ok_ok
+    return [me_user, other_user]  # ok_ok: 両者に DM
 
 
 def _dm_text(kind: str, other_name: str, activity_key: str, minutes: int) -> str:
     label = ACTIVITIES.get(activity_key, activity_key)
-    if kind == "fire_fire":
-        return f"🔥 {other_name} さんも今ヒマ！{label}・あと{minutes}分。お互い誘い合えるかも！"
-    if kind == "fire_ok":
-        return f"誘えば来そうな人がいるよ：🙂 {other_name} さん（{label}・あと{minutes}分）"
     return f"🙂 お互い誘われ待ちだよ。きっかけにどうぞ：{other_name} さん（{label}・あと{minutes}分）"
 
 
@@ -83,7 +73,7 @@ def evaluate_for_session(db: Session, session_row, rest=None) -> int:
             continue
         if is_blocked(db, me_user, other_user):
             continue
-        kind = KIND[(me_mood, cand["mood"])]
+        kind = KIND.get((me_mood, cand["mood"]), "ok_ok")  # 旧 fire データも ok として扱う
         if session_row.id < int(cand["session_id"]):
             a_id, a_user = session_row.id, me_user
             b_id, b_user = int(cand["session_id"]), other_user

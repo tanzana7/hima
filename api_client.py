@@ -99,7 +99,7 @@ class ApiClient:
     async def results_seen(self, user_id: int) -> dict:
         return await self._request("POST", "/bot/knocks/results/seen", json_body={"user_id": user_id})
 
-    async def create_knock(self, *, from_user: int, to_user: int, template: str) -> dict:
+    async def create_knock(self, *, from_user: int, to_user: int, template: str | None) -> dict:
         return await self._request(
             "POST", "/bot/knocks", json_body={"from_user": from_user, "to_user": to_user, "template": template}
         )
