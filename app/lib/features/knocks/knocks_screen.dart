@@ -66,7 +66,7 @@ class _KnocksScreenState extends State<KnocksScreen> {
         .where(
           (knock) =>
               knock.status == KnockStatus.accepted &&
-              knock.resultSeenAt == null &&
+              !viewModel.isResultSeen(knock.id) &&
               _highlighted.add(knock.id),
         )
         .toList();
@@ -82,14 +82,14 @@ class _KnocksScreenState extends State<KnocksScreen> {
     });
   }
 
-  /// Results stay highlighted for this visit, then are marked seen on the
-  /// server so the header badge clears.
+  /// Results stay highlighted for this visit, then are marked seen locally so
+  /// the header badge clears.
   void _markUnseenAfterDisplay(List<Knock> knocks, AppViewModel viewModel) {
     final unseen = knocks
         .where(
           (knock) =>
               knock.status != KnockStatus.pending &&
-              knock.resultSeenAt == null &&
+              !viewModel.isResultSeen(knock.id) &&
               _markingSeen.add(knock.id),
         )
         .map((knock) => knock.id)
@@ -176,6 +176,7 @@ class _KnocksScreenState extends State<KnocksScreen> {
                       knock: knock,
                       sent: _showSent,
                       highlighted: _highlighted.contains(knock.id),
+                      seen: viewModel.isResultSeen(knock.id),
                       onRespond: (status) => _respond(knock.id, status),
                     ),
                   ),
@@ -309,12 +310,16 @@ class _KnockCard extends StatelessWidget {
     required this.knock,
     required this.sent,
     required this.highlighted,
+    required this.seen,
     required this.onRespond,
   });
 
   final Knock knock;
   final bool sent;
   final bool highlighted;
+
+  /// Whether this reply was already displayed, which clears its 新着 dab.
+  final bool seen;
   final ValueChanged<KnockStatus> onRespond;
 
   @override
@@ -323,9 +328,7 @@ class _KnockCard extends StatelessWidget {
         (sent ? knock.recipient : knock.sender) ??
         const UserSummary(id: '', displayName: '友達');
     final isNew =
-        sent &&
-        knock.status != KnockStatus.pending &&
-        (highlighted || knock.resultSeenAt == null);
+        sent && knock.status != KnockStatus.pending && (highlighted || !seen);
     // 「返事待ち」 would read as if I were waiting on a knock I received, so a
     // received knock shows when it arrived until I answer it.
     final statusText = sent

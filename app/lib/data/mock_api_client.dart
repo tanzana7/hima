@@ -123,6 +123,10 @@ class MockApiClient implements ApiClient {
 
   final List<_MockMember> _members = [];
   final Set<String> _blockedIds = {};
+
+  /// The mock server's `knocks.result_seen_at`: only the board's unseen
+  /// `results` expose it, exactly like the real endpoint.
+  final Set<String> _seenResultIds = {};
   final List<RegularSlot> _regularSlots = [];
   UserSettings _settings = const UserSettings(
     autoMode: false,
@@ -295,7 +299,7 @@ class MockApiClient implements ApiClient {
             .where(
               (knock) =>
                   knock.status != KnockStatus.pending &&
-                  knock.resultSeenAt == null &&
+                  !_seenResultIds.contains(knock.id) &&
                   !_isBlocked(knock.recipient?.id ?? ''),
             )
             .toList(),
@@ -304,36 +308,11 @@ class MockApiClient implements ApiClient {
   }
 
   @override
-  Future<List<FriendServer>?> getMembers() async {
-    final now = DateTime.now().toUtc();
-    return _guilds.map((guild) {
-      final members =
-          _members
-              .where(
-                (member) =>
-                    member.guildId == guild.id &&
-                    !_isBlocked(member.user.id),
-              )
-              .map((member) {
-                final hima = guild.visible
-                    ? _friends
-                          .where(
-                            (friend) =>
-                                friend.user.id == member.user.id &&
-                                friend.expiresAt.isAfter(now),
-                          )
-                          .firstOrNull
-                    : null;
-                return FriendMember(user: member.user, hima: hima);
-              })
-              .toList()
-            ..sort((a, b) {
-              if (a.isFree != b.isFree) return a.isFree ? -1 : 1;
-              return a.user.displayName.compareTo(b.user.displayName);
-            });
-      return FriendServer(guild: guild, members: members);
-    }).toList(growable: false);
-  }
+  Future<List<ServerMember>> getMembers(List<String> guildIds) async => [
+    for (final member in _members)
+      if (guildIds.contains(member.guildId))
+        ServerMember(user: member.user, guildId: member.guildId),
+  ];
 
   @override
   Future<Knock> createKnock({
@@ -383,7 +362,7 @@ class MockApiClient implements ApiClient {
   }
 
   @override
-  Future<List<Knock>?> getSentKnocks() async => List.unmodifiable(
+  Future<List<Knock>> getSentKnocks() async => List.unmodifiable(
     _sent.where((knock) => !_isBlocked(knock.recipient?.id ?? '')).toList()
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt)),
   );
@@ -411,12 +390,9 @@ class MockApiClient implements ApiClient {
 
   @override
   Future<void> markKnockResultsSeen() async {
-    for (var index = 0; index < _sent.length; index++) {
-      if (_sent[index].status == KnockStatus.pending) continue;
-      if (_sent[index].resultSeenAt != null) continue;
-      _sent[index] = _sent[index].copyWith(
-        resultSeenAt: DateTime.now().toUtc(),
-      );
+    for (final knock in _sent) {
+      if (knock.status == KnockStatus.pending) continue;
+      _seenResultIds.add(knock.id);
     }
   }
 

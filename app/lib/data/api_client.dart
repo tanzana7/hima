@@ -38,18 +38,22 @@ abstract interface class ApiClient {
 
   Future<BoardSnapshot> getBoard();
 
-  /// Members of my shared servers, or null when the server does not implement
-  /// `GET /app/members` yet (404).
-  Future<List<FriendServer>?> getMembers();
+  /// Every visible member of my shared servers, from `GET /app/members`.
+  ///
+  /// The rows are flat, so the caller groups them by [ServerMember.guildId]
+  /// using the guilds it already has. [guildIds] are the memberships from
+  /// `/app/me`: without a `guild_id` the endpoint only answers for the servers
+  /// whose own membership is visible, which would drop every member of a server
+  /// I hid.
+  Future<List<ServerMember>> getMembers(List<String> guildIds);
 
   Future<Knock> createKnock({
     required UserSummary to,
     required KnockTemplate template,
   });
 
-  /// Knocks I sent, or null when the server does not implement
-  /// `GET /app/knocks/sent` yet (404).
-  Future<List<Knock>?> getSentKnocks();
+  /// Knocks I sent, newest first, from `GET /app/knocks/sent`.
+  Future<List<Knock>> getSentKnocks();
 
   Future<void> respondToKnock(String knockId, KnockStatus response);
 

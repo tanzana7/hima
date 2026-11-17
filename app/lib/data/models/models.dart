@@ -88,10 +88,18 @@ DateTime? readOptionalDateTime(JsonMap json, String key) {
   return value == null ? null : DateTime.parse(value).toUtc();
 }
 
+/// Reads an avatar URL. Anything that is not an `http(s)` URL — null, an empty
+/// string, a bare hash — means "no avatar", so the UI keeps its initials
+/// fallback instead of asking `Image.network` for an unusable string.
+String? readAvatarUrl(Object? value) {
+  if (value is! String || !value.startsWith('http')) return null;
+  return value;
+}
+
 /// `avatar` is a full CDN URL or null. `avatar_url` is still accepted because
 /// that is the key the app used before it talked to the real server.
 String? readAvatar(JsonMap json) =>
-    readOptionalString(json, 'avatar') ?? readOptionalString(json, 'avatar_url');
+    readAvatarUrl(json['avatar']) ?? readAvatarUrl(json['avatar_url']);
 
 List<T> readModelList<T>(Object? value, T Function(JsonMap) fromJson) =>
     readJsonList(value).map((item) => fromJson(readJsonMap(item))).toList();
@@ -439,6 +447,23 @@ class GuildSummary {
   final String name;
 }
 
+/// One row of `GET /app/members`: a person in one of my shared servers.
+///
+/// The response is a flat array, so the server name and its visibility are not
+/// part of the row; they come from the `/app/me` memberships this guild id
+/// points at.
+class ServerMember {
+  const ServerMember({required this.user, required this.guildId});
+
+  final UserSummary user;
+  final String guildId;
+
+  factory ServerMember.fromJson(JsonMap json) => ServerMember(
+    user: UserSummary.fromJson(json),
+    guildId: readId(json, 'guild_id'),
+  );
+}
+
 /// A person the caller shares a Discord server with. `hima` is null when the
 /// person is not currently free (or the server is not visible to the caller).
 class FriendMember {
@@ -448,9 +473,6 @@ class FriendMember {
   final HimaSession? hima;
 
   bool get isFree => hima != null;
-
-  FriendMember withHima(HimaSession? hima) =>
-      FriendMember(user: user, hima: hima);
 }
 
 /// Members of one shared server, used by the 友達 tab.
@@ -459,9 +481,6 @@ class FriendServer {
 
   final Guild guild;
   final List<FriendMember> members;
-
-  FriendServer withMembers(List<FriendMember> members) =>
-      FriendServer(guild: guild, members: members);
 }
 
 class HimaDeclaration {
@@ -628,7 +647,6 @@ class Knock {
     this.guild,
     this.respondedAt,
     this.recipientNote,
-    this.resultSeenAt,
   });
 
   final String id;
@@ -650,10 +668,9 @@ class Knock {
   /// Hint shown on a received knock. `to_moon` is carried here because the UI
   /// already has one slot for it.
   final String? recipientNote;
-  final DateTime? resultSeenAt;
 
-  /// A knock I received: `{id, from_user, from_display_name, template,
-  /// created_at, to_moon}`.
+  /// A knock I received: `{id, from_user, from_display_name, from_avatar,
+  /// template, created_at, to_moon}`.
   factory Knock.fromInboxJson(JsonMap json) {
     final invitation = knockTemplateFromJson(
       readOptionalString(json, 'template'),
@@ -663,6 +680,7 @@ class Knock {
       sender: UserSummary(
         id: readId(json, 'from_user'),
         displayName: readOptionalString(json, 'from_display_name') ?? '',
+        avatarUrl: readAvatarUrl(json['from_avatar']),
       ),
       template: invitation.template,
       // The inbox only carries knocks that are still waiting for my answer.
@@ -698,7 +716,10 @@ class Knock {
     );
   }
 
-  /// A knock I sent, from `GET /app/knocks/sent`.
+  /// A knock I sent, from `GET /app/knocks/sent`:
+  /// `{id, to_user, to_display_name, to_avatar, template, status, created_at,
+  /// responded_at}`. The endpoint reports no per-row seen time, so whether the
+  /// reply has been shown is tracked by the view model instead.
   factory Knock.fromSentJson(JsonMap json) {
     final invitation = knockTemplateFromJson(
       readOptionalString(json, 'template'),
@@ -706,24 +727,19 @@ class Knock {
     return Knock(
       id: readId(json, 'id'),
       recipient: UserSummary(
-        id: readId(json, 'to_user_id'),
+        id: readId(json, 'to_user'),
         displayName: readOptionalString(json, 'to_display_name') ?? '',
-        avatarUrl: readOptionalString(json, 'to_avatar') ?? readAvatar(json),
+        avatarUrl: readAvatarUrl(json['to_avatar']),
       ),
       template: invitation.template,
       status: knockStatusFromJson(readString(json, 'status')),
       createdAt: readDateTime(json, 'created_at'),
       message: invitation.message,
       respondedAt: readOptionalDateTime(json, 'responded_at'),
-      resultSeenAt: readOptionalDateTime(json, 'result_seen_at'),
     );
   }
 
-  Knock copyWith({
-    KnockStatus? status,
-    DateTime? respondedAt,
-    DateTime? resultSeenAt,
-  }) => Knock(
+  Knock copyWith({KnockStatus? status, DateTime? respondedAt}) => Knock(
     id: id,
     sender: sender,
     recipient: recipient,
@@ -734,42 +750,20 @@ class Knock {
     guild: guild,
     respondedAt: respondedAt ?? this.respondedAt,
     recipientNote: recipientNote,
-    resultSeenAt: resultSeenAt ?? this.resultSeenAt,
   );
 }
 
 class BlockedUser {
-  const BlockedUser({required this.user, this.createdAt});
+  const BlockedUser({required this.user});
 
   final UserSummary user;
-  final DateTime? createdAt;
 
-  /// One entry of `GET /app/blocks`.
-  ///
-  /// The server currently returns bare ids; the requested shape adds the name
-  /// and avatar. Both are accepted, and the caller fills a missing name from the
-  /// members it already knows.
-  factory BlockedUser.fromBlockedEntry(Object? entry) {
-    if (entry is num || entry is String) {
-      return BlockedUser(
-        user: UserSummary(
-          id: entry is num ? entry.toInt().toString() : entry as String,
-          displayName: '',
-        ),
-      );
-    }
-    final json = readJsonMap(entry);
-    return BlockedUser(
-      user: UserSummary(
-        id: readId(json, 'user_id'),
-        displayName: readOptionalString(json, 'display_name') ?? '',
-        avatarUrl: readAvatar(json),
-      ),
-    );
-  }
-
-  BlockedUser withUser(UserSummary user) =>
-      BlockedUser(user: user, createdAt: createdAt);
+  /// One entry of `GET /app/blocks` `blocked_users`:
+  /// `{user_id, display_name, avatar}`. The endpoint still returns the bare
+  /// `blocked` id list for compatibility, but the names are what the screen
+  /// needs, so only `blocked_users` is read.
+  factory BlockedUser.fromJson(JsonMap json) =>
+      BlockedUser(user: UserSummary.fromJson(json));
 }
 
 class DeviceRegistration {
