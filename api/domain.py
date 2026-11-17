@@ -283,6 +283,7 @@ def _inbox_and_results(db, viewer_id: int, viewer_mood: str | None) -> tuple[lis
                 "id": int(k["id"]),
                 "from_user": int(k["from_user"]),
                 "from_display_name": sender.display_name if sender else f"discord:{k['from_user']}",
+                "from_avatar": sender.avatar if sender else None,
                 "template": k["template"],
                 "created_at": k["created_at"].isoformat(),
                 # 宛先（受信者）が現在 🌙 の有効セッションを持つときだけ true
@@ -326,7 +327,7 @@ def board_for_guild(db, *, guild_id: int, viewer_id: int) -> dict:
     rows = db.execute(
         text(
             """
-            SELECT s.user_id, u.display_name, s.mood, s.activity, s.note, s.expires_at
+            SELECT s.user_id, u.display_name, u.avatar, s.mood, s.activity, s.note, s.expires_at
             FROM hima_sessions s
             JOIN users u ON u.id = s.user_id
             JOIN memberships m ON m.user_id = s.user_id AND m.guild_id = :g AND m.visible = true
@@ -345,6 +346,7 @@ def board_for_guild(db, *, guild_id: int, viewer_id: int) -> dict:
             {
                 "user_id": uid,
                 "display_name": r["display_name"],
+                "avatar": r["avatar"],
                 "mood": r["mood"],
                 "activity": r["activity"],
                 "note": r["note"],
@@ -379,7 +381,7 @@ def cross_guild_board(db, viewer_id: int) -> dict:
     rows = db.execute(
         text(
             """
-            SELECT s.user_id, u.display_name, s.mood, s.activity, s.note, s.expires_at
+            SELECT s.user_id, u.display_name, u.avatar, s.mood, s.activity, s.note, s.expires_at
             FROM hima_sessions s
             JOIN users u ON u.id = s.user_id
             WHERE s.ended_at IS NULL
@@ -402,6 +404,7 @@ def cross_guild_board(db, viewer_id: int) -> dict:
             {
                 "user_id": uid,
                 "display_name": r["display_name"],
+                "avatar": r["avatar"],
                 "mood": r["mood"],
                 "activity": r["activity"],
                 "note": r["note"],

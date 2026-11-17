@@ -34,7 +34,13 @@ class KnockIn(BaseModel):
 
 
 class ReplyIn(BaseModel):
+    """Bot 用（共有シークレット認証・user_id 必須）。"""
     user_id: int
+    action: str  # accept / later / pass
+
+
+class AppReplyIn(BaseModel):
+    """アプリ用（JWT 認証・本人は JWT から取得）。user_id は受け取らない。"""
     action: str  # accept / later / pass
 
 

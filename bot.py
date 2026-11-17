@@ -92,10 +92,12 @@ class HimaBot(commands.Bot):
     # ------------------------------------------------------------------ helpers
 
     async def _send_board(self, interaction: discord.Interaction) -> None:
+        # 3秒制限: まず defer してから API 結果を followup で返す
+        await interaction.response.defer(ephemeral=True, thinking=True)
         embeds, view = await _build_board(self, interaction)
         if embeds is None:
             return
-        await interaction.response.send_message(embeds=embeds, view=view, ephemeral=True)
+        await interaction.followup.send(embeds=embeds, view=view, ephemeral=True)
 
 
 class HimaCog(commands.Cog):
@@ -127,15 +129,16 @@ class HimaCog(commands.Cog):
 
     @panel.command(name="取り消し", description="募集を取り消す")
     async def panel_cancel(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             data = await self.bot.api.end_session(interaction.user.id)
         except Exception as exc:  # noqa: BLE001
             await send_api_error(interaction, exc)
             return
         if data.get("ended"):
-            await interaction.response.send_message("募集を取り消したよ！また誘ってね。", ephemeral=True)
+            await interaction.followup.send("募集を取り消したよ！また誘ってね。", ephemeral=True)
         else:
-            await interaction.response.send_message("いまは募集していません", ephemeral=True)
+            await interaction.followup.send("いまは募集していません", ephemeral=True)
 
     # ------------------------------------------------------------------ /panel 参加
 
@@ -144,6 +147,7 @@ class HimaCog(commands.Cog):
     async def panel_join(self, interaction: discord.Interaction, 相手: discord.User) -> None:
         guild_id = interaction.guild_id
         assert guild_id is not None
+        await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             data = await self.bot.api.get_board(guild_id, interaction.user.id)
         except Exception as exc:  # noqa: BLE001
@@ -151,9 +155,9 @@ class HimaCog(commands.Cog):
             return
         target = next((s for s in data.get("sessions", []) if s["user_id"] == 相手.id), None)
         if target is None:
-            await interaction.response.send_message("いまは募集していないみたいです", ephemeral=True)
+            await interaction.followup.send("いまは募集していないみたいです", ephemeral=True)
             return
-        await interaction.response.send_message(
+        await interaction.followup.send(
             view=KnockTemplateView(self.bot, interaction.user, 相手), ephemeral=True
         )
 
