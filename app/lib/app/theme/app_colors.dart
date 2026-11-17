@@ -22,7 +22,9 @@ abstract final class AppColors {
   static const danger = Color(0xFFD93F58);
 
   /// 「いいよ！」: a knock the friend accepted.
-  static const success = Color(0xFF1E8E5A);
+  /// Shown as small text on [mintSoft], so it is kept dark enough for 4.5:1 contrast
+  /// (about 5.3:1). Lightening it drops the pill text below WCAG AA.
+  static const success = Color(0xFF13724A);
 
   /// Small icon accents for the activity tags. Only the icon takes the accent;
   /// the label stays [ink] so every tag keeps its contrast.
