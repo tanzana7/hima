@@ -7,11 +7,11 @@ from datetime import timedelta
 from fastapi import HTTPException
 from sqlalchemy import text
 
-from . import matching, notify
+from . import matching
 from . import discord_rest as _discord_rest
 from .discord_rest import knock_reply_components
 from .db import SessionLocal
-from .models import HimaSession, Knock, User
+from .models import Guild, HimaSession, Knock, Membership, User
 from .push import send_push
 from .services import (
     active_session,
@@ -79,7 +79,7 @@ def declare_session(
         row.expires_at = expires_at
     db.commit()
     matching.evaluate_for_session(db, row, rest=rest)
-    notify.enqueue_watchers(db, row)
+    # お知らせ（watch）通知は廃止。暇宣言は誰にも通知がいかない（見たい人が掲示板で確認する）
     return {"session_id": row.id, "created": created, "expires_at": row.expires_at.isoformat()}
 
 
@@ -99,9 +99,11 @@ def end_session(db, user_id: int, rest=None) -> dict:
     return {"user_id": user_id, "ended": ended}
 
 
-def create_knock(db, *, from_user: int, to_user: int, template: str | None, rest=None) -> dict:
+def create_knock(db, *, from_user: int, to_user: int, template: str | None, display_name: str | None = None, rest=None) -> dict:
     if from_user == to_user:
         raise HTTPException(status_code=400, detail="cannot knock yourself")
+    # 送信者の users 行を本物の表示名で upsert（着信 DM・受信箱の名前が仮名にならないように）
+    upsert_user(db, from_user, display_name)
     if active_session(db, to_user) is None:
         raise HTTPException(status_code=404, detail="target has no active session")
     if not has_shared_visible_guild(db, from_user, to_user):
@@ -241,7 +243,28 @@ def reply_knock(db, knock_id: int, user_id: int, action: str, rest=None) -> dict
     receiver_name = receiver.display_name if receiver else f"discord:{knock.to_user}"
     label = RESULT_LABELS[knock.status]
     send_push(db, knock.from_user, "🔔 返事が届いたよ！", f"{receiver_name} さんの返事：「{label}」")
+    if knock.status == "accepted":
+        # 「いいよ！」のときだけ送信者へ DM 1通（あとで/パスは結果欄のみ。🌙 宛抑制とは扱いを分けて送る）
+        _notify_sender_accepted(db, knock, receiver_name, rest)
     return {"id": knock.id, "status": knock.status, "responded_at": knock.responded_at.isoformat()}
+
+
+def _notify_sender_accepted(db, knock, receiver_name: str, rest=None) -> None:
+    """accepted 返答時に送信者へ DM 1通（ボタンなし・通知のみ）。
+
+    DM 送信に失敗しても返答処理自体は成功扱い（着信 DM と同じ方針・ログのみ）。
+    送信者が 🌙 のセッションを持っていても送る（自分の送ったお返事への反応のため）。
+    """
+    rest = rest or _discord_rest.rest
+    if rest is None:
+        return
+    try:
+        channel = rest.open_dm_channel(knock.from_user)
+        if channel is None:
+            return
+        rest.send_message(channel, f"{receiver_name} さんがお返事に『いいよ！』してくれたよ")
+    except Exception:  # noqa: BLE001 - DM 失敗でも返答記録は有効
+        log.exception("accepted notification DM failed knock_id=%s (ignored)", knock.id)
 
 
 def mark_results_seen(db, user_id: int) -> int:
@@ -318,8 +341,16 @@ def _inbox_and_results(db, viewer_id: int, viewer_mood: str | None) -> tuple[lis
     return inbox, results
 
 
-def board_for_guild(db, *, guild_id: int, viewer_id: int) -> dict:
+def board_for_guild(db, *, guild_id: int, viewer_id: int, display_name: str | None = None) -> dict:
     """単一ギルドの掲示板（Bot 向け）。共有可視・ブロック除外・source 非表示。"""
+    # 契約（§2）: guild_id と user_id を含む Bot リクエストは membership を upsertする。
+    # 掲示板を見ただけのユーザーも membership が作られ、「お返事」が送れるようになる。
+    # 既存行の visible は上書きしない（非表示設定を尊重。last_seen_at のみ更新）。
+    # users の display_name は Bot が渡した本物の表示名で更新する（仮名・空値では上書きしない）。
+    if db.get(Guild, guild_id) is not None:  # 未登録ギルドは FK のため作れない（board 自体は参照可）
+        upsert_user(db, viewer_id, display_name)
+        upsert_membership(db, guild_id, viewer_id)
+        db.commit()
     viewer_active = active_session(db, viewer_id)
     viewer_mood = viewer_active.mood if viewer_active else None
     hidden = blocked_ids(db, viewer_id)
@@ -359,7 +390,7 @@ def board_for_guild(db, *, guild_id: int, viewer_id: int) -> dict:
     viewer = db.get(User, viewer_id)
     if viewer is None:
         # 初めて board を開いたユーザーも作る（notify_on_hima はデフォルト ON に従う）
-        viewer = upsert_user(db, viewer_id)
+        viewer = upsert_user(db, viewer_id, display_name)
         db.commit()
     return {
         "guild_id": guild_id,

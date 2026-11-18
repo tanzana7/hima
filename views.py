@@ -1,6 +1,7 @@
 """UI parts for the Atsumaro bot (thin client over the Atsumaro API)."""
 from __future__ import annotations
 
+import functools
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -26,6 +27,32 @@ CANDIDATE_LIMIT = 25
 INBOX_LIMIT = 5
 
 CONNECTION_ERROR_TEXT = "APIサーバーに接続できませんでした。しばらくしてからもう一度試してください。"
+ERROR_FOLLOWUP_TEXT = "エラーが発生しました。しばらくしてからもう一度試してください。"
+TEMPLATE_NONE = "__none__"  # 「誘い文なし」の select value（Discord は value に 1〜100 文字を要求するため空文字は不可）
+
+# API detail（英語）をそのまま見せないための対応表（knock 系の既知エラー）
+DETAIL_TEXTS_JA = {
+    "no shared visible guild": "共通のサーバーで見える状態がないみたい。しばらくしてからもう一度試してね",
+    "target has no active session": "その人はいま募集していないみたい",
+    "invalid action": "返答の種類が正しくないみたい。もう一度試してね",
+}
+
+
+def friendly_api_detail(detail: str) -> str:
+    """API の英語 detail を日本語の案内に置き換える（既知外はそのまま）。"""
+    return DETAIL_TEXTS_JA.get(str(detail), str(detail))
+
+
+def sort_candidates_active_first(candidates: list[dict]) -> list[dict]:
+    """宛先候補を「募集中（有効な宣言がある）」人が先頭になるよう並べ替える。
+
+    active キーがないもの（掲示板の sessions 行＝宣言中のみ）は active 扱い。
+    それ以外の人は入力順（＝Discord のメンバー順）を維持する（安定ソート）。
+    """
+    return sorted(
+        candidates,
+        key=lambda s: (not s.get("active", True)),
+    )
 
 
 async def send_api_error(target, exc: Exception) -> None:
@@ -39,13 +66,47 @@ async def send_api_error(target, exc: Exception) -> None:
         elif exc.status_code == 403:
             content = "その人には送れません。"
         else:
-            content = f"エラーが発生しました: {exc.detail}"
+            content = f"エラーが発生しました: {friendly_api_detail(exc.detail)}"
     else:
         content = "予期しないエラーが発生しました。しばらくしてからもう一度試してください。"
     if target.response.is_done():
         await target.followup.send(content, ephemeral=True)
     else:
         await target.response.send_message(content, ephemeral=True)
+
+
+async def send_error_followup(interaction: discord.Interaction, error: Exception, where: str = "") -> None:
+    """defer 済み（考え中…のまま）で後段が失敗したとき、framework に握られる前に利用者へエラーを返す。"""
+    log.error("interaction error %s: %s: %r", where, type(error).__name__, error)
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send(ERROR_FOLLOWUP_TEXT, ephemeral=True)
+        else:
+            await interaction.response.send_message(ERROR_FOLLOWUP_TEXT, ephemeral=True)
+    except Exception:  # noqa: BLE001 - エラー応答の送信自体の失敗は握る（ログのみ）
+        log.exception("failed to send error followup")
+
+
+class ErrorFollowupView(ui.View):
+    """View 共通 on_error：component callback の例外を握らず、defer 後は followup で利用者に通知する。"""
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception, item: ui.Item, /) -> None:
+        await send_error_followup(
+            interaction, error, f"{type(self).__name__}.{getattr(item, 'custom_id', type(item).__name__)}"
+        )
+
+
+def guarded(callback):
+    """DynamicItem 用：callback の例外を framework が握る前に受け止め、利用者へエラーを返す。"""
+
+    @functools.wraps(callback)
+    async def wrapper(self, interaction: discord.Interaction) -> None:
+        try:
+            await callback(self, interaction)
+        except Exception as error:  # noqa: BLE001
+            await send_error_followup(interaction, error, type(self).__name__)
+
+    return wrapper
 
 
 # ------------------------------------------------------------------ board render
@@ -128,6 +189,7 @@ class KnockReplyButton(ui.DynamicItem, template=r"atsumaro:knockreply:(?P<knock_
     async def from_custom_id(cls, interaction: discord.Interaction, item: ui.Item, match: Any) -> "KnockReplyButton":
         return cls(int(match["knock_id"]), match["action"])
 
+    @guarded
     async def callback(self, interaction: discord.Interaction) -> None:
         bot = interaction.client  # type: ignore[union-attr]
         is_dm = interaction.guild_id is None  # お返事着信 DM 上のボタン（痕跡を残さない）
@@ -176,6 +238,7 @@ class SuggestDeclareButton(ui.DynamicItem, template=r"atsumaro:suggest:declare")
     async def from_custom_id(cls, interaction: discord.Interaction, item: ui.Item, match: Any) -> "SuggestDeclareButton":
         return cls()
 
+    @guarded
     async def callback(self, interaction: discord.Interaction) -> None:
         bot = interaction.client  # type: ignore[union-attr]
         await interaction.response.defer(ephemeral=True, thinking=True)
@@ -197,50 +260,17 @@ class SuggestDeclareButton(ui.DynamicItem, template=r"atsumaro:suggest:declare")
             )
 
 
-class WatchToggle(ui.DynamicItem, template=r"atsumaro:watchtoggle:(?P<state>[01])"):
-    """お知らせ ON/OFF トグル。custom_id に現在の状態を埋め込む（内部名 notify_on_hima は変更なし）。"""
-
-    def __init__(self, state: bool, row: int | None = 0) -> None:
-        self.state = bool(state)
-        super().__init__(
-            ui.Button(
-                label=f"お知らせ: {'ON' if state else 'OFF'}",
-                style=discord.ButtonStyle.success if state else discord.ButtonStyle.secondary,
-                custom_id=f"atsumaro:watchtoggle:{1 if state else 0}",
-                row=row,
-            )
-        )
-
-    @classmethod
-    async def from_custom_id(cls, interaction: discord.Interaction, item: ui.Item, match: Any) -> "WatchToggle":
-        return cls(match["state"] == "1")
-
-    async def callback(self, interaction: discord.Interaction) -> None:
-        bot = interaction.client  # type: ignore[union-attr]
-        new_state = not self.state
-        await interaction.response.defer()  # 3秒制限: 先に ACK（メッセージ更新を遅延させる）
-        try:
-            await bot.api.update_settings(interaction.user.id, notify_on_hima=new_state)
-        except Exception as exc:  # noqa: BLE001
-            await send_api_error(interaction, exc)
-            return
-        embeds, view = await _build_board(bot, interaction)
-        if embeds is None:
-            return
-        await interaction.edit_original_response(embeds=embeds, view=view)
-
-
 # ------------------------------------------------------------------ board view
 
 
-class BoardView(ui.View):
-    """個人用掲示板（ephemeral）。ヒマ宣言/お返事/ブロック/お知らせ/やめるのボタン＋受信箱の返答ボタン。"""
+class BoardView(ErrorFollowupView):
+    """個人用掲示板（ephemeral）。ヒマ宣言/お返事/ブロック/やめるのボタン＋受信箱の返答ボタン。"""
 
     def __init__(self, bot: "HimaBot", data: dict) -> None:
         super().__init__(timeout=None)
         self.bot = bot
         self.data = data
-        self.add_item(WatchToggle(bool((data.get("viewer") or {}).get("notify_on_hima"))))
+        # お知らせ（watch）トグルは廃止
         inbox = data.get("inbox", [])[:INBOX_LIMIT]
         flat = []
         for k in inbox:
@@ -263,11 +293,24 @@ class BoardView(ui.View):
         assert guild_id is not None
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
-            data = await self.bot.api.get_board(guild_id, interaction.user.id)
+            data = await self.bot.api.get_board(
+                guild_id, interaction.user.id, display_name=interaction.user.display_name
+            )
         except Exception as exc:  # noqa: BLE001
             await send_api_error(interaction, exc)
             return
-        candidates = [s for s in data.get("sessions", []) if s["user_id"] != interaction.user.id][:CANDIDATE_LIMIT]
+        # 募集中（宣言中）の人が先頭、それ以外の人（サーバーメンバー）が後続の宛先候補
+        sessions = [s for s in data.get("sessions", []) if s["user_id"] != interaction.user.id]
+        active_ids = {s["user_id"] for s in sessions}
+        others: list[dict] = []
+        try:
+            async for member in interaction.guild.fetch_members(limit=200):  # type: ignore[union-attr]
+                if member.bot or member.id == interaction.user.id or member.id in active_ids:
+                    continue
+                others.append({"user_id": member.id, "display_name": member.display_name, "active": False})
+        except Exception as exc:  # noqa: BLE001 - メンバー一覧が取れない場合は宣言中の人だけで構わない
+            log.warning("fetch_members failed (ignored): %r", exc)
+        candidates = [dict(s, active=True) for s in sessions] + others[:CANDIDATE_LIMIT]
         if not candidates:
             await interaction.followup.send(
                 "お返事できる人がいないよ。自分が募集してみよう！", ephemeral=True
@@ -315,7 +358,9 @@ async def _build_board(bot: "HimaBot", interaction: discord.Interaction) -> tupl
     guild_id = interaction.guild_id
     assert guild_id is not None
     try:
-        data = await bot.api.get_board(guild_id, interaction.user.id)
+        data = await bot.api.get_board(
+            guild_id, interaction.user.id, display_name=interaction.user.display_name
+        )
     except Exception as exc:  # noqa: BLE001
         await send_api_error(interaction, exc)
         return None, None
@@ -326,7 +371,7 @@ async def _build_board(bot: "HimaBot", interaction: discord.Interaction) -> tupl
 # ------------------------------------------------------------------ panel view
 
 
-class AtsumaroPanelView(ui.View):
+class AtsumaroPanelView(ErrorFollowupView):
     """共有パネル（API が投稿する atsumaro:* ボタン）への応答。永続登録済み。"""
 
     def __init__(self, bot: "HimaBot") -> None:
@@ -363,7 +408,7 @@ class AtsumaroPanelView(ui.View):
 # ------------------------------------------------------------------ join view
 
 
-class JoinView(ui.View):
+class JoinView(ErrorFollowupView):
     """登録ビュー（時間/温度感/やりたいことのセレクト＋ひとことModal＋確定）。"""
 
     def __init__(self, bot: "HimaBot", guild_id: int | None, user: discord.abc.User) -> None:
@@ -502,7 +547,7 @@ class JoinNoteModal(ui.Modal):
 # ------------------------------------------------------------------ knock send view
 
 
-class KnockSendView(ui.View):
+class KnockSendView(ErrorFollowupView):
     """お返事送信画面（相手と誘い文を選んで POST /bot/knocks）。"""
 
     def __init__(self, bot: "HimaBot", user: discord.abc.User, candidates: list[dict]) -> None:
@@ -510,27 +555,34 @@ class KnockSendView(ui.View):
         self.bot = bot
         self.user = user
         self.template: str | None = None  # 誘い文なしでも送れる
+        # 募集中（有効な宣言がある）人が先頭。それ以外の人は入力順を維持
+        ordered = sort_candidates_active_first(list(candidates))[:CANDIDATE_LIMIT]
+        self.candidates_by_id = {str(s["user_id"]): s for s in ordered}
         self.user_select.options = [
             discord.SelectOption(
                 label=s["display_name"],
                 value=str(s["user_id"]),
-                description=f"{MOOD_EMOJI.get(s['mood'], '🙂')} {ACTIVITY_LABELS.get(s['activity'], s['activity'])}",
+                description=f"{MOOD_EMOJI.get(s['mood'], '🙂')} {ACTIVITY_LABELS.get(s['activity'], s['activity'])}"
+                if s.get("active", True)
+                else None,
             )
-            for s in candidates
+            for s in ordered
         ]
+        # max_values は選択肢数を超えられない
+        self.user_select.max_values = min(CANDIDATE_LIMIT, max(1, len(ordered)))
 
-    @ui.select(cls=ui.UserSelect, placeholder="誰にお返事する？（最大25人まで）", min_values=1, max_values=CANDIDATE_LIMIT, row=0)
-    async def user_select(self, interaction: discord.Interaction, select: ui.UserSelect) -> None:
+    @ui.select(placeholder="誰にお返事する？（最大25人まで）", min_values=1, max_values=CANDIDATE_LIMIT, row=0)
+    async def user_select(self, interaction: discord.Interaction, select: ui.Select) -> None:
         await interaction.response.defer()
 
     @ui.select(
         placeholder="誘い文はどれ？（なしでも送れるよ）",
-        options=[discord.SelectOption(label="誘い文なし", value="")] +
+        options=[discord.SelectOption(label="誘い文なし", value=TEMPLATE_NONE)] +
                  [discord.SelectOption(label=text, value=text) for text in KNOCK_TEMPLATES],
         row=1,
     )
     async def template_select(self, interaction: discord.Interaction, select: ui.Select) -> None:
-        self.template = select.values[0] or None
+        self.template = None if select.values[0] == TEMPLATE_NONE else select.values[0]
         await interaction.response.defer()
 
     @ui.button(label="お返事を送る", style=discord.ButtonStyle.primary, row=2, emoji="🚪")
@@ -540,26 +592,28 @@ class KnockSendView(ui.View):
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
         parts = []
-        for member in self.user_select.values:
+        for uid in self.user_select.values:
+            name = self.candidates_by_id.get(str(uid), {}).get("display_name") or f"discord:{uid}"
             try:
                 await self.bot.api.create_knock(
-                    from_user=self.user.id, to_user=member.id, template=self.template
+                    from_user=self.user.id, to_user=int(uid), template=self.template,
+                    display_name=self.user.display_name,
                 )
             except ApiHTTPError as exc:
                 if exc.status_code == 409:
-                    parts.append(f"⏳ {member.display_name}: さっき送ったばかりだよ")
+                    parts.append(f"⏳ {name}: さっき送ったばかりだよ")
                 elif exc.status_code == 403:
-                    parts.append(f"🚫 {member.display_name}: その人には送れません")
+                    parts.append(f"🚫 {name}: その人には送れません")
                 else:
-                    parts.append(f"⚠️ {member.display_name}: {exc.detail}")
+                    parts.append(f"⚠️ {name}: {friendly_api_detail(exc.detail)}")
             except ApiConnectionError:
-                parts.append(f"⚠️ {member.display_name}: {CONNECTION_ERROR_TEXT}")
+                parts.append(f"⚠️ {name}: {CONNECTION_ERROR_TEXT}")
             else:
-                parts.append(f"✅ {member.display_name}: 届けたよ！（相手の受信箱と DM に届くよ）")
+                parts.append(f"✅ {name}: 届けたよ！（相手の受信箱と DM に届くよ）")
         await interaction.followup.send("\n".join(parts), ephemeral=True)
 
 
-class KnockTemplateView(ui.View):
+class KnockTemplateView(ErrorFollowupView):
     """誘い文選択（なし / game / chat / work）→ 指定した相手にお返事を送る。/panel 参加 から使う。"""
 
     def __init__(self, bot: "HimaBot", user: discord.abc.User, target: discord.abc.User) -> None:
@@ -570,14 +624,17 @@ class KnockTemplateView(ui.View):
 
     async def _knock(self, interaction: discord.Interaction, template: str) -> None:
         try:
-            await self.bot.api.create_knock(from_user=self.user.id, to_user=self.target.id, template=template)
+            await self.bot.api.create_knock(
+                from_user=self.user.id, to_user=self.target.id, template=template,
+                display_name=self.user.display_name,
+            )
         except ApiHTTPError as exc:
             if exc.status_code == 409:
                 content = "⏳ さっき送ったばかりだよ。5分待ってからもう一度ね。"
             elif exc.status_code == 403:
                 content = "🚫 その人には送れません。"
             else:
-                content = f"⚠️ {exc.detail}"
+                content = f"⚠️ {friendly_api_detail(exc.detail)}"
         except ApiConnectionError:
             content = f"⚠️ {CONNECTION_ERROR_TEXT}"
         else:
@@ -614,7 +671,7 @@ def _block_embed(blocked: list[int]) -> discord.Embed:
     )
 
 
-class BlockManageView(ui.View):
+class BlockManageView(ErrorFollowupView):
     """ブロック追加（ユーザーセレクト）と解除（文字セレクト）。相手には知らせない。"""
 
     def __init__(self, bot: "HimaBot", user: discord.abc.User, blocked: list[int]) -> None:

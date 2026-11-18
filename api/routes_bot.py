@@ -90,10 +90,10 @@ def end_session(body: EndSessionIn) -> dict:
 
 
 @router.get("/board")
-def board(guild_id: int = Query(...), user_id: int = Query(...)) -> dict:
+def board(guild_id: int = Query(...), user_id: int = Query(...), display_name: str | None = Query(None)) -> dict:
     """ギルド登録が無くても掲示板は参照できる（/panel_setup 廃止により setup を経由しない入口が存在するため）。"""
     with SessionLocal() as db:
-        return domain.board_for_guild(db, guild_id=guild_id, viewer_id=user_id)
+        return domain.board_for_guild(db, guild_id=guild_id, viewer_id=user_id, display_name=display_name)
 
 
 # ------------------------------------------------------------------ knocks
@@ -109,7 +109,10 @@ def knock_results_seen(body: ResultsSeenIn) -> dict:
 @router.post("/knocks")
 def create_knock(body: KnockIn) -> dict:
     with SessionLocal() as db:
-        return domain.create_knock(db, from_user=body.from_user, to_user=body.to_user, template=body.template)
+        return domain.create_knock(
+            db, from_user=body.from_user, to_user=body.to_user, template=body.template,
+            display_name=body.display_name,
+        )
 
 
 @router.post("/knocks/{knock_id}/reply")
@@ -160,7 +163,7 @@ def list_blocks(user_id: int = Query(...)) -> dict:
 @router.put("/users/{user_id}/settings")
 def user_settings(user_id: int, body: SettingsIn) -> dict:
     with SessionLocal() as db:
-        upsert_user(db, user_id)
+        upsert_user(db, user_id, body.display_name)
         user = db.get(User, user_id)
         user.notify_on_hima = body.notify_on_hima
         db.commit()
@@ -172,7 +175,7 @@ def membership_visibility(body: VisibilityIn) -> dict:
     with SessionLocal() as db:
         if db.get(Guild, body.guild_id) is None:
             raise HTTPException(status_code=404, detail="guild not found")
-        upsert_user(db, body.user_id)
+        upsert_user(db, body.user_id, body.display_name)
         m = upsert_membership(db, body.guild_id, body.user_id, visible=body.visible)
         db.commit()
         return {"guild_id": body.guild_id, "user_id": body.user_id, "visible": m.visible}

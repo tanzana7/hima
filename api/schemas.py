@@ -31,6 +31,7 @@ class KnockIn(BaseModel):
     from_user: int
     to_user: int
     template: str | None = None
+    display_name: str | None = None  # 送信者の本物の表示名（users.upsert 用）
 
 
 class ReplyIn(BaseModel):
@@ -51,12 +52,14 @@ class BlockIn(BaseModel):
 
 class SettingsIn(BaseModel):
     notify_on_hima: bool
+    display_name: str | None = None  # 操作者の本物の表示名（users.upsert 用）
 
 
 class VisibilityIn(BaseModel):
     user_id: int
     guild_id: int
     visible: bool
+    display_name: str | None = None  # 操作者の本物の表示名（users.upsert 用）
 
 
 class AppVisibilityIn(BaseModel):

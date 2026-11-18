@@ -92,17 +92,21 @@ class ApiClient:
         """提案 DM の「このまま宣言する」（source=suggested / 30分 / auto_mood）。"""
         return await self._request("POST", "/bot/suggest-declare", json_body={"user_id": user_id})
 
-    async def get_board(self, guild_id: int, user_id: int) -> dict:
-        return await self._request("GET", "/bot/board", params={"guild_id": guild_id, "user_id": user_id})
+    async def get_board(self, guild_id: int, user_id: int, display_name: str | None = None) -> dict:
+        params: dict = {"guild_id": guild_id, "user_id": user_id}
+        if display_name is not None:
+            params["display_name"] = display_name
+        return await self._request("GET", "/bot/board", params=params)
 
     # --- knocks ------------------------------------------------------
     async def results_seen(self, user_id: int) -> dict:
         return await self._request("POST", "/bot/knocks/results/seen", json_body={"user_id": user_id})
 
-    async def create_knock(self, *, from_user: int, to_user: int, template: str | None) -> dict:
-        return await self._request(
-            "POST", "/bot/knocks", json_body={"from_user": from_user, "to_user": to_user, "template": template}
-        )
+    async def create_knock(self, *, from_user: int, to_user: int, template: str | None, display_name: str | None = None) -> dict:
+        body: dict = {"from_user": from_user, "to_user": to_user, "template": template}
+        if display_name is not None:
+            body["display_name"] = display_name
+        return await self._request("POST", "/bot/knocks", json_body=body)
 
     async def reply_knock(self, knock_id: int, *, user_id: int, action: str) -> dict:
         return await self._request(
@@ -124,14 +128,14 @@ class ApiClient:
         return await self._request("GET", "/bot/blocks", params={"user_id": user_id})
 
     # --- users / memberships ----------------------------------------
-    async def update_settings(self, user_id: int, *, notify_on_hima: bool) -> dict:
-        return await self._request(
-            "PUT", f"/bot/users/{user_id}/settings", json_body={"notify_on_hima": notify_on_hima}
-        )
+    async def update_settings(self, user_id: int, *, notify_on_hima: bool, display_name: str | None = None) -> dict:
+        body: dict = {"notify_on_hima": notify_on_hima}
+        if display_name is not None:
+            body["display_name"] = display_name
+        return await self._request("PUT", f"/bot/users/{user_id}/settings", json_body=body)
 
-    async def update_visibility(self, user_id: int, guild_id: int, *, visible: bool) -> dict:
-        return await self._request(
-            "PUT",
-            "/bot/memberships/visibility",
-            json_body={"user_id": user_id, "guild_id": guild_id, "visible": visible},
-        )
+    async def update_visibility(self, user_id: int, guild_id: int, *, visible: bool, display_name: str | None = None) -> dict:
+        body: dict = {"user_id": user_id, "guild_id": guild_id, "visible": visible}
+        if display_name is not None:
+            body["display_name"] = display_name
+        return await self._request("PUT", "/bot/memberships/visibility", json_body=body)

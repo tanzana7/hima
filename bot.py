@@ -23,7 +23,6 @@ from views import (
     KnockReplyButton,
     KnockTemplateView,
     SuggestDeclareButton,
-    WatchToggle,
     _build_board,
     send_api_error,
 )
@@ -46,7 +45,7 @@ class HimaBot(commands.Bot):
         self.add_view(AtsumaroPanelView(self))
         self.add_view(BoardView(self, _empty_board_data()))
         self.add_dynamic_items(KnockReplyButton)
-        self.add_dynamic_items(WatchToggle)
+        # お知らせ（watch）トグルは廃止
         self.add_dynamic_items(SuggestDeclareButton)
         self.tree.on_error = self._on_app_command_error
         await self._sync_commands()
@@ -76,7 +75,14 @@ class HimaBot(commands.Bot):
         command = interaction.command
         name = command.name if command is not None else "<unknown>"
         print(f"[hima-bot][cmd-error] /{name}: {type(error).__name__}: {error}")
-        # ユーザーへの応答試行で二次例外を出さないよう握る
+        # defer 済み（考え中…のまま）なら followup で利用者にエラーを返す。未 defer は従来どおり握る
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(
+                    "エラーが発生しました。しばらくしてからもう一度試してください。", ephemeral=True
+                )
+        except discord.HTTPException:
+            pass
 
     async def on_disconnect(self) -> None:
         print("[hima-bot][gateway] disconnected")
@@ -149,7 +155,9 @@ class HimaCog(commands.Cog):
         assert guild_id is not None
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
-            data = await self.bot.api.get_board(guild_id, interaction.user.id)
+            data = await self.bot.api.get_board(
+                guild_id, interaction.user.id, display_name=interaction.user.display_name
+            )
         except Exception as exc:  # noqa: BLE001
             await send_api_error(interaction, exc)
             return
