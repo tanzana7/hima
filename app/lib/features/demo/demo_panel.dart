@@ -178,12 +178,18 @@ class _DemoPanelState extends State<DemoPanel> {
     );
   }
 
-  /// Applies a change to the mock and re-reads through the app's own path, so
-  /// the screens behind the panel show it.
+  /// Applies a change to the mock, returns to the home tab and re-reads through
+  /// the app's own path.
+  ///
+  /// The panel closes because these rows change nothing on the panel itself:
+  /// staying open made a tap look like it did nothing. It closes before the
+  /// read so the tap answers at once even in slow mode.
   Future<void> _stage(VoidCallback change) async {
+    // Captured first: the page can no longer look it up once it is popped.
+    final viewModel = _viewModel;
     change();
-    await _viewModel.reloadAll();
-    if (mounted) setState(() {});
+    _selectTab(0);
+    await viewModel.reloadAll();
   }
 
   void _setOverride(VoidCallback change) {
