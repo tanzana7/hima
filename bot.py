@@ -128,7 +128,7 @@ class HimaCog(commands.Cog):
     @panel.command(name="募集", description="募集をはじめる")
     async def panel_recruit(self, interaction: discord.Interaction) -> None:
         await interaction.response.send_message(
-            view=JoinView(self.bot, interaction.guild_id, interaction.user), ephemeral=True
+            view=JoinView(self.bot, interaction.guild_id, interaction.user, interaction.guild), ephemeral=True
         )
 
     # ------------------------------------------------------------------ /panel 取り消し
@@ -156,7 +156,8 @@ class HimaCog(commands.Cog):
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             data = await self.bot.api.get_board(
-                guild_id, interaction.user.id, display_name=interaction.user.display_name
+                guild_id, interaction.user.id, display_name=interaction.user.display_name,
+                guild_name=interaction.guild.name if interaction.guild else None,
             )
         except Exception as exc:  # noqa: BLE001
             await send_api_error(interaction, exc)

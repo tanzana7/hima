@@ -20,7 +20,7 @@ from .schemas import (
     SetupIn,
     VisibilityIn,
 )
-from .services import upsert_membership, upsert_user
+from .services import upsert_guild, upsert_membership, upsert_user
 from .notify import count_visible_active_sessions
 from .vocab import MOODS
 router = APIRouter(prefix="/bot", dependencies=[Depends(require_bot_secret)])
@@ -39,7 +39,8 @@ def guild_setup(guild_id: int, body: SetupIn) -> dict:
             db.add(guild)
         else:
             guild.name = body.name
-            guild.list_channel_id = body.channel_id
+            if body.channel_id is not None:  # 未指定のときは既存の list_channel_id を壊さない
+                guild.list_channel_id = body.channel_id
         db.commit()
         return {"guild_id": guild_id, "counter_message_id": None, "panel_message_id": None}
 
@@ -76,6 +77,7 @@ def declare_session(body: SessionIn) -> dict:
             source="manual",  # Bot 経由の宣言は常に manual
             display_name=body.display_name,
             guild_id=body.guild_id,
+            guild_name=body.guild_name,
             rest=discord_rest.rest,
         )
 
@@ -90,10 +92,17 @@ def end_session(body: EndSessionIn) -> dict:
 
 
 @router.get("/board")
-def board(guild_id: int = Query(...), user_id: int = Query(...), display_name: str | None = Query(None)) -> dict:
-    """ギルド登録が無くても掲示板は参照できる（/panel_setup 廃止により setup を経由しない入口が存在するため）。"""
+def board(
+    guild_id: int = Query(...),
+    user_id: int = Query(...),
+    display_name: str | None = Query(None),
+    guild_name: str | None = Query(None),
+) -> dict:
+    """guilds 行が無い新規サーバーでも、このリクエスト内で Guild → User → Membership の順で upsert する。"""
     with SessionLocal() as db:
-        return domain.board_for_guild(db, guild_id=guild_id, viewer_id=user_id, display_name=display_name)
+        return domain.board_for_guild(
+            db, guild_id=guild_id, viewer_id=user_id, display_name=display_name, guild_name=guild_name
+        )
 
 
 # ------------------------------------------------------------------ knocks
@@ -173,8 +182,8 @@ def user_settings(user_id: int, body: SettingsIn) -> dict:
 @router.put("/memberships/visibility")
 def membership_visibility(body: VisibilityIn) -> dict:
     with SessionLocal() as db:
-        if db.get(Guild, body.guild_id) is None:
-            raise HTTPException(status_code=404, detail="guild not found")
+        # Guild → User → Membership の順。guilds 行が無い新規サーバーでもここで登録する
+        upsert_guild(db, body.guild_id, body.guild_name)
         upsert_user(db, body.user_id, body.display_name)
         m = upsert_membership(db, body.guild_id, body.user_id, visible=body.visible)
         db.commit()
