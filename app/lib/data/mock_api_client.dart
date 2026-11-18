@@ -128,11 +128,7 @@ class MockApiClient implements ApiClient {
   /// `results` expose it, exactly like the real endpoint.
   final Set<String> _seenResultIds = {};
   final List<RegularSlot> _regularSlots = [];
-  UserSettings _settings = const UserSettings(
-    autoMode: false,
-    autoMood: Mood.ok,
-    notifyOnHima: true,
-  );
+  UserSettings _settings = UserSettings.fallback;
   HimaSession? _myHima;
   int _sessionSequence = 0;
   int _knockSequence = 0;
@@ -210,13 +206,8 @@ class MockApiClient implements ApiClient {
   Future<UserSettings> updateSettings({
     bool? autoMode,
     Mood? autoMood,
-    bool? notifyOnHima,
   }) async {
-    _settings = _settings.copyWith(
-      autoMode: autoMode,
-      autoMood: autoMood,
-      notifyOnHima: notifyOnHima,
-    );
+    _settings = _settings.copyWith(autoMode: autoMode, autoMood: autoMood);
     return _settings;
   }
 
