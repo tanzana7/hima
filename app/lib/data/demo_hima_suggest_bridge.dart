@@ -181,7 +181,14 @@ class DemoHimaSuggestBridge implements HimaSuggestBridge {
   Future<bool> postDemoSuggestion({
     required DemoSuggestionKind kind,
     String? label,
-  }) => _real.postDemoSuggestion(kind: kind, label: label);
+    bool marked = true,
+    int delayMs = 0,
+  }) => _real.postDemoSuggestion(
+    kind: kind,
+    label: label,
+    marked: marked,
+    delayMs: delayMs,
+  );
 
   @override
   Future<void> cancelDemoSuggestion() => _real.cancelDemoSuggestion();

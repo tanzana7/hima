@@ -55,6 +55,24 @@ class _DemoPanelState extends State<DemoPanel> {
   late final DemoHimaSuggestBridge _bridge = widget.demo.bridge;
   late final HimaSuggestController _suggest = widget.demo.suggest;
 
+  /// How long the 「10秒後に出す」 switch makes the notification wait: enough time
+  /// to leave the app for YouTube and start recording the moment it arrives.
+  static const _suggestionDelay = Duration(seconds: 10);
+
+  /// True while the notification rows schedule their post instead of posting it
+  /// now, so the app can be left before the notification appears.
+  bool _delayedSuggestion = false;
+
+  /// The demo notification the rows made last in this visit.
+  ///
+  /// A notification keeps the 「デモ」 subtext it was posted with, so 撮影モード has
+  /// to replace it from this record. [fireAt] is when a delayed one is due, or
+  /// null when it was posted at once.
+  ({DemoSuggestionKind kind, String? label, DateTime? fireAt})? _lastSuggestion;
+
+  /// The suggestion post that has not answered yet, if any.
+  Future<void>? _suggestionInFlight;
+
   @override
   void initState() {
     super.initState();
@@ -203,6 +221,8 @@ class _DemoPanelState extends State<DemoPanel> {
     final owner = context.read<SessionOwner>();
     final viewModel = _viewModel;
     final messenger = ScaffoldMessenger.of(context);
+    final delayMs = _delayedSuggestion ? _suggestionDelay.inMilliseconds : 0;
+    final label = kind == DemoSuggestionKind.app ? 'YouTube' : null;
     // The suggestion's tap opens the declaration flow, and the app ignores it
     // while a declaration is live: ending it is what makes the posted
     // notification behave like a real one.
@@ -221,23 +241,132 @@ class _DemoPanelState extends State<DemoPanel> {
         return;
       }
     }
+    // Read after the step above, not before: 撮影モード can be turned on while a
+    // declaration is being ended, and the notification has to look real then.
+    final marked = !widget.demo.captureMode.value;
+    // Recorded before the post is sent, so a re-mark that capture mode asks for
+    // while this request is on its way knows what to replace.
+    _lastSuggestion = (
+      kind: kind,
+      label: label,
+      fireAt: delayMs == 0 ? null : DateTime.now().add(_suggestionDelay),
+    );
     // The step above takes seconds in slow mode and the demo can be left while
     // it runs: the owner answers null then and posts nothing, so no demo
     // notification can appear after the demo is over.
-    final posted = await owner.postDemoSuggestion(
+    final post = owner.postDemoSuggestion(
       kind: kind,
-      label: kind == DemoSuggestionKind.app ? 'YouTube' : null,
+      label: label,
+      marked: marked,
+      delayMs: delayMs,
     );
-    if (posted != false || !mounted) return;
+    // Tracked so a re-mark sent meanwhile lands after this one instead of being
+    // replaced by the marked post that it is waiting for.
+    _suggestionInFlight = post.then<void>((_) {});
+    final posted = await post;
+    _suggestionInFlight = null;
+    if (!mounted) return;
+    if (posted != true) {
+      // Nothing is waiting or on screen, so there is nothing to re-mark.
+      _lastSuggestion = null;
+      if (posted == false) {
+        messenger.showSnackBar(
+          SnackBar(
+            content: const Text('通知が許可されていないよ'),
+            action: SnackBarAction(
+              label: '許可',
+              onPressed: () => unawaited(_allowNotifications()),
+            ),
+          ),
+        );
+      }
+      return;
+    }
+    if (delayMs == 0) return;
     messenger.showSnackBar(
-      SnackBar(
-        content: const Text('通知が許可されていないよ'),
-        action: SnackBarAction(
-          label: '許可',
-          onPressed: () => unawaited(_allowNotifications()),
-        ),
+      const SnackBar(
+        content: Text('10秒後に通知するよ'),
+        duration: Duration(seconds: 2),
       ),
     );
+  }
+
+  /// Turns 撮影モード on or off.
+  ///
+  /// The panel closes when it is turned on, because it is not part of the
+  /// recording: nothing developer-looking may be on screen, and the floating
+  /// button that would reopen it is hidden too (`DemoOverlay`). It is left
+  /// through the long press in the top-left corner, which keeps the way out in
+  /// the demo's own files.
+  void _setCaptureMode(bool value) {
+    widget.demo.captureMode.value = value;
+    if (!value) {
+      setState(() {});
+      return;
+    }
+    // Captured before the panel closes. A notification keeps the 「デモ」 subtext it
+    // was posted with, and the recording must not show it.
+    final owner = context.read<SessionOwner>();
+    final last = _lastSuggestion;
+    _lastSuggestion = null;
+    if (last != null) unawaited(_remarkSuggestion(owner, last));
+    _selectTab(0);
+  }
+
+  /// Re-posts the notification the rows last made, without the 「デモ」 subtext.
+  ///
+  /// Neither a scheduled nor a posted notification can be re-marked where it is,
+  /// so it is posted again: the same body and notification ID, and only the wait
+  /// that is left when it has not been delivered yet. Re-posting a delivered one
+  /// replaces it in the shade, which is the only way the recording stops seeing
+  /// the marker.
+  Future<void> _remarkSuggestion(
+    SessionOwner owner,
+    ({DemoSuggestionKind kind, String? label, DateTime? fireAt}) last,
+  ) async {
+    // A post that is still on its way carries the value decided before capture
+    // mode was on, and it lands after anything sent now: waiting for it is what
+    // keeps the 「デモ」 subtext from coming back.
+    final inFlight = _suggestionInFlight;
+    if (inFlight != null) await inFlight;
+    final fireAt = last.fireAt;
+    final remaining = fireAt == null
+        ? Duration.zero
+        : fireAt.difference(DateTime.now());
+    await owner.postDemoSuggestion(
+      kind: last.kind,
+      label: last.label,
+      marked: false,
+      delayMs: remaining.isNegative ? 0 : remaining.inMilliseconds,
+    );
+  }
+
+  /// Shows the app's own error state on the home tab.
+  ///
+  /// The home screen only had an error UI when the list was empty, so turning
+  /// the failure on alone looked like it did nothing: the friends it had already
+  /// read stayed on screen. An empty board is staged and read successfully
+  /// first, then the failure is turned on and read again, so the error UI the
+  /// app already has is what the home tab ends up showing.
+  Future<void> _toggleFailures(bool value) async {
+    final api = _api;
+    final viewModel = _viewModel;
+    // Captured before the panel closes, which happens before both reads.
+    _selectTab(0);
+    if (!value) {
+      api.failEveryCall = false;
+      api.setFriends(MockFriends.defaults);
+      await viewModel.reloadAll();
+      return;
+    }
+    api
+      ..failEveryCall = false
+      ..setFriends(MockFriends.none);
+    await viewModel.reloadAll();
+    // Only now: with the failure on, the read above could not have staged the
+    // empty list in the first place.
+    api.failEveryCall = true;
+    await viewModel.reloadAll();
   }
 
   Future<void> _allowNotifications() async {
@@ -271,6 +400,13 @@ class _DemoPanelState extends State<DemoPanel> {
           AppSpacing.s32,
         ),
         children: [
+          _section('撮影', [
+            _switchRow(
+              '撮影モード',
+              widget.demo.captureMode.value,
+              _setCaptureMode,
+            ),
+          ]),
           _section('画面', [
             _row('ホーム', () => _selectTab(0)),
             _row('友達', () => _selectTab(1)),
@@ -321,12 +457,7 @@ class _DemoPanelState extends State<DemoPanel> {
             _switchRow(
               '通信エラー',
               api.failEveryCall,
-              (value) {
-                setState(() => api.failEveryCall = value);
-                // The switch is the state being shown, so the app's own error
-                // state has to appear on the screens behind the panel.
-                unawaited(_viewModel.reloadAll());
-              },
+              (value) => unawaited(_toggleFailures(value)),
             ),
             _switchRow(
               '遅い通信',
@@ -337,6 +468,11 @@ class _DemoPanelState extends State<DemoPanel> {
             _row('最初に戻す', () => _stage(api.reset)),
           ]),
           _section('自動ひま提案', [
+            _switchRow(
+              '10秒後に出す',
+              _delayedSuggestion,
+              (value) => setState(() => _delayedSuggestion = value),
+            ),
             _row(
               '「アプリ利用中」の通知',
               () => _postSuggestion(DemoSuggestionKind.app),

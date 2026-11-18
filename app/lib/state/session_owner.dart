@@ -46,6 +46,14 @@ class DemoSession extends AppSession {
   /// does not sit on top of the panel itself.
   final ValueNotifier<bool> panelVisible = ValueNotifier<bool>(false);
 
+  /// True while the owner is recording 撮影モード.
+  ///
+  /// Nothing developer-looking may appear on camera then, so the floating entry
+  /// point disappears and the demo notifications drop their 「デモ」 subtext. It
+  /// lives on this session, so it ends with it: none of it can reach the real
+  /// session or the phone's notification state.
+  final ValueNotifier<bool> captureMode = ValueNotifier<bool>(false);
+
   /// The panel's own route is pushed from above the navigator, so the demo
   /// session is the only one that needs a handle on it.
   final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -116,14 +124,22 @@ class SessionOwner extends ChangeNotifier {
   /// the post could run: the panel asks for this after a step that takes seconds
   /// in slow mode, and a notification posted afterwards would outlive the demo.
   /// The post is recorded so [exitDemo] can wait for it, which is what keeps the
-  /// cancel it does the last word on the notification.
+  /// cancel it does the last word on the notification — a delayed post that has
+  /// only been scheduled is dropped by the same cancel.
   Future<bool?> postDemoSuggestion({
     required DemoSuggestionKind kind,
     String? label,
+    bool marked = true,
+    int delayMs = 0,
   }) async {
     final session = _demo;
     if (session == null || _leavingDemo) return null;
-    final post = session.bridge.postDemoSuggestion(kind: kind, label: label);
+    final post = session.bridge.postDemoSuggestion(
+      kind: kind,
+      label: label,
+      marked: marked,
+      delayMs: delayMs,
+    );
     // Tracked separately so exiting can wait for it without the tracked copy
     // itself failing when the channel does.
     final tracked = post.then<void>((_) {}, onError: (Object _) {});

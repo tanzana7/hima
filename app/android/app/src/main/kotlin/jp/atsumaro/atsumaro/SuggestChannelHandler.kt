@@ -172,9 +172,12 @@ internal class SuggestChannelHandler(private val activity: Activity) : MethodCha
     }
 
     /**
-     * Developer demo post: answers whether the notification was posted. A missing or unknown
-     * kind is a Dart/native contract mismatch, so it fails instead of posting a notification
-     * whose body nobody can interpret.
+     * Developer demo post: answers whether the notification was posted or scheduled. A missing or
+     * unknown kind is a Dart/native contract mismatch, so it fails instead of posting a
+     * notification whose body nobody can interpret.
+     *
+     * `marked` and `delayMs` are optional so a Dart side that predates them still works: it means
+     * a marked notification posted immediately.
      */
     private fun postDemoSuggestion(arguments: Any?, result: MethodChannel.Result) {
         val args = arguments as? Map<*, *>
@@ -183,7 +186,9 @@ internal class SuggestChannelHandler(private val activity: Activity) : MethodCha
             result.error("bad_args", "unknown demo suggestion kind", null)
             return
         }
-        result.success(HimaSuggestNotifier(activity).postDemo(body, store))
+        val marked = args?.get("marked") as? Boolean ?: true
+        val delayMs = (args?.get("delayMs") as? Number)?.toLong() ?: 0L
+        result.success(HimaSuggestNotifier(activity).postDemo(body, store, marked, delayMs.coerceAtLeast(0L)))
     }
 
     private companion object {
