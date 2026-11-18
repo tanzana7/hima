@@ -40,8 +40,11 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   HimaSuggestController? _suggest;
 
   /// True while a pending suggestion action is being read, so the shell's first
-  /// frame, a resume and the channel callback cannot act on the same tap twice.
+  /// frame, a resume and the channel callback cannot act on the same tap twice;
+  /// a request that arrives meanwhile is flagged with [_checkQueued] so the read
+  /// is repeated instead of dropped.
   bool _takingSuggestAction = false;
+  bool _checkQueued = false;
   bool _checkedPendingAction = false;
 
   /// The reply currently on screen, and the timer that takes it away again.
@@ -119,14 +122,28 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   /// The action is read through the channel instead of being taken from the
   /// notification, and reading consumes it: that is what keeps a single tap from
   /// declaring twice when the callback and a resume both fire.
+  ///
+  /// A request that arrives during a read is queued rather than dropped. A tap
+  /// can land while the first frame or a resume is still awaiting the channel,
+  /// and if that read answers null nothing else would look again until the app
+  /// was backgrounded: the action would sit on the native side with no trigger.
   Future<void> _checkPendingAction() async {
     final suggest = _suggest;
-    if (suggest == null || _takingSuggestAction) return;
+    if (suggest == null) return;
+    if (_takingSuggestAction) {
+      _checkQueued = true;
+      return;
+    }
     _takingSuggestAction = true;
     try {
-      final action = await suggest.takePendingAction();
-      if (!mounted || action != himaSuggestDeclareAction) return;
-      await _offerSuggestedDeclaration();
+      do {
+        _checkQueued = false;
+        final action = await suggest.takePendingAction();
+        if (!mounted) return;
+        if (action == himaSuggestDeclareAction) {
+          await _offerSuggestedDeclaration();
+        }
+      } while (_checkQueued && mounted);
     } catch (_) {
       // Nothing was taken; the next resume asks again.
     } finally {
