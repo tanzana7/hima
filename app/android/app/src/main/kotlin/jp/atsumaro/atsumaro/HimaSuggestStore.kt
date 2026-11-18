@@ -104,6 +104,22 @@ internal class HimaSuggestStore(context: Context) {
             }.apply()
         }
 
+    /**
+     * The one-time token carried by the demo notification that is currently posted.
+     *
+     * A demo notification is a separate post with its own ID and PendingIntent, so it needs its
+     * own token: sharing [notificationToken] would let a demo post overwrite the token of a real
+     * suggestion still in the shade (or the demo post consume it), which would silently kill the
+     * tap of the other notification. Same one-time semantics as [notificationToken].
+     */
+    var demoNotificationToken: String?
+        get() = prefs.getString(KEY_DEMO_NOTIFICATION_TOKEN, null)
+        set(value) {
+            prefs.edit().apply {
+                if (value == null) remove(KEY_DEMO_NOTIFICATION_TOKEN) else putString(KEY_DEMO_NOTIFICATION_TOKEN, value)
+            }.apply()
+        }
+
     var forecast: List<ForecastSlot>
         get() = parseForecast(prefs.getString(KEY_FORECAST, null))
         set(value) {
@@ -211,6 +227,7 @@ internal class HimaSuggestStore(context: Context) {
         const val KEY_OBSERVATIONS = "observations"
         const val KEY_PENDING_ACTION = "pendingAction"
         const val KEY_NOTIFICATION_TOKEN = "notificationToken"
+        const val KEY_DEMO_NOTIFICATION_TOKEN = "demoNotificationToken"
 
         const val NOTIFIED_SLOT_RETENTION_DAYS = 7
     }
