@@ -6,13 +6,14 @@ from pydantic import BaseModel
 
 class SetupIn(BaseModel):
     name: str
-    channel_id: int
+    channel_id: int | None = None  # 任意（旧パネル ID 保存用の名残。新規には書き込まない）
 
 
 class SessionIn(BaseModel):
     user_id: int
     display_name: str
     guild_id: int
+    guild_name: str | None = None  # Bot が interaction.guild.name から渡す本物のサーバー名
     mood: str
     activity: str
     note: str | None = None
@@ -60,6 +61,7 @@ class VisibilityIn(BaseModel):
     guild_id: int
     visible: bool
     display_name: str | None = None  # 操作者の本物の表示名（users.upsert 用）
+    guild_name: str | None = None  # Bot が interaction.guild.name から渡す本物のサーバー名
 
 
 class AppVisibilityIn(BaseModel):

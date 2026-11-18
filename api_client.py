@@ -58,18 +58,19 @@ class ApiClient:
         return resp.json() if resp.content else None
 
     # --- guild panel -------------------------------------------------
-    async def setup_guild(self, guild_id: int, name: str, channel_id: int) -> dict:
-        return await self._request(
-            "POST", f"/bot/guilds/{guild_id}/setup", json_body={"name": name, "channel_id": channel_id}
-        )
+    async def setup_guild(self, guild_id: int, name: str, channel_id: int | None = None) -> dict:
+        body: dict = {"name": name}
+        if channel_id is not None:
+            body["channel_id"] = channel_id
+        return await self._request("POST", f"/bot/guilds/{guild_id}/setup", json_body=body)
 
     async def teardown_guild(self, guild_id: int) -> dict:
         return await self._request("POST", f"/bot/guilds/{guild_id}/teardown")
 
     # --- sessions ----------------------------------------------------
     async def declare_session(
-        self, *, user_id: int, display_name: str, guild_id: int, mood: str, activity: str,
-        note: str | None, minutes: int,
+        self, *, user_id: int, display_name: str, guild_id: int, guild_name: str | None,
+        mood: str, activity: str, note: str | None, minutes: int,
     ) -> dict:
         return await self._request(
             "POST",
@@ -78,6 +79,7 @@ class ApiClient:
                 "user_id": user_id,
                 "display_name": display_name,
                 "guild_id": guild_id,
+                "guild_name": guild_name,
                 "mood": mood,
                 "activity": activity,
                 "note": note,
@@ -92,10 +94,14 @@ class ApiClient:
         """提案 DM の「このまま宣言する」（source=suggested / 30分 / auto_mood）。"""
         return await self._request("POST", "/bot/suggest-declare", json_body={"user_id": user_id})
 
-    async def get_board(self, guild_id: int, user_id: int, display_name: str | None = None) -> dict:
+    async def get_board(
+        self, guild_id: int, user_id: int, display_name: str | None = None, guild_name: str | None = None
+    ) -> dict:
         params: dict = {"guild_id": guild_id, "user_id": user_id}
         if display_name is not None:
             params["display_name"] = display_name
+        if guild_name is not None:
+            params["guild_name"] = guild_name
         return await self._request("GET", "/bot/board", params=params)
 
     # --- knocks ------------------------------------------------------
@@ -134,8 +140,10 @@ class ApiClient:
             body["display_name"] = display_name
         return await self._request("PUT", f"/bot/users/{user_id}/settings", json_body=body)
 
-    async def update_visibility(self, user_id: int, guild_id: int, *, visible: bool, display_name: str | None = None) -> dict:
+    async def update_visibility(self, user_id: int, guild_id: int, *, visible: bool, display_name: str | None = None, guild_name: str | None = None) -> dict:
         body: dict = {"user_id": user_id, "guild_id": guild_id, "visible": visible}
         if display_name is not None:
             body["display_name"] = display_name
+        if guild_name is not None:
+            body["guild_name"] = guild_name
         return await self._request("PUT", "/bot/memberships/visibility", json_body=body)

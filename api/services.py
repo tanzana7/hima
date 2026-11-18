@@ -1,4 +1,4 @@
-"""Shared data helpers (users, memberships, visibility, blocks)."""
+"""Shared data helpers (guilds, users, memberships, visibility, blocks)."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from .models import HimaSession, Membership, User
+from .models import Guild, HimaSession, Membership, User
 
 
 def utcnow() -> datetime:
@@ -16,6 +16,21 @@ def utcnow() -> datetime:
 def _is_placeholder_name(display_name: str, user_id: int) -> bool:
     """仮名（discord:<ユーザーID> 形式）や空値かどうか。本物の名前を仮名で上書きしないための判定。"""
     return not display_name.strip() or display_name == f"discord:{user_id}"
+
+
+def upsert_guild(db: Session, guild_id: int, name: str | None = None) -> Guild:
+    """guilds 行を upsert する（無ければ作る・あれば name を更新）。仮名・空値では本物の名前を上書きしない。
+
+    membership は guilds への外部キー制約があるため、Bot 経路では membership 作成の前に呼ぶ。
+    """
+    guild = db.get(Guild, guild_id)
+    if guild is None:
+        guild = Guild(id=guild_id, name=name if name and name.strip() else f"guild:{guild_id}")
+        db.add(guild)
+        db.flush()
+    elif name and name.strip():
+        guild.name = name
+    return guild
 
 
 def upsert_user(db: Session, user_id: int, display_name: str | None = None) -> User:

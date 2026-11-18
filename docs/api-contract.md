@@ -100,7 +100,7 @@
 
 ## 2. 認証
 
-- **Bot→API**：`Authorization: Bearer <BOT_API_SECRET>`。この検証を通ったリクエストのみ、ボディ／ヘッダーで渡された Discord ユーザーID を信用できる。guild_id と user_id を含むリクエストでは membership が upsert され（last_seen_at 更新）、users 行が無ければ作られる。**リクエストに `display_name` がある場合（Bot がインタラクションから渡した本物の表示名）、users.display_name をその値で更新する。ただし仮名（`discord:<ユーザーID>` 形式）・空値では既存の本物の名前を上書きしない**（表示名なしで作られた既存仮名行は、そのユーザーの次の Bot 操作で自己修復される。移行用マイグレーションはなし）
+- **Bot→API**：`Authorization: Bearer <BOT_API_SECRET>`。この検証を通ったリクエストのみ、ボディ／ヘッダーで渡された Discord ユーザーID を信用できる。guild_id と user_id を含むリクエストでは **Guild → User → Membership の順で upsert する**。①guilds 行が無ければ作る（guild_name 指定時はその名前、無指定は仮名 `guild:<guild_id>`）。あれば `guild_name` が渡されていれば name を更新（仮名・空値では既存の本物の名前を上書きしない）。②users 行が無ければ作られる。③membership が upsert され（last_seen_at 更新）、guilds・users への外部キー制約は常に満たされる。**リクエストに `display_name` がある場合（Bot がインタラクションから渡した本物の表示名）、users.display_name をその値で更新する。ただし仮名（`discord:<ユーザーID>` 形式）・空値では既存の本物の名前を上書きしない**（表示名なしで作られた既存仮名行は、そのユーザーの次の Bot 操作で自己修復される。移行用マイグレーションはなし）。Bot は interaction からサーバー名（`interaction.guild.name`）を `guild_name` として渡す（宣言・掲示板取得・visibility）
 - **アプリ→API**：API 独自のセッショントークン = JWT（HS256、`API_JWT_SECRET`、有効期限30日）。`sub` にユーザーID。`POST /auth/discord` で発行する。**全 `/app/*` エンドポイントで必須**。JWT から取得したユーザーIDのみを信用し、リクエストで送られた user_id は採用しない
 
 ## 3. 実装済みエンドポイント（すべて Bot 認証必須）
@@ -113,7 +113,7 @@
 | POST | `/bot/guilds/{guild_id}/teardown` | list_message_id / panel_message_id が残っていればその2件を REST 削除（失敗は無視）して NULL 化。旧パネル掃除用 |
 | POST | `/bot/sessions` | ヒマ宣言（延長=同ID更新／新規は source=manual）。minutes は整数分（**5〜720 分を想定**。API は 1〜1440 にクランプ）。マッチング評価（**お知らせ＝watch 通知は廃止。誰にも通知がいかない**） |
 | DELETE | `/bot/sessions` | 有効セッション終了。宛ノックを expired に |
-| GET | `/bot/board?guild_id=&user_id=&display_name=` | 閲覧者に見える有効セッション一覧（共有可視・ブロック除外・source非表示）＋受信したお返事（最大5件。**`to_moon` は宛先＝受信者が現在🌙の有効セッションを持つときのみ true**）＋未見結果。レスポンスに `viewer.notify_on_hima` を含む（**現在は未使用**：お知らせ廃止のため値は互換用）。**guilds に登録済みのサーバーであれば、閲覧者の membership を upsert する**（行が無ければ visible=true で作成。既存行の visible は変更しない・last_seen_at のみ更新）。「掲示板を見ただけのユーザー」もお返事を送れるようになるための upsert（契約 §2 の guild_id＋user_id を含むリクエストの規則どおり）。`display_name` は任意。指定時は閲覧者の users.display_name を更新（仮名・空値では上書きしない） |
+| GET | `/bot/board?guild_id=&user_id=&display_name=&guild_name=` | 閲覧者に見える有効セッション一覧（共有可視・ブロック除外・source非表示）＋受信したお返事（最大5件。**`to_moon` は宛先＝受信者が現在🌙の有効セッションを持つときのみ true**）＋未見結果。レスポンスに `viewer.notify_on_hima` を含む（**現在は未使用**：お知らせ廃止のため値は互換用）。**guilds 行が無い新規サーバーでも、閲覧者の Guild → User → Membership upsert を行う**（行が無ければ visible=true で作成。既存行の visible は変更しない・last_seen_at のみ更新）。「掲示板を見ただけのユーザー」もお返事を送れるようになるための upsert（契約 §2 の guild_id＋user_id を含むリクエストの規則どおり）。`display_name` は任意。指定時は閲覧者の users.display_name を更新（仮名・空値では上書きしない） |
 | POST | `/bot/knocks/results/seen` | 未見結果に `result_seen_at` を打つ |
 | POST | `/bot/knocks` | ノック作成（相手が有効セッション中・共有可視・非ブロック必須。5分クールダウンは 409）。`display_name` は任意（送信者の users 行 upsert 用） |
 | POST | `/bot/knocks/{id}/reply` | 返答（accept/later/pass）。`{user_id, action}`。to_user 本人のみ。status と responded_at を更新。**Bot 側は user_id 必須のまま（変更なし）** |

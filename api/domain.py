@@ -11,13 +11,14 @@ from . import matching
 from . import discord_rest as _discord_rest
 from .discord_rest import knock_reply_components
 from .db import SessionLocal
-from .models import Guild, HimaSession, Knock, Membership, User
+from .models import HimaSession, Knock, Membership, User
 from .push import send_push
 from .services import (
     active_session,
     blocked_ids,
     has_shared_visible_guild,
     is_blocked,
+    upsert_guild,
     upsert_membership,
     upsert_user,
     utcnow,
@@ -43,6 +44,7 @@ def declare_session(
     source: str,
     display_name: str | None = None,
     guild_id: int | None = None,
+    guild_name: str | None = None,
     rest=None,
 ) -> dict:
     """宣言（新規 or 延長）。マッチング評価・見守りキュー登録も行う。"""
@@ -55,6 +57,10 @@ def declare_session(
     minutes = max(1, min(1440, minutes))
     now = utcnow()
     expires_at = now + timedelta(minutes=minutes)
+    # Guild → User → Membership の順（memberships は guilds・users への外部キー制約あり）。
+    # guilds 行が無い新規サーバーでもここで登録される（/panel_setup 廃止後の正規経路）。
+    if guild_id is not None:
+        upsert_guild(db, guild_id, guild_name)
     upsert_user(db, user_id, display_name)
     if guild_id is not None:
         upsert_membership(db, guild_id, user_id)
@@ -341,16 +347,19 @@ def _inbox_and_results(db, viewer_id: int, viewer_mood: str | None) -> tuple[lis
     return inbox, results
 
 
-def board_for_guild(db, *, guild_id: int, viewer_id: int, display_name: str | None = None) -> dict:
+def board_for_guild(
+    db, *, guild_id: int, viewer_id: int, display_name: str | None = None, guild_name: str | None = None
+) -> dict:
     """単一ギルドの掲示板（Bot 向け）。共有可視・ブロック除外・source 非表示。"""
-    # 契約（§2）: guild_id と user_id を含む Bot リクエストは membership を upsertする。
+    # 契約（§2）: guild_id と user_id を含む Bot リクエストは Guild → User → Membership の順で upsert する。
+    # guilds 行が無い新規サーバーでもここで登録される（/panel_setup 廃止後の正規経路）。
     # 掲示板を見ただけのユーザーも membership が作られ、「お返事」が送れるようになる。
     # 既存行の visible は上書きしない（非表示設定を尊重。last_seen_at のみ更新）。
     # users の display_name は Bot が渡した本物の表示名で更新する（仮名・空値では上書きしない）。
-    if db.get(Guild, guild_id) is not None:  # 未登録ギルドは FK のため作れない（board 自体は参照可）
-        upsert_user(db, viewer_id, display_name)
-        upsert_membership(db, guild_id, viewer_id)
-        db.commit()
+    upsert_guild(db, guild_id, guild_name)
+    upsert_user(db, viewer_id, display_name)
+    upsert_membership(db, guild_id, viewer_id)
+    db.commit()
     viewer_active = active_session(db, viewer_id)
     viewer_mood = viewer_active.mood if viewer_active else None
     hidden = blocked_ids(db, viewer_id)

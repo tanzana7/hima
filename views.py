@@ -284,7 +284,7 @@ class BoardView(ErrorFollowupView):
     @ui.button(label="ヒマ宣言する", style=discord.ButtonStyle.success, custom_id="board:declare", emoji="🙋", row=0)
     async def declare(self, interaction: discord.Interaction, _: ui.Button) -> None:
         await interaction.response.send_message(
-            view=JoinView(self.bot, interaction.guild_id, interaction.user), ephemeral=True
+            view=JoinView(self.bot, interaction.guild_id, interaction.user, interaction.guild), ephemeral=True
         )
 
     @ui.button(label="お返事する", style=discord.ButtonStyle.primary, custom_id="board:knock", emoji="🚪", row=0)
@@ -294,7 +294,8 @@ class BoardView(ErrorFollowupView):
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             data = await self.bot.api.get_board(
-                guild_id, interaction.user.id, display_name=interaction.user.display_name
+                guild_id, interaction.user.id, display_name=interaction.user.display_name,
+                guild_name=interaction.guild.name if interaction.guild else None,
             )
         except Exception as exc:  # noqa: BLE001
             await send_api_error(interaction, exc)
@@ -359,7 +360,8 @@ async def _build_board(bot: "HimaBot", interaction: discord.Interaction) -> tupl
     assert guild_id is not None
     try:
         data = await bot.api.get_board(
-            guild_id, interaction.user.id, display_name=interaction.user.display_name
+            guild_id, interaction.user.id, display_name=interaction.user.display_name,
+            guild_name=interaction.guild.name if interaction.guild else None,
         )
     except Exception as exc:  # noqa: BLE001
         await send_api_error(interaction, exc)
@@ -389,7 +391,7 @@ class AtsumaroPanelView(ErrorFollowupView):
     @ui.button(label="今ヒマ！", style=discord.ButtonStyle.success, custom_id="atsumaro:join", emoji="🙋", row=0)
     async def join_btn(self, interaction: discord.Interaction, _: ui.Button) -> None:
         await interaction.response.send_message(
-            view=JoinView(self.bot, interaction.guild_id, interaction.user), ephemeral=True
+            view=JoinView(self.bot, interaction.guild_id, interaction.user, interaction.guild), ephemeral=True
         )
 
     @ui.button(label="やめる", style=discord.ButtonStyle.secondary, custom_id="atsumaro:leave", row=0)
@@ -411,10 +413,11 @@ class AtsumaroPanelView(ErrorFollowupView):
 class JoinView(ErrorFollowupView):
     """登録ビュー（時間/温度感/やりたいことのセレクト＋ひとことModal＋確定）。"""
 
-    def __init__(self, bot: "HimaBot", guild_id: int | None, user: discord.abc.User) -> None:
+    def __init__(self, bot: "HimaBot", guild_id: int | None, user: discord.abc.User, guild: discord.Guild | None = None) -> None:
         super().__init__(timeout=300)
         self.bot = bot
         self.guild_id = guild_id
+        self.guild_name: str | None = guild.name if guild is not None else None
         self.user = user
         self.duration_min: int = DEFAULT_MINUTES
         self.mood: str = "ok"
@@ -473,6 +476,7 @@ class JoinView(ErrorFollowupView):
                 user_id=self.user.id,
                 display_name=self.user.display_name,
                 guild_id=self.guild_id,
+                guild_name=self.guild_name,
                 mood=self.mood,
                 activity=self.activity,
                 note=self.note,
