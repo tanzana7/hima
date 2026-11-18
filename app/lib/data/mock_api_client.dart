@@ -235,7 +235,7 @@ class MockApiClient implements ApiClient {
   }
 
   @override
-  Future<void> declareHima(HimaDeclaration declaration) async {
+  Future<DateTime> declareHima(HimaDeclaration declaration) async {
     if (!himaDurationChoices.contains(declaration.durationMin)) {
       throw const ApiException(
         statusCode: 400,
@@ -247,6 +247,7 @@ class MockApiClient implements ApiClient {
     final current = _activeHima;
     final isNewSession = current == null;
     if (isNewSession) _sessionSequence++;
+    final expiresAt = now.add(Duration(minutes: declaration.durationMin));
     _myHima = HimaSession(
       sessionId: current?.sessionId ?? 'session-me-$_sessionSequence',
       user: _summary(_myId, _myName),
@@ -255,10 +256,11 @@ class MockApiClient implements ApiClient {
       note: declaration.note,
       // An extend keeps the original start, like the server does.
       startedAt: current?.startedAt ?? now,
-      expiresAt: now.add(Duration(minutes: declaration.durationMin)),
+      expiresAt: expiresAt,
       durationMin: declaration.durationMin,
       source: current?.source ?? declaration.source,
     );
+    return expiresAt;
   }
 
   @override

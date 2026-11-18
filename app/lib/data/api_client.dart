@@ -29,7 +29,10 @@ abstract interface class ApiClient {
   Future<bool> updateGuildVisibility(String guildId, bool visible);
 
   /// `POST /app/sessions`. Declaring again extends the live session.
-  Future<void> declareHima(HimaDeclaration declaration);
+  ///
+  /// Returns the expiry the server stored, so the caller can use it without
+  /// waiting for the follow-up `/app/me` read.
+  Future<DateTime> declareHima(HimaDeclaration declaration);
   Future<void> endHima();
 
   Future<BoardSnapshot> getBoard();

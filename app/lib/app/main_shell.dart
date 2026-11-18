@@ -6,9 +6,12 @@ import 'package:provider/provider.dart';
 import '../app/theme/app_colors.dart';
 import '../app/theme/app_spacing.dart';
 import '../app/theme/app_text_styles.dart';
+import '../data/hima_suggest_bridge.dart';
 import '../data/models/models.dart';
 import '../features/friends/friends_screen.dart';
+import '../features/home/declare_feedback.dart';
 import '../features/home/home_screen.dart';
+import '../features/home/widgets/pickers.dart';
 import '../features/knocks/knocks_screen.dart';
 import '../features/profile/profile_screen.dart';
 import '../shared/haptics.dart';
@@ -16,6 +19,7 @@ import '../shared/widgets/app_bottom_navigation.dart';
 import '../shared/widgets/avatar_view.dart';
 import '../shared/widgets/confetti_burst.dart';
 import '../state/app_view_model.dart';
+import '../state/hima_suggest_controller.dart';
 
 /// Three tabs with a fixed bottom navigation, plus the foreground polling that
 /// keeps friends, matches and knocks fresh.
@@ -33,6 +37,12 @@ class MainShell extends StatefulWidget {
 class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   int _selectedIndex = 0;
   AppViewModel? _viewModel;
+  HimaSuggestController? _suggest;
+
+  /// True while a pending suggestion action is being read, so the shell's first
+  /// frame, a resume and the channel callback cannot act on the same tap twice.
+  bool _takingSuggestAction = false;
+  bool _checkedPendingAction = false;
 
   /// The reply currently on screen, and the timer that takes it away again.
   Knock? _celebration;
@@ -62,10 +72,29 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
         if (mounted) _handleViewModelChanged();
       });
     }
+    final suggest = context.read<HimaSuggestController>();
+    if (_suggest != suggest) {
+      _suggest?.onAction = null;
+      _suggest = suggest;
+      suggest.onAction = () => unawaited(_checkPendingAction());
+    }
+    if (!_checkedPendingAction) {
+      _checkedPendingAction = true;
+      // The app may have been started by the notification, so the first frame is
+      // checked as well as a resume.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_checkPendingAction());
+      });
+    }
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // A tap that arrived while the app was in the background is still stored
+      // natively, so coming back is another chance to take it.
+      unawaited(_checkPendingAction());
+    }
     final viewModel = _viewModel;
     if (viewModel == null) return;
     if (state == AppLifecycleState.resumed) {
@@ -81,7 +110,55 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     _celebrationTimer?.cancel();
     _viewModel?.removeListener(_handleViewModelChanged);
     _viewModel?.stopPolling();
+    _suggest?.onAction = null;
     super.dispose();
+  }
+
+  /// Takes a pending 「いまひまじゃない？」 action, if there is one.
+  ///
+  /// The action is read through the channel instead of being taken from the
+  /// notification, and reading consumes it: that is what keeps a single tap from
+  /// declaring twice when the callback and a resume both fire.
+  Future<void> _checkPendingAction() async {
+    final suggest = _suggest;
+    if (suggest == null || _takingSuggestAction) return;
+    _takingSuggestAction = true;
+    try {
+      final action = await suggest.takePendingAction();
+      if (!mounted || action != himaSuggestDeclareAction) return;
+      await _offerSuggestedDeclaration();
+    } catch (_) {
+      // Nothing was taken; the next resume asks again.
+    } finally {
+      _takingSuggestAction = false;
+    }
+  }
+
+  /// Opens the declaration the notification suggested.
+  ///
+  /// The worker never declares by itself: the suggestion only brings the user
+  /// here, and the mood is still their choice.
+  Future<void> _offerSuggestedDeclaration() async {
+    final viewModel = context.read<AppViewModel>();
+    // The declaration belongs to the home tab, and a pushed route would cover
+    // the picker, so both go first.
+    setState(() => _selectedIndex = 0);
+    Navigator.of(context).popUntil((route) => route.isFirst);
+    // Extending a live session is not what the suggestion offered.
+    if (viewModel.isDeclared) return;
+    final mood = await showMoodPicker(context, current: viewModel.lastMood);
+    if (mood == null || !mounted) return;
+    try {
+      await viewModel.declareHima(
+        mood: mood,
+        source: DeclarationSource.suggested,
+      );
+      if (!mounted) return;
+      unawaited(AppHaptics.declare());
+    } catch (_) {
+      if (!mounted) return;
+      showDeclareFailure(context);
+    }
   }
 
   void _handleViewModelChanged() {
