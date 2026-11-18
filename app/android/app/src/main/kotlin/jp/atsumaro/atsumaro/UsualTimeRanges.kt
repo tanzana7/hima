@@ -40,13 +40,13 @@ internal object UsualTimeRanges {
      * why observations keep a -1 marker instead of 0.
      */
     private fun isLearned(observations: List<DayObservation>, slot: Int): Boolean {
-        val observedMinutes = observations.mapNotNull { day ->
-            val minutes = day.minutes[slot]
-            if (minutes >= 0) minutes else null
+        val observedSeconds = observations.mapNotNull { day ->
+            val seconds = day.seconds[slot]
+            if (seconds >= 0) seconds else null
         }.take(RECENT_DATES)
-        if (observedMinutes.isEmpty()) return false
-        val hits = observedMinutes.count { it >= HIT_MINUTES }
-        return hits >= HIT_DATES && hits * 2 >= observedMinutes.size
+        if (observedSeconds.isEmpty()) return false
+        val hits = observedSeconds.count { it >= HIT_MINUTES * 60 }
+        return hits >= HIT_DATES && hits * 2 >= observedSeconds.size
     }
 
     /** Merges adjacent or overlapping ranges per weekday, like `api/forecast.py` does. */

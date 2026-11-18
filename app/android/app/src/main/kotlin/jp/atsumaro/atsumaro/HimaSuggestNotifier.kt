@@ -12,6 +12,7 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import java.util.UUID
 
 internal class HimaSuggestNotifier(private val context: Context) {
 
@@ -37,7 +38,7 @@ internal class HimaSuggestNotifier(private val context: Context) {
             .setContentTitle(TITLE)
             .setContentText(body)
             .setAutoCancel(true)
-            .setContentIntent(declarePendingIntent())
+            .setContentIntent(declarePendingIntent(store))
             .build()
         manager.notify(HimaSuggest.NOTIFICATION_ID, notification)
         true
@@ -62,9 +63,14 @@ internal class HimaSuggestNotifier(private val context: Context) {
         )
     }
 
-    private fun declarePendingIntent(): PendingIntent {
+    private fun declarePendingIntent(store: HimaSuggestStore): PendingIntent {
+        // See [HimaSuggestStore.notificationToken]. FLAG_UPDATE_CURRENT below swaps the extras
+        // of the one PendingIntent, so the posted notification always carries the latest token.
+        val token = UUID.randomUUID().toString()
+        store.notificationToken = token
         val intent = Intent(context, MainActivity::class.java)
             .putExtra(HimaSuggest.ACTION_EXTRA, HimaSuggest.ACTION_DECLARE)
+            .putExtra(HimaSuggest.TOKEN_EXTRA, token)
         return PendingIntent.getActivity(
             context,
             0,

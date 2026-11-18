@@ -139,10 +139,9 @@ internal class HimaSuggestWorker(
         val observations = store.observations()
         forEachSlot(windowStart, now) { date, weekday, slot, _, _ ->
             val day = observations.getOrPut(date) { DayObservation(weekday, unobserved()) }
-            day.minutes[slot] = maxOf(day.minutes[slot], 0)
+            day.seconds[slot] = maxOf(day.seconds[slot], 0)
         }
-        // Sum milliseconds per slot and convert once: rounding every segment of an interval
-        // to whole minutes would turn three 30-second stretches into three minutes.
+        // Sum milliseconds per slot within this run, then store seconds (see DayObservation).
         val addedMs = HashMap<String, LongArray>()
         val weekdayByDate = HashMap<String, Int>()
         for (interval in intervals) {
@@ -158,8 +157,8 @@ internal class HimaSuggestWorker(
             val day = observations.getOrPut(date) { DayObservation(weekday, unobserved()) }
             for (slot in perSlot.indices) {
                 if (perSlot[slot] == 0L) continue
-                val minutes = Math.round(perSlot[slot].toDouble() / MINUTE_MS).toInt()
-                if (minutes > 0) day.minutes[slot] = maxOf(day.minutes[slot], 0) + minutes
+                val seconds = (perSlot[slot] / SECOND_MS).toInt()
+                if (seconds > 0) day.seconds[slot] = maxOf(day.seconds[slot], 0) + seconds
             }
         }
         val oldestKeptDate = TokyoTime.dateKeyDaysAgo(OBSERVATION_RETENTION_DAYS - 1, now)
@@ -188,6 +187,7 @@ internal class HimaSuggestWorker(
     private companion object {
         const val TAG = "HimaSuggest"
 
+        const val SECOND_MS = 1_000L
         const val MINUTE_MS = 60_000L
         const val MAX_USAGE_WINDOW_MS = 2 * 60 * MINUTE_MS
         const val MAX_STATE_HISTORY_MS = 24 * 60 * MINUTE_MS

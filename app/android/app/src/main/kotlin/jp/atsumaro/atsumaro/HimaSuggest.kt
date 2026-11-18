@@ -16,6 +16,7 @@ internal object HimaSuggest {
     const val EVENT_ACTION = "onAction"
 
     const val ACTION_EXTRA = "hima_suggest_action"
+    const val TOKEN_EXTRA = "hima_suggest_token"
     const val ACTION_DECLARE = "declare"
 
     const val NOTIFICATION_CHANNEL_ID = "hima_suggest"

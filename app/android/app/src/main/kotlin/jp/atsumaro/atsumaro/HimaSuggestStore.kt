@@ -26,10 +26,14 @@ internal data class CarriedForeground(
 }
 
 /**
- * Target-app minutes seen in one Tokyo date's 30-minute slots.
+ * Target-app seconds seen in one Tokyo date's 30-minute slots.
  * A slot is -1 until a worker run observes it, so "not observed" never reads as "unused".
+ *
+ * Seconds, not minutes: one slot is filled by several worker runs, and rounding each run's
+ * share to whole minutes before adding would turn repeated 31-second glances into minutes
+ * and drop repeated 29-second ones. The threshold is applied to the stored total instead.
  */
-internal class DayObservation(val weekday: Int, val minutes: IntArray)
+internal class DayObservation(val weekday: Int, val seconds: IntArray)
 
 /** Thin wrapper around the single `hima_suggest` SharedPreferences file. */
 internal class HimaSuggestStore(context: Context) {
@@ -84,6 +88,22 @@ internal class HimaSuggestStore(context: Context) {
             }.apply()
         }
 
+    /**
+     * The one-time token carried by the notification that is currently posted.
+     *
+     * MainActivity is the exported launcher, so any app can start it with an explicit intent
+     * and copy the action extra. Only the notification's own PendingIntent knows this random
+     * value, which is what makes a tap from it distinguishable from a forged launch. A new
+     * post replaces it, and accepting a tap clears it, so a token works once.
+     */
+    var notificationToken: String?
+        get() = prefs.getString(KEY_NOTIFICATION_TOKEN, null)
+        set(value) {
+            prefs.edit().apply {
+                if (value == null) remove(KEY_NOTIFICATION_TOKEN) else putString(KEY_NOTIFICATION_TOKEN, value)
+            }.apply()
+        }
+
     var forecast: List<ForecastSlot>
         get() = parseForecast(prefs.getString(KEY_FORECAST, null))
         set(value) {
@@ -134,12 +154,12 @@ internal class HimaSuggestStore(context: Context) {
             val item = root.optJSONObject(date) ?: continue
             val weekday = item.optInt("w", -1)
             if (weekday !in 0..6) continue
-            val stored = item.optJSONArray("m") ?: continue
-            val minutes = IntArray(TokyoTime.SLOTS_PER_DAY) { -1 }
+            val stored = item.optJSONArray("s") ?: continue
+            val seconds = IntArray(TokyoTime.SLOTS_PER_DAY) { -1 }
             for (slot in 0 until minOf(stored.length(), TokyoTime.SLOTS_PER_DAY)) {
-                minutes[slot] = stored.optInt(slot, -1)
+                seconds[slot] = stored.optInt(slot, -1)
             }
-            result[date] = DayObservation(weekday, minutes)
+            result[date] = DayObservation(weekday, seconds)
         }
         return result
     }
@@ -147,7 +167,7 @@ internal class HimaSuggestStore(context: Context) {
     fun saveObservations(observations: Map<String, DayObservation>) {
         val root = JSONObject()
         observations.forEach { (date, day) ->
-            root.put(date, JSONObject().put("w", day.weekday).put("m", JSONArray(day.minutes.toList())))
+            root.put(date, JSONObject().put("w", day.weekday).put("s", JSONArray(day.seconds.toList())))
         }
         prefs.edit().putString(KEY_OBSERVATIONS, root.toString()).apply()
     }
@@ -190,6 +210,7 @@ internal class HimaSuggestStore(context: Context) {
         const val KEY_SCREEN_INTERACTIVE = "screenInteractive"
         const val KEY_OBSERVATIONS = "observations"
         const val KEY_PENDING_ACTION = "pendingAction"
+        const val KEY_NOTIFICATION_TOKEN = "notificationToken"
 
         const val NOTIFIED_SLOT_RETENTION_DAYS = 7
     }

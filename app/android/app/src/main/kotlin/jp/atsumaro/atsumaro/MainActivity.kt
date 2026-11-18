@@ -45,29 +45,24 @@ class MainActivity : FlutterActivity() {
     private fun consumeSuggestAction(intent: Intent?, deliverToDart: Boolean) {
         val launchedIntent = intent ?: return
         val action = launchedIntent.getStringExtra(HimaSuggest.ACTION_EXTRA) ?: return
-        // Clearing the extra keeps a re-created activity from replaying the tap.
+        val token = launchedIntent.getStringExtra(HimaSuggest.TOKEN_EXTRA)
+        // Clearing the extras keeps a re-created activity from replaying the tap.
         launchedIntent.removeExtra(HimaSuggest.ACTION_EXTRA)
+        launchedIntent.removeExtra(HimaSuggest.TOKEN_EXTRA)
         val store = HimaSuggestStore(this)
-        // Keep a pending copy first: Dart may not have installed its channel handler yet, and a
-        // cold start retrieves the action through takePendingAction.
+        // Only the posted notification knows the token (see HimaSuggestStore.notificationToken);
+        // anything else that launches this exported activity with the extra is ignored.
+        val expected = store.notificationToken
+        if (action != HimaSuggest.ACTION_DECLARE || token == null || token != expected) return
+        store.notificationToken = null
+        // The action is always stored, and stays stored until Dart reads it with
+        // takePendingAction. `onAction` is only a nudge: Dart answers it before it reads, and
+        // a read that was already in flight re-reads afterwards, so clearing the copy when the
+        // nudge is answered would lose the tap. Reading consumes it, so it is never taken twice.
         store.pendingAction = action
         val channel = suggestChannel
         if (deliverToDart && channel != null) {
-            channel.invokeMethod(
-                HimaSuggest.EVENT_ACTION,
-                HimaSuggest.ACTION_DECLARE,
-                object : MethodChannel.Result {
-                    // Drop the copy only once Dart confirms onAction arrived, so one tap never
-                    // both dispatches an event and replays later through takePendingAction.
-                    override fun success(result: Any?) {
-                        store.pendingAction = null
-                    }
-
-                    override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) = Unit
-
-                    override fun notImplemented() = Unit
-                },
-            )
+            channel.invokeMethod(HimaSuggest.EVENT_ACTION, action)
         }
     }
 }
