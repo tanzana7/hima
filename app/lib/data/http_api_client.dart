@@ -27,6 +27,9 @@ class HttpApiClient implements ApiClient {
   @override
   void Function()? onUnauthorized;
 
+  @override
+  bool Function()? keepSessionOnUnauthorized;
+
   Future<Object?> _request(
     String method,
     String path, {
@@ -50,9 +53,13 @@ class HttpApiClient implements ApiClient {
 
     final streamed = await _client.send(request);
     final response = await http.Response.fromStream(streamed);
-    if (response.statusCode == 401 && authenticated) {
+    if (response.statusCode == 401 &&
+        authenticated &&
+        !(keepSessionOnUnauthorized?.call() ?? false)) {
       // The token expired or was revoked and there is no refresh endpoint, so
-      // drop it and tell the app to go back to the login screen.
+      // drop it and tell the app to go back to the login screen. The caller may
+      // answer that the session behind this request has to survive, in which
+      // case the stored token is left alone and the next rejection ends it.
       _token = null;
       await _tokenStore.clear();
       onUnauthorized?.call();

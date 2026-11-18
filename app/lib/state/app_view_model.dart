@@ -11,6 +11,10 @@ class AppViewModel extends ChangeNotifier {
     // The client reports any 401 here: the JWT cannot be refreshed, so the only
     // recovery is to drop it and show the login screen again.
     _api.onUnauthorized = _handleUnauthorized;
+    // While the demo session owns the screen, a rejection belongs to this
+    // session, which nobody is looking at. The client asks this before it drops
+    // the token, so the session behind the demo survives untouched.
+    _api.keepSessionOnUnauthorized = () => _heldForDemo;
   }
 
   final ApiClient _api;
@@ -504,10 +508,52 @@ class AppViewModel extends ChangeNotifier {
     }
   }
 
+  /// Re-reads every list, the way the first read after login does.
+  ///
+  /// The live poll covers my profile, the board and the knocks. The demo panel
+  /// edits the mock underneath the app — friends, shared-server members, my own
+  /// declaration — and none of that is in the poll, so it asks for the whole
+  /// read instead. A failure is reported like a poll's: the last good data stays
+  /// and [hasLiveError] offers a retry.
+  Future<void> reloadAll() async {
+    if (!_isAuthenticated) return;
+    try {
+      await _refreshAll();
+    } catch (_) {
+      _liveError = true;
+    }
+    notifyListeners();
+  }
+
   /// Records that the state held here is newer than any read already in flight.
   void _invalidateLiveReads() {
     _stateGeneration++;
   }
+
+  /// True while the demo session owns the screen.
+  ///
+  /// The real session keeps its objects while the demo is shown, so a read that
+  /// was already in flight when the swap happened can still land afterwards, and
+  /// a rejection or a startup restore can land with it. None of that may reach
+  /// the outside world: mirroring it would write to the phone's worker from under
+  /// the demo, and ending the session would drop the token nobody asked to drop.
+  bool _heldForDemo = false;
+
+  /// Holds everything this session does to the outside world.
+  ///
+  /// Stopping the polling only cancels the timer: a pass that is already running
+  /// still reaches [_publishDeclaredUntil] and [_publishForecast], and the worker
+  /// holds the real account's state. The demo session calls this before it takes
+  /// the screen, so nothing of the real session can change the phone's 自動ひま
+  /// 提案 state while the demo is showing.
+  void holdForDemo() => _heldForDemo = true;
+
+  /// Releases the hold once the real session is back on screen.
+  ///
+  /// Nothing has to be re-published here: the foreground poll that restarts with
+  /// the session reads the same state and mirrors it again, and a rejection that
+  /// was held is reported by the first request after this.
+  void releaseAfterDemo() => _heldForDemo = false;
 
   /// Mirrors the live declaration to the native worker, so it stops suggesting
   /// while the user is already hima.
@@ -515,6 +561,7 @@ class AppViewModel extends ChangeNotifier {
   /// [expiresAt] is the expiry a declaration or an extend just returned;
   /// without it the local session decides.
   void _publishDeclaredUntil({DateTime? expiresAt}) {
+    if (_heldForDemo) return;
     final until = expiresAt ?? _myHima?.expiresAt;
     // An expired session has to read as "not declared", or the worker would
     // stay silent after the user is free again.
@@ -522,8 +569,10 @@ class AppViewModel extends ChangeNotifier {
     _ignoreBridgeErrors(_bridge.setDeclaredUntil(live ? until : null));
   }
 
-  void _publishForecast(List<HimaTimeSuggestion> forecast) =>
-      _ignoreBridgeErrors(_bridge.setForecast(forecast));
+  void _publishForecast(List<HimaTimeSuggestion> forecast) {
+    if (_heldForDemo) return;
+    _ignoreBridgeErrors(_bridge.setForecast(forecast));
+  }
 
   /// The worker is a convenience: a failed mirror must not surface as an error
   /// in a flow that already succeeded on the server.
@@ -839,6 +888,12 @@ class AppViewModel extends ChangeNotifier {
   /// Drops the local session when the server rejects the token. The client has
   /// already cleared the stored token by the time this runs.
   void _handleUnauthorized() {
+    // A rejection that lands while the demo owns the screen belongs to a session
+    // nobody is looking at: resetting here would wipe the phone's suggestion
+    // state for a session the demo never touched. [holdForDemo] also stops the
+    // client from dropping the token, so the rejection is simply ignored until
+    // the first request after the demo.
+    if (_heldForDemo) return;
     stopPolling();
     _invalidateLiveReads();
     _resetSession();

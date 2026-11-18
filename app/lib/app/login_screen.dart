@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show OverflowBoxFit;
 import 'package:provider/provider.dart';
@@ -12,6 +14,7 @@ import '../shared/widgets/hima_logo.dart';
 import '../shared/widgets/paint/paint.dart';
 import '../shared/widgets/paint_button.dart';
 import '../state/app_view_model.dart';
+import '../state/session_owner.dart';
 
 class LoginScreen extends StatelessWidget {
   const LoginScreen({super.key, required this.config});
@@ -25,7 +28,10 @@ class LoginScreen extends StatelessWidget {
   }
 
   Future<void> _login(BuildContext context, AppViewModel viewModel) async {
-    if (config.useMockApi) {
+    // Inside the demo the button still signs in, but only through the mock: the
+    // catalog opens this screen as one of the app's own screens, and Discord
+    // must not be reachable from a session that has no account behind it.
+    if (context.read<SessionOwner>().isDemo || config.useMockApi) {
       try {
         await viewModel.loginAsDemo();
       } catch (_) {
@@ -237,6 +243,19 @@ class LoginScreen extends StatelessWidget {
                         ? null
                         : () => _login(context, viewModel),
                   ),
+                  // A developer tool, so it is a plain text button under the
+                  // login: nothing the user is asked to press here.
+                  if (context.read<SessionOwner>().showDemoEntry) ...[
+                    const SizedBox(height: AppSpacing.s8),
+                    Center(
+                      child: TextButton(
+                        onPressed: () => unawaited(
+                          context.read<SessionOwner>().enterDemo(),
+                        ),
+                        child: const Text('デモで見る'),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
