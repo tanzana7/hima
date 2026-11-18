@@ -13,14 +13,19 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _is_placeholder_name(display_name: str, user_id: int) -> bool:
+    """仮名（discord:<ユーザーID> 形式）や空値かどうか。本物の名前を仮名で上書きしないための判定。"""
+    return not display_name.strip() or display_name == f"discord:{user_id}"
+
+
 def upsert_user(db: Session, user_id: int, display_name: str | None = None) -> User:
     user = db.get(User, user_id)
     if user is None:
         user = User(id=user_id, display_name=display_name or f"discord:{user_id}")
         db.add(user)
         db.flush()
-    elif display_name:
-        user.display_name = display_name
+    elif display_name and not _is_placeholder_name(display_name, user_id):
+        user.display_name = display_name  # 本物の名前（Bot はインタラクションから渡す）のみ更新
     return user
 
 

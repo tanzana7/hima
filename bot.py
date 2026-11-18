@@ -156,7 +156,9 @@ class HimaCog(commands.Cog):
         assert guild_id is not None
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
-            data = await self.bot.api.get_board(guild_id, interaction.user.id)
+            data = await self.bot.api.get_board(
+                guild_id, interaction.user.id, display_name=interaction.user.display_name
+            )
         except Exception as exc:  # noqa: BLE001
             await send_api_error(interaction, exc)
             return

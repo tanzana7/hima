@@ -99,9 +99,11 @@ def end_session(db, user_id: int, rest=None) -> dict:
     return {"user_id": user_id, "ended": ended}
 
 
-def create_knock(db, *, from_user: int, to_user: int, template: str | None, rest=None) -> dict:
+def create_knock(db, *, from_user: int, to_user: int, template: str | None, display_name: str | None = None, rest=None) -> dict:
     if from_user == to_user:
         raise HTTPException(status_code=400, detail="cannot knock yourself")
+    # 送信者の users 行を本物の表示名で upsert（着信 DM・受信箱の名前が仮名にならないように）
+    upsert_user(db, from_user, display_name)
     if active_session(db, to_user) is None:
         raise HTTPException(status_code=404, detail="target has no active session")
     if not has_shared_visible_guild(db, from_user, to_user):
@@ -318,13 +320,14 @@ def _inbox_and_results(db, viewer_id: int, viewer_mood: str | None) -> tuple[lis
     return inbox, results
 
 
-def board_for_guild(db, *, guild_id: int, viewer_id: int) -> dict:
+def board_for_guild(db, *, guild_id: int, viewer_id: int, display_name: str | None = None) -> dict:
     """単一ギルドの掲示板（Bot 向け）。共有可視・ブロック除外・source 非表示。"""
     # 契約（§2）: guild_id と user_id を含む Bot リクエストは membership を upsertする。
     # 掲示板を見ただけのユーザーも membership が作られ、「お返事」が送れるようになる。
     # 既存行の visible は上書きしない（非表示設定を尊重。last_seen_at のみ更新）。
+    # users の display_name は Bot が渡した本物の表示名で更新する（仮名・空値では上書きしない）。
     if db.get(Guild, guild_id) is not None:  # 未登録ギルドは FK のため作れない（board 自体は参照可）
-        upsert_user(db, viewer_id)
+        upsert_user(db, viewer_id, display_name)
         upsert_membership(db, guild_id, viewer_id)
         db.commit()
     viewer_active = active_session(db, viewer_id)
@@ -366,7 +369,7 @@ def board_for_guild(db, *, guild_id: int, viewer_id: int) -> dict:
     viewer = db.get(User, viewer_id)
     if viewer is None:
         # 初めて board を開いたユーザーも作る（notify_on_hima はデフォルト ON に従う）
-        viewer = upsert_user(db, viewer_id)
+        viewer = upsert_user(db, viewer_id, display_name)
         db.commit()
     return {
         "guild_id": guild_id,

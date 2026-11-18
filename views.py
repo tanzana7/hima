@@ -284,7 +284,9 @@ class WatchToggle(ui.DynamicItem, template=r"atsumaro:watchtoggle:(?P<state>[01]
         new_state = not self.state
         await interaction.response.defer()  # 3秒制限: 先に ACK（メッセージ更新を遅延させる）
         try:
-            await bot.api.update_settings(interaction.user.id, notify_on_hima=new_state)
+            await bot.api.update_settings(
+                interaction.user.id, notify_on_hima=new_state, display_name=interaction.user.display_name
+            )
         except Exception as exc:  # noqa: BLE001
             await send_api_error(interaction, exc)
             return
@@ -327,7 +329,9 @@ class BoardView(ErrorFollowupView):
         assert guild_id is not None
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
-            data = await self.bot.api.get_board(guild_id, interaction.user.id)
+            data = await self.bot.api.get_board(
+                guild_id, interaction.user.id, display_name=interaction.user.display_name
+            )
         except Exception as exc:  # noqa: BLE001
             await send_api_error(interaction, exc)
             return
@@ -390,7 +394,9 @@ async def _build_board(bot: "HimaBot", interaction: discord.Interaction) -> tupl
     guild_id = interaction.guild_id
     assert guild_id is not None
     try:
-        data = await bot.api.get_board(guild_id, interaction.user.id)
+        data = await bot.api.get_board(
+            guild_id, interaction.user.id, display_name=interaction.user.display_name
+        )
     except Exception as exc:  # noqa: BLE001
         await send_api_error(interaction, exc)
         return None, None
@@ -626,7 +632,8 @@ class KnockSendView(ErrorFollowupView):
             name = self.candidates_by_id.get(str(uid), {}).get("display_name") or f"discord:{uid}"
             try:
                 await self.bot.api.create_knock(
-                    from_user=self.user.id, to_user=int(uid), template=self.template
+                    from_user=self.user.id, to_user=int(uid), template=self.template,
+                    display_name=self.user.display_name,
                 )
             except ApiHTTPError as exc:
                 if exc.status_code == 409:
@@ -653,7 +660,10 @@ class KnockTemplateView(ErrorFollowupView):
 
     async def _knock(self, interaction: discord.Interaction, template: str) -> None:
         try:
-            await self.bot.api.create_knock(from_user=self.user.id, to_user=self.target.id, template=template)
+            await self.bot.api.create_knock(
+                from_user=self.user.id, to_user=self.target.id, template=template,
+                display_name=self.user.display_name,
+            )
         except ApiHTTPError as exc:
             if exc.status_code == 409:
                 content = "⏳ さっき送ったばかりだよ。5分待ってからもう一度ね。"
