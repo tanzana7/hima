@@ -142,7 +142,11 @@ def membership_visibility(guild_id: int, body: AppVisibilityIn, user_id: int = D
     with SessionLocal() as db:
         if db.get(Guild, guild_id) is None:
             raise HTTPException(status_code=404, detail="guild not found")
-        m = upsert_membership(db, guild_id, user_id, visible=body.visible)
+        # 既存 membership の visible 変更のみ。新規作成は正規の経路（OAuth・Bot interaction）に限る
+        m = db.get(Membership, (guild_id, user_id))
+        if m is None:
+            raise HTTPException(status_code=404, detail="membership not found")
+        m.visible = body.visible
         db.commit()
         return {"guild_id": guild_id, "user_id": user_id, "visible": m.visible}
 

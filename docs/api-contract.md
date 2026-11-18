@@ -182,7 +182,7 @@
 | --- | --- | --- |
 | GET | `/app/me` | プロフィール・設定・**自分の有効セッション（source を含む）**・memberships 一覧 |
 | PUT | `/app/me/settings` | `notify_on_hima` / `auto_mode` / `auto_mood` の部分更新 |
-| PUT | `/app/memberships/{guild_id}/visibility` | 自分の membership visible 更新 |
+| PUT | `/app/memberships/{guild_id}/visibility` | 自分の**既存 membership の visible 更新のみ**。membership が無い（自分が入っていないサーバー）場合は **404**（このエンドポイントでは新規作成しない。作成は OAuth の参加サーバー一覧と Bot interaction 由来のみ） |
 | GET | `/app/board` | **横断掲示板**：自分が member の全サーバーを統合。共有可視・ブロック除外判定は Bot 側と同じ。各行に `shared_guild_ids`（共通の visible サーバーID一覧）と **`avatar`** を付ける。ノック受信箱（最大5件、`to_moon` 付き・**送信者の `from_avatar` 付き**）＋未見結果も返す。**他人のセッション行に source は含めない**（自分の行のみ `/app/me` で返す） |
 | POST | `/app/sessions` | ヒマ宣言 `{mood, activity, note, minutes, source}`（source は manual/suggested/auto）。Bot 側と**同一のサービス関数**を使うためマッチングも同じに発火（お知らせは廃止） |
 | DELETE | `/app/sessions` | 有効セッション終了（Bot 側と同一挙動） |
