@@ -31,6 +31,11 @@ ThemeData buildHimaTheme() {
     useMaterial3: true,
     colorScheme: scheme,
     scaffoldBackgroundColor: AppColors.background,
+    // Material's own text (list tiles, buttons, dialogs) and every style that
+    // does not name a family inherit the bundled font; see AppTextStyles for
+    // why the platform font is not used. The fallbacks only cover characters
+    // the bundled font lacks.
+    fontFamily: AppTextStyles.fontFamily,
     fontFamilyFallback: const ['Noto Sans JP', 'Hiragino Sans', 'Yu Gothic'],
   );
 
