@@ -30,6 +30,9 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  # Japanese locale for the whole app; see HimaApp in lib/app/app.dart.
+  flutter_localizations:
+    sdk: flutter
 
   http: ^1.6.0
   provider: ^6.1.5+1
