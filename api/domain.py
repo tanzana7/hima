@@ -243,7 +243,28 @@ def reply_knock(db, knock_id: int, user_id: int, action: str, rest=None) -> dict
     receiver_name = receiver.display_name if receiver else f"discord:{knock.to_user}"
     label = RESULT_LABELS[knock.status]
     send_push(db, knock.from_user, "🔔 返事が届いたよ！", f"{receiver_name} さんの返事：「{label}」")
+    if knock.status == "accepted":
+        # 「いいよ！」のときだけ送信者へ DM 1通（あとで/パスは結果欄のみ。🌙 宛抑制とは扱いを分けて送る）
+        _notify_sender_accepted(db, knock, receiver_name, rest)
     return {"id": knock.id, "status": knock.status, "responded_at": knock.responded_at.isoformat()}
+
+
+def _notify_sender_accepted(db, knock, receiver_name: str, rest=None) -> None:
+    """accepted 返答時に送信者へ DM 1通（ボタンなし・通知のみ）。
+
+    DM 送信に失敗しても返答処理自体は成功扱い（着信 DM と同じ方針・ログのみ）。
+    送信者が 🌙 のセッションを持っていても送る（自分の送ったお返事への反応のため）。
+    """
+    rest = rest or _discord_rest.rest
+    if rest is None:
+        return
+    try:
+        channel = rest.open_dm_channel(knock.from_user)
+        if channel is None:
+            return
+        rest.send_message(channel, f"{receiver_name} さんがお返事に『いいよ！』してくれたよ")
+    except Exception:  # noqa: BLE001 - DM 失敗でも返答記録は有効
+        log.exception("accepted notification DM failed knock_id=%s (ignored)", knock.id)
 
 
 def mark_results_seen(db, user_id: int) -> int:
