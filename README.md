@@ -120,4 +120,25 @@ discord-<CLIENT_ID>:/authorize/callback
 
 Android のコールバック用スキームは Gradle が `DISCORD_CLIENT_ID` から埋め込みます（`android/app/build.gradle.kts` の manifest placeholder）。iOS は `flutter_web_auth_2` が `ASWebAuthenticationSession` を使うため Info.plist への追加は不要です。取得したトークンは `flutter_secure_storage` に保存し、次回起動時に `/app/me` が通ればそのままメイン画面を開きます。
 
+### 自動ひま提案（Android のみ）
+
+設定でオンにすると、15分ごとのバックグラウンド確認で「いまひまじゃない？」とローカル通知を出します。宣言はしません。通知が出るのは、対象アプリ（既定は X と YouTube。追加・削除できます）を使っているときと、いつものひまな時間帯（サーバーの予測と、端末が対象アプリの利用から学習した枠）に入ったときです。iOS では動きません。
+
+使う権限は 2 つです。
+
+- **使用状況へのアクセス**（`PACKAGE_USAGE_STATS`）: 対象アプリの利用時間を読むため。設定 → アプリ → 特別なアクセス権 → 使用状況へのアクセス で許可します。テスト中は `adb shell appops set jp.atsumaro.atsumaro GET_USAGE_STATS allow` でも許可できます。
+- **通知**: Android 13 以降は実行時に許可を求めます。
+
+Doze やメーカー独自のバッテリー制限で配信が遅れることがあります（フォアグラウンドサービスや正確なアラームは使わず、15分ごとの定期実行だけに頼っています）。Xiaomi / HyperOS では、設定で自動起動を許可し、バッテリーの制限を「制限なし」にしてください。
+
+ワーカーをすぐ実行して確かめるには、JobScheduler のジョブ ID を調べて強制実行します。WorkManager は定期ワーカーを JobScheduler のジョブとして登録する（サービスは `SystemJobService`）ので、この方法で即時に走ります。
+
+```bash
+# job-id を探す（JOB #u0a123/42: ... jp.atsumaro.atsumaro のような行に出ます）
+adb shell dumpsys jobscheduler | grep -A3 jp.atsumaro.atsumaro
+adb shell cmd jobscheduler run -f jp.atsumaro.atsumaro <job-id>
+```
+
+`run -f` は制約や遅延を無視して実行するので、条件が揃っていればこのタイミングで通知が出ます。ジョブが見つからないときは、設定で一度オンにしてから（`setEnabled` が WorkManager に登録します）確認し直してください。
+
 見出し用フォント M PLUS Rounded 1c（SIL OFL 1.1）は `app/assets/fonts/` に同梱しており、実行時のフォント取得は行いません。ライセンスは同ディレクトリの `OFL.txt` です。
