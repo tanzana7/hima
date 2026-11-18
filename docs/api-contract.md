@@ -72,7 +72,7 @@
 | `atsumaro:knockreply:{knock_id}:{accept\|later\|pass}` | ノック返答（いいよ！／あとで／パス。DynamicItem・再起動後も有効） |
 | `atsumaro:watchtoggle:{0\|1}` | **廃止**（お知らせ ON/OFF トグル。掲示板には付与しない。残存ボタンの押下では何も起きない） |
 | `atsumaro:suggest:declare` | 提案 DM の「このまま宣言する」（押すと `POST /bot/suggest-declare` を呼び、source=suggested / 30分 / auto_mood（ok / moon 以外は ok にフォールバック）で宣言。DynamicItem・再起動後も有効） |
-| `board:declare` / `board:knock` / `board:blocks` / `board:leave` | 掲示板下部ボタン（Bot 内部用） |
+| `board:declare` / `board:knock` / `board:blocks` | 掲示板下部ボタン（Bot 内部用）。`board:knock` は掲示板が 0人のときは表示しない（旧 `board:leave`＝掲示板の「やめる」ボタンは廃止。宣言取り消しは /panel 取り消し） |
 
 ### 公開パネルのボタン custom_id（Discord components に埋め込む値）
 

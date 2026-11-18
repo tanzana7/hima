@@ -264,12 +264,18 @@ class SuggestDeclareButton(ui.DynamicItem, template=r"atsumaro:suggest:declare")
 
 
 class BoardView(ErrorFollowupView):
-    """個人用掲示板（ephemeral）。ヒマ宣言/お返事/ブロック/やめるのボタン＋受信箱の返答ボタン。"""
+    """個人用掲示板（ephemeral）。ヒマ宣言/ブロックのボタン＋受信箱の返答ボタン。
+
+    掲示板が 0人のときは「お返事する」ボタンを表示しない（宛先候補が作れないため）。
+    宣言の取り消しは /panel 取り消し に一本化（掲示板の「やめる」ボタンは廃止）。
+    """
 
     def __init__(self, bot: "HimaBot", data: dict) -> None:
         super().__init__(timeout=None)
         self.bot = bot
         self.data = data
+        if not data.get("sessions"):
+            self.remove_item(self.knock)  # 0人なら「お返事する」を出さない
         # お知らせ（watch）トグルは廃止
         inbox = data.get("inbox", [])[:INBOX_LIMIT]
         flat = []
@@ -337,23 +343,6 @@ class BoardView(ErrorFollowupView):
             view=BlockManageView(self.bot, interaction.user, blocked),
             ephemeral=True,
         )
-
-    @ui.button(label="やめる", style=discord.ButtonStyle.secondary, custom_id="board:leave", emoji="👋", row=0)
-    async def leave(self, interaction: discord.Interaction, _: ui.Button) -> None:
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        try:
-            data = await self.bot.api.end_session(interaction.user.id)
-        except Exception as exc:  # noqa: BLE001
-            await send_api_error(interaction, exc)
-            return
-        if not data.get("ended"):
-            await interaction.followup.send("今は宣言していないよ。", ephemeral=True)
-            return
-        embeds, view = await _build_board(self.bot, interaction)
-        if embeds is None:
-            return
-        await interaction.edit_original_response(embeds=embeds, view=view)
-
 
 async def _build_board(bot: "HimaBot", interaction: discord.Interaction) -> tuple[list[discord.Embed] | None, ui.View | None]:
     guild_id = interaction.guild_id
