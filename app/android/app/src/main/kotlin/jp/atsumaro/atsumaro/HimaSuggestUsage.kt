@@ -5,6 +5,7 @@ import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.os.Build
+import android.os.PowerManager
 import android.os.Process
 
 internal object UsageAccess {
@@ -30,6 +31,16 @@ internal object UsageAccess {
 /** A stretch of time during which [packageName] was the foreground activity. */
 internal data class ForegroundInterval(val packageName: String, val startMs: Long, val endMs: Long)
 
+internal object ScreenState {
+    /**
+     * Live interactive state from the power manager. Usage events only cover the query window,
+     * so they cannot repair a flag that went stale while no events were read, and the newest
+     * event can lag behind the actual screen.
+     */
+    fun isInteractive(context: Context): Boolean =
+        (context.getSystemService(Context.POWER_SERVICE) as? PowerManager)?.isInteractive ?: true
+}
+
 internal data class UsageSnapshot(
     val intervals: List<ForegroundInterval>,
     val foregroundPackage: String?,
@@ -45,19 +56,26 @@ internal object TargetUsageReader {
     private data class RawEvent(val type: Int, val packageName: String?, val timeMs: Long)
 
     /**
-     * Rebuilds foreground intervals for [startMs]..[endMs] starting from [carried], so a
-     * session that began before the window still counts. Screen-off ends the open interval,
-     * and a resume that happens while the screen is off is ignored.
+     * Rebuilds foreground intervals for [windowStartMs]..[endMs] starting from [carried], so a
+     * session that began before the window still counts. Events are read from [queryStartMs],
+     * which may be earlier than the window: after a delayed run, the state at the window start
+     * can only be known from what happened in between. Only the window counts as usage.
+     * Screen-off ends the open interval, and a resume while the screen is off is ignored.
      */
     fun read(
         context: Context,
-        startMs: Long,
+        queryStartMs: Long,
+        windowStartMs: Long,
         endMs: Long,
         carried: CarriedForeground,
     ): UsageSnapshot {
         val manager = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
-        val events = manager?.queryEvents(startMs, endMs)
-            ?: return UsageSnapshot(emptyList(), null, carried)
+        val events = manager?.queryEvents(queryStartMs, endMs)
+            ?: return UsageSnapshot(
+                emptyList(),
+                null,
+                CarriedForeground(null, 0L, ScreenState.isInteractive(context)),
+            )
 
         val raw = ArrayList<RawEvent>()
         val event = UsageEvents.Event()
@@ -76,14 +94,14 @@ internal object TargetUsageReader {
 
         fun close(atMs: Long) {
             val packageName = currentPackage ?: return
-            val from = maxOf(currentSince, startMs)
+            val from = maxOf(currentSince, windowStartMs)
             val to = minOf(atMs, endMs)
             if (to > from) intervals += ForegroundInterval(packageName, from, to)
             currentPackage = null
         }
 
         for (rawEvent in raw) {
-            val time = rawEvent.timeMs.coerceIn(startMs, endMs)
+            val time = rawEvent.timeMs.coerceIn(queryStartMs, endMs)
             if (rawEvent.type == EVENT_RESUMED) {
                 val packageName = rawEvent.packageName ?: continue
                 if (!screenInteractive) continue
@@ -103,11 +121,14 @@ internal object TargetUsageReader {
             }
         }
 
-        val foregroundPackage = if (screenInteractive) currentPackage else null
+        // The live power state is what "foreground now" means, so it wins over the event-derived
+        // flag for both this decision and the state handed to the next run.
+        val interactiveNow = ScreenState.isInteractive(context)
+        val foregroundPackage = if (interactiveNow) currentPackage else null
         val carriedAfter = CarriedForeground(
             packageName = currentPackage,
             sinceMs = if (currentPackage != null) currentSince else 0L,
-            screenInteractive = screenInteractive,
+            screenInteractive = interactiveNow,
         )
         close(endMs)
         return UsageSnapshot(intervals, foregroundPackage, carriedAfter)

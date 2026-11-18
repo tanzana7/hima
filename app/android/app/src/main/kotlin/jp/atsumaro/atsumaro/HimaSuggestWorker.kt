@@ -32,14 +32,31 @@ internal class HimaSuggestWorker(
         val store = HimaSuggestStore(context)
         val targets = store.targets
         if (!store.enabled || !UsageAccess.isGranted(context) || targets.isEmpty()) {
+            // No events were read, so the open interval cannot be verified. Drop it, and take
+            // the live screen state: a screen-on during the gap never appears in a later
+            // query, and a stale "off" would make every resume below be ignored.
+            store.carriedForeground = CarriedForeground(
+                packageName = null,
+                sinceMs = 0L,
+                screenInteractive = ScreenState.isInteractive(context),
+            )
             store.lastRunAt = now
             return
         }
 
-        // The carried state can be older than the query window after a long Doze, so the
-        // window is capped at 2 hours; observations then cover only what was really queried.
-        val windowStart = maxOf(store.lastRunAt, now - MAX_USAGE_WINDOW_MS).coerceAtMost(now)
-        val snapshot = TargetUsageReader.read(context, windowStart, now, store.carriedForeground)
+        val previousRunAt = store.lastRunAt
+        // Only the window counts as usage, but a delayed run also has to know what the user was
+        // doing when the window starts: a session that began earlier has no resume event inside
+        // it. Read back to the previous run (bounded, because event history is finite) and give
+        // up on that state when even the bound does not reach it.
+        val windowStart = maxOf(previousRunAt, now - MAX_USAGE_WINDOW_MS).coerceAtMost(now)
+        val queryStart = maxOf(previousRunAt, now - MAX_STATE_HISTORY_MS).coerceAtMost(windowStart)
+        val carried = if (previousRunAt >= queryStart) {
+            store.carriedForeground
+        } else {
+            store.carriedForeground.withoutForeground()
+        }
+        val snapshot = TargetUsageReader.read(context, queryStart, windowStart, now, carried)
         store.carriedForeground = snapshot.carried
         recordObservations(store, windowStart, now, snapshot.intervals, targets.toSet())
         store.lastRunAt = now
@@ -49,17 +66,21 @@ internal class HimaSuggestWorker(
         val minutesOfDay = TokyoTime.minutesOfDay(now)
         if (minutesOfDay in QUIET_HOURS_START until QUIET_HOURS_END) return
 
+        val notifier = HimaSuggestNotifier(context)
         val appLabel = appTriggerLabel(context, snapshot, targets, now)
         if (appLabel != null) {
-            HimaSuggestNotifier(context).post(HimaSuggestNotifier.appBody(appLabel))
-            store.lastSuggestAt = now
+            if (notifier.post(HimaSuggestNotifier.appBody(appLabel), store)) {
+                store.lastSuggestAt = now
+            }
             return
         }
 
-        if (fireUsualTime(store, now, minutesOfDay)) {
-            HimaSuggestNotifier(context).post(HimaSuggestNotifier.USUAL_BODY)
-            store.lastSuggestAt = now
-        }
+        val usualKey = usualTimeKey(store, now, minutesOfDay) ?: return
+        if (!notifier.post(HimaSuggestNotifier.USUAL_BODY, store)) return
+        val notified = store.notifiedSlots()
+        notified.add(usualKey)
+        store.saveNotifiedSlots(notified, now)
+        store.lastSuggestAt = now
     }
 
     /** Label of the target that triggered the app suggestion, or null when it did not fire. */
@@ -89,10 +110,12 @@ internal class HimaSuggestWorker(
     }
 
     /**
-     * Fires once per usual range and day. The range starts 15 minutes early so a run that is
-     * delayed by Doze still lands inside the range instead of losing the whole slot.
+     * Key of the usual range that is due now, or null when none matches or it was already
+     * suggested today. The range starts 15 minutes early so a run that is delayed by Doze still
+     * lands inside the range instead of losing the whole slot. The caller records the key only
+     * after the notification was actually posted.
      */
-    private fun fireUsualTime(store: HimaSuggestStore, now: Long, minutesOfDay: Int): Boolean {
+    private fun usualTimeKey(store: HimaSuggestStore, now: Long, minutesOfDay: Int): String? {
         val todayWeekday = TokyoTime.weekday(now)
         val dateKey = TokyoTime.dateKey(now)
         val notified = store.notifiedSlots()
@@ -100,11 +123,10 @@ internal class HimaSuggestWorker(
             if (range.weekday != todayWeekday) continue
             if (minutesOfDay < range.startMin - LEAD_MINUTES) continue
             if (minutesOfDay >= range.endMin - LEAD_MINUTES) continue
-            if (!notified.add("$dateKey#${range.startMin}")) continue
-            store.saveNotifiedSlots(notified, now)
-            return true
+            val key = "$dateKey#${range.startMin}"
+            if (key !in notified) return key
         }
-        return false
+        return null
     }
 
     private fun recordObservations(
@@ -119,12 +141,25 @@ internal class HimaSuggestWorker(
             val day = observations.getOrPut(date) { DayObservation(weekday, unobserved()) }
             day.minutes[slot] = maxOf(day.minutes[slot], 0)
         }
+        // Sum milliseconds per slot and convert once: rounding every segment of an interval
+        // to whole minutes would turn three 30-second stretches into three minutes.
+        val addedMs = HashMap<String, LongArray>()
+        val weekdayByDate = HashMap<String, Int>()
         for (interval in intervals) {
             if (interval.packageName !in targets) continue
             forEachSlot(interval.startMs, interval.endMs) { date, weekday, slot, from, to ->
-                val day = observations.getOrPut(date) { DayObservation(weekday, unobserved()) }
-                val previous = maxOf(day.minutes[slot], 0)
-                day.minutes[slot] = previous + Math.round((to - from).toDouble() / MINUTE_MS).toInt()
+                val perSlot = addedMs.getOrPut(date) { LongArray(TokyoTime.SLOTS_PER_DAY) }
+                perSlot[slot] += to - from
+                weekdayByDate[date] = weekday
+            }
+        }
+        for ((date, perSlot) in addedMs) {
+            val weekday = weekdayByDate.getValue(date)
+            val day = observations.getOrPut(date) { DayObservation(weekday, unobserved()) }
+            for (slot in perSlot.indices) {
+                if (perSlot[slot] == 0L) continue
+                val minutes = Math.round(perSlot[slot].toDouble() / MINUTE_MS).toInt()
+                if (minutes > 0) day.minutes[slot] = maxOf(day.minutes[slot], 0) + minutes
             }
         }
         val oldestKeptDate = TokyoTime.dateKeyDaysAgo(OBSERVATION_RETENTION_DAYS - 1, now)
@@ -155,6 +190,7 @@ internal class HimaSuggestWorker(
 
         const val MINUTE_MS = 60_000L
         const val MAX_USAGE_WINDOW_MS = 2 * 60 * MINUTE_MS
+        const val MAX_STATE_HISTORY_MS = 24 * 60 * MINUTE_MS
         const val SUGGEST_INTERVAL_MS = 90 * MINUTE_MS
         const val APP_TRIGGER_WINDOW_MS = 15 * MINUTE_MS
         const val APP_TRIGGER_MINUTES_MS = 5 * MINUTE_MS

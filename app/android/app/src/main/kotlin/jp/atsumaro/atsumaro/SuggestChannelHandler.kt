@@ -100,6 +100,8 @@ internal class SuggestChannelHandler(private val activity: Activity) : MethodCha
         (arguments as? List<*>)?.mapNotNull { it as? String }.orEmpty()
 
     private fun forecastArgument(arguments: Any?): List<ForecastSlot> =
+        // Dart forwards the server cache; a malformed entry is dropped instead of failing the
+        // whole sync, so one bad slot cannot freeze the usual-time trigger.
         (arguments as? List<*>)?.mapNotNull { entry ->
             val entry = entry as? Map<*, *> ?: return@mapNotNull null
             val weekday = (entry["weekday"] as? Number)?.toInt() ?: return@mapNotNull null

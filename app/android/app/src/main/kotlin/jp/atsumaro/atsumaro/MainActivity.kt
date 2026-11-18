@@ -12,10 +12,10 @@ class MainActivity : FlutterActivity() {
     private var suggestHandler: SuggestChannelHandler? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        // Cold start from the notification tap: nothing can be delivered to Dart yet, so the
-        // action waits for `takePendingAction`.
+        // Read before super.onCreate: the engine starts inside super.onCreate, and Dart may ask
+        // for the pending action as soon as its isolate runs, before this method returns.
         consumeSuggestAction(intent, deliverToDart = false)
+        super.onCreate(savedInstanceState)
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -28,7 +28,6 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onNewIntent(intent: Intent) {
-        android.util.Log.i("HimaSuggestDebug", "onNewIntent")
         super.onNewIntent(intent)
         // singleTop keeps the running engine, so the action can go straight to Dart.
         consumeSuggestAction(intent, deliverToDart = true)
@@ -46,14 +45,29 @@ class MainActivity : FlutterActivity() {
     private fun consumeSuggestAction(intent: Intent?, deliverToDart: Boolean) {
         val launchedIntent = intent ?: return
         val action = launchedIntent.getStringExtra(HimaSuggest.ACTION_EXTRA) ?: return
-        android.util.Log.i("HimaSuggestDebug", "action=$action deliver=$deliverToDart channel=${suggestChannel != null}")
         // Clearing the extra keeps a re-created activity from replaying the tap.
         launchedIntent.removeExtra(HimaSuggest.ACTION_EXTRA)
+        val store = HimaSuggestStore(this)
+        // Keep a pending copy first: Dart may not have installed its channel handler yet, and a
+        // cold start retrieves the action through takePendingAction.
+        store.pendingAction = action
         val channel = suggestChannel
         if (deliverToDart && channel != null) {
-            channel.invokeMethod(HimaSuggest.EVENT_ACTION, HimaSuggest.ACTION_DECLARE)
-        } else {
-            HimaSuggestStore(this).pendingAction = action
+            channel.invokeMethod(
+                HimaSuggest.EVENT_ACTION,
+                HimaSuggest.ACTION_DECLARE,
+                object : MethodChannel.Result {
+                    // Drop the copy only once Dart confirms onAction arrived, so one tap never
+                    // both dispatches an event and replays later through takePendingAction.
+                    override fun success(result: Any?) {
+                        store.pendingAction = null
+                    }
+
+                    override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) = Unit
+
+                    override fun notImplemented() = Unit
+                },
+            )
         }
     }
 }

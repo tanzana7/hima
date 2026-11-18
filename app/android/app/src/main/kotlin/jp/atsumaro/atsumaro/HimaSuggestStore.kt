@@ -16,7 +16,14 @@ internal data class CarriedForeground(
     val packageName: String?,
     val sinceMs: Long,
     val screenInteractive: Boolean,
-)
+) {
+    /**
+     * Ends the open interval but keeps the last known screen state. Used when the events
+     * between two runs were not observed: carrying the package would replay a pause or a
+     * screen lock that happened in the gap as "still in front".
+     */
+    fun withoutForeground(): CarriedForeground = copy(packageName = null, sinceMs = 0L)
+}
 
 /**
  * Target-app minutes seen in one Tokyo date's 30-minute slots.

@@ -131,14 +131,23 @@ Android のコールバック用スキームは Gradle が `DISCORD_CLIENT_ID` �
 
 Doze やメーカー独自のバッテリー制限で配信が遅れることがあります（フォアグラウンドサービスや正確なアラームは使わず、15分ごとの定期実行だけに頼っています）。Xiaomi / HyperOS では、設定で自動起動を許可し、バッテリーの制限を「制限なし」にしてください。
 
-ワーカーをすぐ実行して確かめるには、JobScheduler のジョブ ID を調べて強制実行します。WorkManager は定期ワーカーを JobScheduler のジョブとして登録する（サービスは `SystemJobService`）ので、この方法で即時に走ります。
+ワーカーは 15 分ごとの WorkManager の定期実行です。すぐに動きを確かめたいときは、JobScheduler に登録されたジョブを探して強制実行します。
 
 ```bash
-# job-id を探す（JOB #u0a123/42: ... jp.atsumaro.atsumaro のような行に出ます）
+# ジョブを探す（JOB androidx.work.systemjobscheduler:u0a533/4: ... jp.atsumaro.atsumaro の行に出ます）
 adb shell dumpsys jobscheduler | grep -A3 jp.atsumaro.atsumaro
+
+# Android 14 以降（WorkManager 2.10 以降）は名前空間付きのジョブなので -n が要ります
+adb shell cmd jobscheduler run -f -n androidx.work.systemjobscheduler jp.atsumaro.atsumaro <job-id>
+
+# Android 13 以前は名前空間がないので -n を付けません
 adb shell cmd jobscheduler run -f jp.atsumaro.atsumaro <job-id>
 ```
 
-`run -f` は制約や遅延を無視して実行するので、条件が揃っていればこのタイミングで通知が出ます。ジョブが見つからないときは、設定で一度オンにしてから（`setEnabled` が WorkManager に登録します）確認し直してください。
+実際に確かめた挙動は次のとおりです。
+
+- ジョブは `SystemJobService` に登録されます。`<job-id>` は WorkManager が登録し直すたびに変わる（0 → 1 → 3 …）ので、毎回 `dumpsys` から読み直してください。`-n` を付けずに実行すると `Could not find job ...` になります。
+- `run -f` は JobScheduler のジョブを即時起動しますが、**15 分の周期に達していない定期ワーカーは WorkManager 側が実行を見送ります**（logcat に `WM-WorkerWrapper: Delaying execution ... because it is being executed before schedule`）。実際に走るのは周期が来てからです。設定をオンにした直後の初回だけはすぐに実行されます。
+- 実行されたかは `adb logcat -s WM-WorkerWrapper` と、デバッグビルドなら `adb shell run-as jp.atsumaro.atsumaro cat shared_prefs/hima_suggest.xml` の `lastRunAt` で確認できます。
 
 見出し用フォント M PLUS Rounded 1c（SIL OFL 1.1）は `app/assets/fonts/` に同梱しており、実行時のフォント取得は行いません。ライセンスは同ディレクトリの `OFL.txt` です。
