@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  hima. app mark.
+
+  A coral rounded square carrying a bold ink "h" whose yellow dot echoes the
+  period in the "hima." wordmark. Colors are the Design.md 3.1 tokens.
+
+  The rounded square is the mark itself, so this file is the master for
+  surfaces that do not mask their icons (Android legacy mipmaps, the splash
+  logo, documentation). iOS and the Android adaptive icon get their corner
+  radius from the platform mask, so those renders flatten the corners to
+  full-bleed coral.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>hima.</title>
+  <rect width="1024" height="1024" rx="232" fill="#FF6389" />
+  <g transform="translate(512 512) scale(1.15) translate(-512 -512)">
+    <!-- Stem of the "h", from the ascender down to the baseline. -->
+    <path d="M291 300 L291 720" fill="none" stroke="#2F124F" stroke-width="96" stroke-linecap="round" />
+    <!-- Shoulder: leaves the stem at mid height, arcs over and drops to the baseline. -->
+    <path d="M291 540 C291 462 341 420 441 420 C541 420 591 462 591 528 L591 720" fill="none" stroke="#2F124F" stroke-width="96" stroke-linecap="round" stroke-linejoin="round" />
+    <!-- The dot of "hima.", sitting on the baseline to the lower right. -->
+    <circle cx="723" cy="662" r="58" fill="#FFE65A" />
+  </g>
+</svg>

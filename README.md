@@ -82,3 +82,42 @@
 ## MVPでやらないこと
 
 こっそりマッチング、同じゲーム同士の自動マッチング、人数募集、プレイ中ゲーム連携、よく暇になる時間帯の登録、複数サーバーをまたいだ友達リスト、課金・有料機能。
+
+## Flutterアプリ
+
+`app/` に Android / iOS 向け Flutter アプリ（表示名 `hima.`）があります。見た目と操作の仕様は [デザイン仕様](docs/design/Design.md)、API の契約は [API 契約書](docs/api-contract.md) を参照してください。
+
+### モックで動かす
+
+`--dart-define` を付けなければ、通信はすべてアプリ内のモックが返します（サーバー不要）。
+
+```bash
+cd app
+flutter run
+```
+
+### 実 API につなぐ
+
+`API_BASE_URL`（サーバーのルート）と `DISCORD_CLIENT_ID` を渡します。
+
+```bash
+# Android エミュレータ（ホストの localhost は 10.0.2.2）
+flutter run \
+  --dart-define=API_BASE_URL=http://10.0.2.2:8000 \
+  --dart-define=DISCORD_CLIENT_ID=123456789012345678
+
+# 実機（同じネットワークの PC かトンネル URL を指定）
+flutter run \
+  --dart-define=API_BASE_URL=https://xxxx.ngrok-free.app \
+  --dart-define=DISCORD_CLIENT_ID=123456789012345678
+```
+
+ログインは Discord の認可コード + PKCE（S256）です。Developer Portal の OAuth2 > Redirects に次の URL を登録してください（`<CLIENT_ID>` は自分のクライアント ID）。
+
+```
+discord-<CLIENT_ID>:/authorize/callback
+```
+
+Android のコールバック用スキームは Gradle が `DISCORD_CLIENT_ID` から埋め込みます（`android/app/build.gradle.kts` の manifest placeholder）。iOS は `flutter_web_auth_2` が `ASWebAuthenticationSession` を使うため Info.plist への追加は不要です。取得したトークンは `flutter_secure_storage` に保存し、次回起動時に `/app/me` が通ればそのままメイン画面を開きます。
+
+見出し用フォント M PLUS Rounded 1c（SIL OFL 1.1）は `app/assets/fonts/` に同梱しており、実行時のフォント取得は行いません。ライセンスは同ディレクトリの `OFL.txt` です。
