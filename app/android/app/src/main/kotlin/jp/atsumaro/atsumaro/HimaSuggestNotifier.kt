@@ -37,6 +37,9 @@ internal class HimaSuggestNotifier(private val context: Context) {
             .setSmallIcon(R.drawable.ic_stat_hima)
             .setContentTitle(TITLE)
             .setContentText(body)
+            // The suggestion arrives while another app fills the screen, so it has to appear on
+            // top of it; a silent entry in the shade is seen only after the moment has passed.
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
             .setContentIntent(declarePendingIntent(store))
             .build()
@@ -54,11 +57,12 @@ internal class HimaSuggestNotifier(private val context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
         if (manager.getNotificationChannel(HimaSuggest.NOTIFICATION_CHANNEL_ID) != null) return
+        manager.deleteNotificationChannel(HimaSuggest.LEGACY_NOTIFICATION_CHANNEL_ID)
         manager.createNotificationChannel(
             NotificationChannel(
                 HimaSuggest.NOTIFICATION_CHANNEL_ID,
                 HimaSuggest.NOTIFICATION_CHANNEL_NAME,
-                NotificationManager.IMPORTANCE_DEFAULT,
+                NotificationManager.IMPORTANCE_HIGH,
             ),
         )
     }

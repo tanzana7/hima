@@ -19,7 +19,10 @@ internal object HimaSuggest {
     const val TOKEN_EXTRA = "hima_suggest_token"
     const val ACTION_DECLARE = "declare"
 
-    const val NOTIFICATION_CHANNEL_ID = "hima_suggest"
+    // A new id, not an edit: Android keeps the importance a channel was created with, so the
+    // old channel could never become a heads-up one.
+    const val NOTIFICATION_CHANNEL_ID = "hima_suggest_alert"
+    const val LEGACY_NOTIFICATION_CHANNEL_ID = "hima_suggest"
     const val NOTIFICATION_CHANNEL_NAME = "ひま提案"
     const val NOTIFICATION_ID = 1001
 
