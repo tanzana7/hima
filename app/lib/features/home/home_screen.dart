@@ -13,6 +13,7 @@ import '../../state/app_view_model.dart';
 import '../knocks/knocks_screen.dart';
 import '../knocks/widgets/knock_sheet.dart';
 import '../profile/settings_screen.dart';
+import 'declare_feedback.dart';
 import 'hero_state.dart';
 import 'widgets/friends_section.dart';
 import 'widgets/home_header.dart';
@@ -108,9 +109,8 @@ class _HomeScreenState extends State<HomeScreen> {
       AppHaptics.declare();
     } catch (_) {
       if (!mounted) return;
-      AppHaptics.error();
       setState(() => _shakeToken++);
-      _showMessage('宣言できなかった。もう一度試してね');
+      showDeclareFailure(context);
     } finally {
       if (mounted) setState(() => _busy = false);
     }

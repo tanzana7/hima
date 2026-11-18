@@ -4,5 +4,5 @@
 
 - **マッチングカード**：`/app/me` の自分の宣言と、`/app/board` の行の mood から、アプリで組み立てる（🌙 は除く）。
 - **返答結果の既読**：アプリは `results` を受け取った時点で手元のキューに入れ、`POST /app/knocks/results/seen`（一括）を呼ぶ。キューから1件ずつお祝い表示を出すので、ID ごとに既読にする API は要らない。`GET /app/knocks/sent` は行ごとの既読時刻を返さないため、送信タブの「新着」は `results` で受け取ってから表示するまでの間だけ出す。
-- **自動宣言**：今回は設定の保存（`auto_mode` / `auto_mood`）までにする。実際に宣言するのは、Android での X 利用の検出を作るときに、アプリから `source=auto` で `POST /app/sessions` を呼ぶ。サーバー側で regular_slots をもとに自動で宣言する機能は、今はいらない。
+- **自動ひま提案**：Android のみ。ネイティブのワーカーが、対象アプリ（既定は X と YouTube）を使っているときと、いつものひまな時間に、ローカル通知で「いまひまじゃない？」と提案する。宣言はしない。通知からアプリを開き、温度感を選んだときだけ、アプリが `source=suggested` で `POST /app/sessions` を呼ぶ。設定画面のスイッチが正とするのは端末側の状態（`jp.atsumaro.atsumaro/suggest` の `getState`）で、サーバーの `auto_mode` は互換のために書き込むだけで、誰も読まない。
 - **activity を選ばなかったとき**：アプリが `any` として送る。

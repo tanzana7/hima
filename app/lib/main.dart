@@ -6,9 +6,11 @@ import 'package:provider/provider.dart';
 import 'app/app.dart';
 import 'data/api_client.dart';
 import 'data/app_config.dart';
+import 'data/hima_suggest_bridge.dart';
 import 'data/http_api_client.dart';
 import 'data/mock_api_client.dart';
 import 'state/app_view_model.dart';
+import 'state/hima_suggest_controller.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -18,13 +20,21 @@ void main() {
   final ApiClient api = config.useMockApi
       ? MockApiClient()
       : HttpApiClient(baseUrl: config.apiBaseUrl);
-  final viewModel = AppViewModel(api);
+  // One bridge for the whole app: the native worker holds a single state, so a
+  // second instance would answer with a second, diverging copy of it.
+  final suggestBridge = createHimaSuggestBridge();
+  final viewModel = AppViewModel(api, suggestBridge);
   // A token saved by a previous launch is restored in the background; the login
   // screen stays up until /app/me accepts it.
   unawaited(viewModel.restoreSession());
   runApp(
-    ChangeNotifierProvider<AppViewModel>.value(
-      value: viewModel,
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider<AppViewModel>.value(value: viewModel),
+        ChangeNotifierProvider<HimaSuggestController>.value(
+          value: HimaSuggestController(suggestBridge),
+        ),
+      ],
       child: HimaApp(config: config),
     ),
   );
