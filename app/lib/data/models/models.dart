@@ -317,39 +317,29 @@ class DiscordAuthRequest {
   };
 }
 
+/// The server's settings payload still carries `notify_on_hima`, but only for
+/// compatibility: the watch notifications it switched were removed, and the
+/// server sends nothing because of it (docs/api-contract.md, `PUT
+/// /bot/users/{user_id}/settings`). The app neither reads nor sends it, so the
+/// settings screen does not offer a switch that would change nothing.
 class UserSettings {
-  const UserSettings({
-    required this.autoMode,
-    required this.autoMood,
-    required this.notifyOnHima,
-  });
+  const UserSettings({required this.autoMode, required this.autoMood});
 
   /// Used when a payload has no settings yet (the OAuth response, for example).
-  /// `notifyOnHima` mirrors the server's default (ON), so the switch does not
-  /// flicker off and back on until `/app/me` arrives.
-  static const fallback = UserSettings(
-    autoMode: false,
-    autoMood: Mood.ok,
-    notifyOnHima: true,
-  );
+  static const fallback = UserSettings(autoMode: false, autoMood: Mood.ok);
 
   final bool autoMode;
   final Mood autoMood;
-  final bool notifyOnHima;
 
   factory UserSettings.fromJson(JsonMap json) => UserSettings(
     autoMode: readBoolOr(json, 'auto_mode', fallback: false),
     autoMood: _moodOrOk(readOptionalString(json, 'auto_mood')),
-    // The server's default is ON, so a payload without the flag means ON.
-    notifyOnHima: readBoolOr(json, 'notify_on_hima', fallback: true),
   );
 
-  UserSettings copyWith({bool? autoMode, Mood? autoMood, bool? notifyOnHima}) =>
-      UserSettings(
-        autoMode: autoMode ?? this.autoMode,
-        autoMood: autoMood ?? this.autoMood,
-        notifyOnHima: notifyOnHima ?? this.notifyOnHima,
-      );
+  UserSettings copyWith({bool? autoMode, Mood? autoMood}) => UserSettings(
+    autoMode: autoMode ?? this.autoMode,
+    autoMood: autoMood ?? this.autoMood,
+  );
 }
 
 /// `auto_mood` is optional, and [moodFromJson] already folds anything it cannot

@@ -36,13 +36,11 @@ class _SettingsViewState extends State<SettingsView> {
     BuildContext context, {
     bool? autoMode,
     Mood? autoMood,
-    bool? notifyOnHima,
   }) async {
     try {
       await context.read<AppViewModel>().updateSettings(
         autoMode: autoMode,
         autoMood: autoMood,
-        notifyOnHima: notifyOnHima,
       );
       return true;
     } catch (_) {
@@ -176,16 +174,6 @@ class _SettingsViewState extends State<SettingsView> {
                           : const SizedBox(width: double.infinity),
                     ),
                   ],
-                ),
-              ),
-              _SavingControl<bool>(
-                value: settings.notifyOnHima,
-                onSave: (value) =>
-                    _updateSettings(context, notifyOnHima: value),
-                builder: (context, value, onChanged) => SwitchListTile(
-                  title: const Text('友達のひま宣言を通知'),
-                  value: value,
-                  onChanged: onChanged,
                 ),
               ),
             ],
