@@ -50,15 +50,28 @@ class MainActivity : FlutterActivity() {
         launchedIntent.removeExtra(HimaSuggest.ACTION_EXTRA)
         launchedIntent.removeExtra(HimaSuggest.TOKEN_EXTRA)
         val store = HimaSuggestStore(this)
-        // Only the posted notification knows the token (see HimaSuggestStore.notificationToken);
-        // anything else that launches this exported activity with the extra is ignored.
-        val expected = store.notificationToken
-        if (action != HimaSuggest.ACTION_DECLARE || token == null || token != expected) return
-        store.notificationToken = null
+        // Only the posted notification knows the token (see HimaSuggestStore.notificationToken
+        // and HimaSuggestStore.demoNotificationToken); anything else that launches this exported
+        // activity with the extra is ignored. Each action is checked against its own token, so a
+        // demo notification can neither carry the real token nor consume the real suggestion's
+        // tap: both may be in the shade at once.
+        val accepted = when (action) {
+            HimaSuggest.ACTION_DECLARE -> token != null && token == store.notificationToken
+            HimaSuggest.ACTION_DEMO_DECLARE -> token != null && token == store.demoNotificationToken
+            else -> false
+        }
+        if (!accepted) return
+        // Only the token that matched is cleared; the other notification may still be posted.
+        when (action) {
+            HimaSuggest.ACTION_DECLARE -> store.notificationToken = null
+            HimaSuggest.ACTION_DEMO_DECLARE -> store.demoNotificationToken = null
+        }
         // The action is always stored, and stays stored until Dart reads it with
         // takePendingAction. `onAction` is only a nudge: Dart answers it before it reads, and
         // a read that was already in flight re-reads afterwards, so clearing the copy when the
         // nudge is answered would lose the tap. Reading consumes it, so it is never taken twice.
+        // A demo tap stores "demo_declare" the same way; Dart ignores that action outside demo
+        // mode, so a stray demo notification cannot declare for the user.
         store.pendingAction = action
         val channel = suggestChannel
         if (deliverToDart && channel != null) {

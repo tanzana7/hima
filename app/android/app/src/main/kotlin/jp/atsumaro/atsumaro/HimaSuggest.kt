@@ -19,9 +19,24 @@ internal object HimaSuggest {
     const val TOKEN_EXTRA = "hima_suggest_token"
     const val ACTION_DECLARE = "declare"
 
+    /**
+     * Tap action of the developer demo notification (see `HimaSuggestNotifier.postDemo`). It is
+     * a distinct string so Dart can tell a demo tap from a real suggestion: outside demo mode it
+     * ignores `demo_declare` instead of opening the declaration flow.
+     */
+    const val ACTION_DEMO_DECLARE = "demo_declare"
+
     const val NOTIFICATION_CHANNEL_ID = "hima_suggest"
     const val NOTIFICATION_CHANNEL_NAME = "ひま提案"
     const val NOTIFICATION_ID = 1001
+
+    /**
+     * The demo notification gets its own ID and PendingIntent request code, so posting it can
+     * never replace a real suggestion that is still in the shade, and cancelling or tapping one
+     * never touches the other.
+     */
+    const val DEMO_NOTIFICATION_ID = 1002
+    const val DEMO_PENDING_INTENT_REQUEST = 1
 
     val DEFAULT_TARGETS = listOf("com.twitter.android", "com.google.android.youtube")
 
