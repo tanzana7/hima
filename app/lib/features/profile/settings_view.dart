@@ -279,10 +279,13 @@ class _SettingsViewState extends State<SettingsView> with WidgetsBindingObserver
             children: [
               SwitchListTile(
                 title: const Text('自動ひま提案'),
-                // Kept to two short clauses: Japanese wraps at any character,
-                // and the longer copy left 「案」 alone on a third line on a
-                // 1080px-wide phone. The comma lands at the first line's end.
-                subtitle: const Text('対象アプリを使っているときと、いつもの時間に通知するよ'),
+                // Two clauses with an explicit break: Japanese wraps at any
+                // character, so a greedy wrap split words (「提案」 left 「案」
+                // alone on a third line, and a shorter copy split 「ときと」).
+                // Each clause stays at 12 characters or fewer so it fits one
+                // line on a 360dp phone; at a larger text scale each clause
+                // wraps on its own instead of mid-word across the comma.
+                subtitle: const Text('対象アプリの利用中と、\nいつもの時間に通知するよ'),
                 value: enabled,
                 onChanged: onChanged,
               ),
