@@ -120,4 +120,34 @@ discord-<CLIENT_ID>:/authorize/callback
 
 Android のコールバック用スキームは Gradle が `DISCORD_CLIENT_ID` から埋め込みます（`android/app/build.gradle.kts` の manifest placeholder）。iOS は `flutter_web_auth_2` が `ASWebAuthenticationSession` を使うため Info.plist への追加は不要です。取得したトークンは `flutter_secure_storage` に保存し、次回起動時に `/app/me` が通ればそのままメイン画面を開きます。
 
+### 自動ひま提案（Android のみ）
+
+設定でオンにすると、15分ごとのバックグラウンド確認で「いまひまじゃない？」とローカル通知を出します。宣言はしません。通知が出るのは、対象アプリ（既定は X と YouTube。追加・削除できます）を使っているときと、いつものひまな時間帯（サーバーの予測と、端末が対象アプリの利用から学習した枠）に入ったときです。iOS では動きません。
+
+使う権限は 2 つです。
+
+- **使用状況へのアクセス**（`PACKAGE_USAGE_STATS`）: 対象アプリの利用時間を読むため。設定 → アプリ → 特別なアクセス権 → 使用状況へのアクセス で許可します。テスト中は `adb shell appops set jp.atsumaro.atsumaro GET_USAGE_STATS allow` でも許可できます。
+- **通知**: Android 13 以降は実行時に許可を求めます。
+
+Doze やメーカー独自のバッテリー制限で配信が遅れることがあります（フォアグラウンドサービスや正確なアラームは使わず、15分ごとの定期実行だけに頼っています）。Xiaomi / HyperOS では、設定で自動起動を許可し、バッテリーの制限を「制限なし」にしてください。
+
+ワーカーは 15 分ごとの WorkManager の定期実行です。すぐに動きを確かめたいときは、JobScheduler に登録されたジョブを探して強制実行します。
+
+```bash
+# ジョブを探す（JOB androidx.work.systemjobscheduler:u0a533/4: ... jp.atsumaro.atsumaro の行に出ます）
+adb shell dumpsys jobscheduler | grep -A3 jp.atsumaro.atsumaro
+
+# Android 14 以降（WorkManager 2.10 以降）は名前空間付きのジョブなので -n が要ります
+adb shell cmd jobscheduler run -f -n androidx.work.systemjobscheduler jp.atsumaro.atsumaro <job-id>
+
+# Android 13 以前は名前空間がないので -n を付けません
+adb shell cmd jobscheduler run -f jp.atsumaro.atsumaro <job-id>
+```
+
+実際に確かめた挙動は次のとおりです。
+
+- ジョブは `SystemJobService` に登録されます。`<job-id>` は WorkManager が登録し直すたびに変わる（0 → 1 → 3 …）ので、毎回 `dumpsys` から読み直してください。`-n` を付けずに実行すると `Could not find job ...` になります。
+- `run -f` は JobScheduler のジョブを即時起動しますが、**15 分の周期に達していない定期ワーカーは WorkManager 側が実行を見送ります**（logcat に `WM-WorkerWrapper: Delaying execution ... because it is being executed before schedule`）。実際に走るのは周期が来てからです。設定をオンにした直後の初回だけはすぐに実行されます。
+- 実行されたかは `adb logcat -s WM-WorkerWrapper` と、デバッグビルドなら `adb shell run-as jp.atsumaro.atsumaro cat shared_prefs/hima_suggest.xml` の `lastRunAt` で確認できます。
+
 見出し用フォント M PLUS Rounded 1c（SIL OFL 1.1）は `app/assets/fonts/` に同梱しており、実行時のフォント取得は行いません。ライセンスは同ディレクトリの `OFL.txt` です。
