@@ -114,11 +114,36 @@ abstract interface class HimaSuggestBridge {
 
   /// `"declare"` when the app was opened from a suggestion and the action has
   /// not been taken yet. Consumed once, so a second call returns null.
+  ///
+  /// A tapped demo notification answers [himaSuggestDemoDeclareAction] instead.
   Future<String?> takePendingAction();
+
+  /// Posts the developer demo variant of a suggestion, outside every condition
+  /// the worker applies, so it can be checked from the app itself.
+  ///
+  /// True when the notification was posted, false when the platform says
+  /// notifications are not allowed.
+  Future<bool> postDemoSuggestion({
+    required DemoSuggestionKind kind,
+    String? label,
+  });
+
+  /// Drops the demo notification and its token, so a tap on one that was
+  /// already dismissed cannot declare later.
+  Future<void> cancelDemoSuggestion();
 }
 
 /// The value [takePendingAction] answers for a tapped notification.
 const String himaSuggestDeclareAction = 'declare';
+
+/// The value [takePendingAction] answers when the tapped notification was a
+/// demo one. Only the demo session acts on it: the real session consumes and
+/// drops it, so a stray demo notification cannot declare for the user.
+const String himaSuggestDemoDeclareAction = 'demo_declare';
+
+/// The bodies the demo notification can be posted with. The native side knows
+/// the same two names, and reuses the real bodies for them.
+enum DemoSuggestionKind { app, usual }
 
 /// The bridge this platform can use: the channel on Android, a no-op anywhere
 /// else (including widget-only contexts, which have no plugin registry).
@@ -145,6 +170,8 @@ class MethodChannelHimaSuggestBridge implements HimaSuggestBridge {
   static const _methodSetForecast = 'setForecast';
   static const _methodClear = 'clear';
   static const _methodTakePendingAction = 'takePendingAction';
+  static const _methodPostDemoSuggestion = 'postDemoSuggestion';
+  static const _methodCancelDemoSuggestion = 'cancelDemoSuggestion';
   static const _methodOnAction = 'onAction';
 
   final MethodChannel _channel;
@@ -165,9 +192,15 @@ class MethodChannelHimaSuggestBridge implements HimaSuggestBridge {
   }
 
   Future<Object?> _handleCall(MethodCall call) async {
-    if (call.method == _methodOnAction &&
-        _actionOf(call.arguments) == himaSuggestDeclareAction) {
-      _onAction?.call();
+    if (call.method == _methodOnAction) {
+      final action = _actionOf(call.arguments);
+      // Both actions mean "a declaration was suggested", and the demo one is a
+      // suggestion too. The listener only reads [takePendingAction], which is
+      // what decides whether the action may be acted on at all.
+      if (action == himaSuggestDeclareAction ||
+          action == himaSuggestDemoDeclareAction) {
+        _onAction?.call();
+      }
     }
     return null;
   }
@@ -244,6 +277,22 @@ class MethodChannelHimaSuggestBridge implements HimaSuggestBridge {
       _methodTakePendingAction,
     );
     return value is String ? value : null;
+  }
+
+  @override
+  Future<bool> postDemoSuggestion({
+    required DemoSuggestionKind kind,
+    String? label,
+  }) async =>
+      await _channel.invokeMethod<bool>(_methodPostDemoSuggestion, {
+        'kind': kind.name,
+        'label': label,
+      }) ??
+      false;
+
+  @override
+  Future<void> cancelDemoSuggestion() async {
+    await _channel.invokeMethod<Object?>(_methodCancelDemoSuggestion);
   }
 
   /// `onAction("declare")`. A map is accepted too so a richer payload added
@@ -344,4 +393,15 @@ class NoopHimaSuggestBridge implements HimaSuggestBridge {
 
   @override
   Future<String?> takePendingAction() async => null;
+
+  /// Nothing can be posted where the worker does not exist, so the answer is
+  /// the one the platform gives when notifications are not allowed.
+  @override
+  Future<bool> postDemoSuggestion({
+    required DemoSuggestionKind kind,
+    String? label,
+  }) async => false;
+
+  @override
+  Future<void> cancelDemoSuggestion() async {}
 }

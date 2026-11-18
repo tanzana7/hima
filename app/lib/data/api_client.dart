@@ -11,6 +11,15 @@ abstract interface class ApiClient {
   void Function()? get onUnauthorized;
   set onUnauthorized(void Function()? value);
 
+  /// Asked before a rejected token ends the session.
+  ///
+  /// True keeps the stored token and fires nothing: the caller has put another
+  /// session on screen and the one behind it has to come back untouched, so the
+  /// rejection is left for the request that follows it. The call still fails
+  /// with a 401 either way.
+  bool Function()? get keepSessionOnUnauthorized;
+  set keepSessionOnUnauthorized(bool Function()? value);
+
   /// Loads a token saved by a previous launch. True when one was found; the
   /// caller still has to prove it with [getMe].
   Future<bool> restoreToken();
