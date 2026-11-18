@@ -92,8 +92,11 @@ class ApiClient:
         """提案 DM の「このまま宣言する」（source=suggested / 30分 / auto_mood）。"""
         return await self._request("POST", "/bot/suggest-declare", json_body={"user_id": user_id})
 
-    async def get_board(self, guild_id: int, user_id: int) -> dict:
-        return await self._request("GET", "/bot/board", params={"guild_id": guild_id, "user_id": user_id})
+    async def get_board(self, guild_id: int, user_id: int, display_name: str | None = None) -> dict:
+        params: dict = {"guild_id": guild_id, "user_id": user_id}
+        if display_name is not None:
+            params["display_name"] = display_name
+        return await self._request("GET", "/bot/board", params=params)
 
     # --- knocks ------------------------------------------------------
     async def results_seen(self, user_id: int) -> dict:
