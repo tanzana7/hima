@@ -6,7 +6,7 @@ import threading
 
 from sqlalchemy import text
 
-from . import domain, notify, suggestions
+from . import domain, suggestions
 from .db import SessionLocal, engine
 
 log = logging.getLogger("atsumaro.worker")
@@ -70,10 +70,6 @@ def _run(stop_event: threading.Event) -> None:
                 if closed:
                     log.info("worker closed %d expired session(s)", closed)
                 ticks += 1
-                if ticks % notify.FLUSH_INTERVAL_TICKS == 0:
-                    notified = notify.flush_watch_queue()
-                    if notified:
-                        log.info("watch flush notified %d watcher(s)", notified)
                 if ticks % suggestions.SUGGEST_EVERY_TICKS == 0:
                     with SessionLocal() as session:
                         sent = suggestions.suggestion_pass(session)

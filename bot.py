@@ -23,7 +23,6 @@ from views import (
     KnockReplyButton,
     KnockTemplateView,
     SuggestDeclareButton,
-    WatchToggle,
     _build_board,
     send_api_error,
 )
@@ -46,7 +45,7 @@ class HimaBot(commands.Bot):
         self.add_view(AtsumaroPanelView(self))
         self.add_view(BoardView(self, _empty_board_data()))
         self.add_dynamic_items(KnockReplyButton)
-        self.add_dynamic_items(WatchToggle)
+        # お知らせ（watch）トグルは廃止
         self.add_dynamic_items(SuggestDeclareButton)
         self.tree.on_error = self._on_app_command_error
         await self._sync_commands()

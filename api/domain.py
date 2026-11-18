@@ -7,7 +7,7 @@ from datetime import timedelta
 from fastapi import HTTPException
 from sqlalchemy import text
 
-from . import matching, notify
+from . import matching
 from . import discord_rest as _discord_rest
 from .discord_rest import knock_reply_components
 from .db import SessionLocal
@@ -79,7 +79,7 @@ def declare_session(
         row.expires_at = expires_at
     db.commit()
     matching.evaluate_for_session(db, row, rest=rest)
-    notify.enqueue_watchers(db, row)
+    # お知らせ（watch）通知は廃止。暇宣言は誰にも通知がいかない（見たい人が掲示板で確認する）
     return {"session_id": row.id, "created": created, "expires_at": row.expires_at.isoformat()}
 
 

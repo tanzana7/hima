@@ -260,53 +260,17 @@ class SuggestDeclareButton(ui.DynamicItem, template=r"atsumaro:suggest:declare")
             )
 
 
-class WatchToggle(ui.DynamicItem, template=r"atsumaro:watchtoggle:(?P<state>[01])"):
-    """お知らせ ON/OFF トグル。custom_id に現在の状態を埋め込む（内部名 notify_on_hima は変更なし）。"""
-
-    def __init__(self, state: bool, row: int | None = 0) -> None:
-        self.state = bool(state)
-        super().__init__(
-            ui.Button(
-                label=f"お知らせ: {'ON' if state else 'OFF'}",
-                style=discord.ButtonStyle.success if state else discord.ButtonStyle.secondary,
-                custom_id=f"atsumaro:watchtoggle:{1 if state else 0}",
-                row=row,
-            )
-        )
-
-    @classmethod
-    async def from_custom_id(cls, interaction: discord.Interaction, item: ui.Item, match: Any) -> "WatchToggle":
-        return cls(match["state"] == "1")
-
-    @guarded
-    async def callback(self, interaction: discord.Interaction) -> None:
-        bot = interaction.client  # type: ignore[union-attr]
-        new_state = not self.state
-        await interaction.response.defer()  # 3秒制限: 先に ACK（メッセージ更新を遅延させる）
-        try:
-            await bot.api.update_settings(
-                interaction.user.id, notify_on_hima=new_state, display_name=interaction.user.display_name
-            )
-        except Exception as exc:  # noqa: BLE001
-            await send_api_error(interaction, exc)
-            return
-        embeds, view = await _build_board(bot, interaction)
-        if embeds is None:
-            return
-        await interaction.edit_original_response(embeds=embeds, view=view)
-
-
 # ------------------------------------------------------------------ board view
 
 
 class BoardView(ErrorFollowupView):
-    """個人用掲示板（ephemeral）。ヒマ宣言/お返事/ブロック/お知らせ/やめるのボタン＋受信箱の返答ボタン。"""
+    """個人用掲示板（ephemeral）。ヒマ宣言/お返事/ブロック/やめるのボタン＋受信箱の返答ボタン。"""
 
     def __init__(self, bot: "HimaBot", data: dict) -> None:
         super().__init__(timeout=None)
         self.bot = bot
         self.data = data
-        self.add_item(WatchToggle(bool((data.get("viewer") or {}).get("notify_on_hima"))))
+        # お知らせ（watch）トグルは廃止
         inbox = data.get("inbox", [])[:INBOX_LIMIT]
         flat = []
         for k in inbox:
