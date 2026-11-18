@@ -279,7 +279,10 @@ class _SettingsViewState extends State<SettingsView> with WidgetsBindingObserver
             children: [
               SwitchListTile(
                 title: const Text('自動ひま提案'),
-                subtitle: const Text('対象アプリを使っているときと、いつものひまな時間に通知で提案'),
+                // Kept to two short clauses: Japanese wraps at any character,
+                // and the longer copy left 「案」 alone on a third line on a
+                // 1080px-wide phone. The comma lands at the first line's end.
+                subtitle: const Text('対象アプリを使っているときと、いつもの時間に通知するよ'),
                 value: enabled,
                 onChanged: onChanged,
               ),

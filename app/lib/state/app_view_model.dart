@@ -881,8 +881,11 @@ class AppViewModel extends ChangeNotifier {
     _lastMood = Mood.ok;
     _moodHintShown = false;
     _liveError = false;
-    // The worker keeps this user's targets, forecast and declaration, so it is
-    // wiped whenever the app goes back to the login screen.
+    // The worker keeps this user's forecast, declaration and suggestion
+    // history, so they are wiped (and the worker stopped) whenever the app
+    // goes back to the login screen. Target apps and the learned usual times
+    // describe the phone, not the account, and survive a re-login (see
+    // HimaSuggestStore.clearSuggestionState).
     _ignoreBridgeErrors(_bridge.clear());
   }
 }
