@@ -227,12 +227,17 @@ class MockApiClient implements ApiClient {
   /// declaration of mine and at least one live 🙂 friend.
   void triggerMatch() {
     final now = DateTime.now().toUtc();
-    if (_activeHima == null) setDeclaration(MockDeclaration.live);
+    // A match needs both sides on 🙂, so a 🌙 or about-to-end declaration of
+    // mine is replaced by a normal-length 🙂 one instead of being kept.
+    setDeclaration(MockDeclaration.live);
+    // getBoard() hides blocked friends, so a blocked 🙂 friend would leave
+    // the home screen without a match even though one is "staged" here.
     final hasOkFriend = _friends.any(
       (friend) =>
           friend.mood == Mood.ok &&
           friend.expiresAt.isAfter(now) &&
-          _isVisible(friend.user.id),
+          _isVisible(friend.user.id) &&
+          !_isBlocked(friend.user.id),
     );
     if (hasOkFriend) return;
     if (_friends.isEmpty) {
@@ -240,9 +245,14 @@ class MockApiClient implements ApiClient {
       return;
     }
     final index = _friends.indexWhere(
-      (friend) => _isVisible(friend.user.id),
+      (friend) => _isVisible(friend.user.id) && !_isBlocked(friend.user.id),
     );
-    if (index < 0) return;
+    if (index < 0) {
+      // Everyone on the board is hidden or blocked: bring back the default
+      // friends, which include unblocked 🙂 ones.
+      _friends = _defaultFriends(now);
+      return;
+    }
     final friend = _friends[index];
     final guildId = _guildOf(friend.user.id);
     if (guildId == null) return;
