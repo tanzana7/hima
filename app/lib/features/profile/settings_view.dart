@@ -272,6 +272,62 @@ class _SettingsViewState extends State<SettingsView> with WidgetsBindingObserver
     );
   }
 
+  /// Keeps the suggestion switch and its description readable at large scales.
+  Widget _suggestSwitchControl(
+    BuildContext context,
+    bool enabled,
+    ValueChanged<bool> onChanged,
+  ) {
+    final textScale = MediaQuery.textScalerOf(context).scale(16) / 16;
+    if (textScale < 1.4) {
+      return SwitchListTile(
+        title: const Text('自動ひま提案'),
+        subtitle: const Text('使い続けたときと、\nいつもの時間に通知するよ'),
+        value: enabled,
+        onChanged: onChanged,
+      );
+    }
+
+    // SwitchListTile reserves the switch width for its subtitle too, which
+    // leaves punctuation stranded at 200%. Put the full-width copy below the
+    // title and switch; the InkWell keeps the whole row tappable and
+    // MergeSemantics keeps one labelled control for readers.
+    return MergeSemantics(
+      child: InkWell(
+        onTap: () => onChanged(!enabled),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '自動ひま提案',
+                      style:
+                          Theme.of(context).listTileTheme.titleTextStyle ??
+                          Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ),
+                  Switch(value: enabled, onChanged: onChanged),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.s4),
+              Text(
+                '使い続けたときと、\nいつもの時間に通知するよ',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   /// The 「自動ひま提案」 card, or null where the native worker does not exist.
   ///
   /// The worker is device state, so it is read from the bridge instead of
@@ -294,18 +350,7 @@ class _SettingsViewState extends State<SettingsView> with WidgetsBindingObserver
           builder: (context, enabled, onChanged) => Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              SwitchListTile(
-                title: const Text('自動ひま提案'),
-                // Two clauses with an explicit break: Japanese wraps at any
-                // character, so a greedy wrap split words (「提案」 left 「案」
-                // alone on a third line, and a shorter copy split 「ときと」).
-                // Each clause stays at 12 characters or fewer so it fits one
-                // line on a 360dp phone; at a larger text scale each clause
-                // wraps on its own instead of mid-word across the comma.
-                subtitle: const Text('使い続けたときと、\nいつもの時間に通知するよ'),
-                value: enabled,
-                onChanged: onChanged,
-              ),
+              _suggestSwitchControl(context, enabled, onChanged),
               if (enabled) ...[
                 // Only meaningful while the worker can fire: the switch exists
                 // to stop the server saying the same thing over Discord.
