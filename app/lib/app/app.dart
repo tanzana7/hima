@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../data/app_config.dart';
 import '../features/demo/demo_overlay.dart';
+import '../features/home/widgets/pickers.dart';
 import '../state/app_view_model.dart';
 import '../state/hima_suggest_controller.dart';
 import '../state/session_owner.dart';
@@ -55,23 +56,27 @@ class HimaApp extends StatelessWidget {
           // created once in `main`, not per session.
           ChangeNotifierProvider<SessionOwner>.value(value: sessions),
         ],
-        child: MaterialApp(
-          key: ValueKey(session),
-          title: 'hima.',
-          debugShowCheckedModeBanner: false,
-          theme: buildHimaTheme(),
-          locale: _locale,
-          supportedLocales: const [_locale],
-          localizationsDelegates: GlobalMaterialLocalizations.delegates,
-          navigatorKey: demo?.navigatorKey,
-          // The panel's entry point has to outlive every route, so it is painted
-          // above the navigator rather than inside a Scaffold.
-          builder: (context, child) {
-            final navigator = child ?? const SizedBox.shrink();
-            if (demo == null) return navigator;
-            return DemoOverlay(demo: demo, child: navigator);
-          },
-          home: AppRoot(config: config),
+        child: ActivityPickerAnchorListener(
+          // Inside the providers so the tap the picker grows from is recorded
+          // for every route, including the demo panel's own screens.
+          child: MaterialApp(
+            key: ValueKey(session),
+            title: 'hima.',
+            debugShowCheckedModeBanner: false,
+            theme: buildHimaTheme(),
+            locale: _locale,
+            supportedLocales: const [_locale],
+            localizationsDelegates: GlobalMaterialLocalizations.delegates,
+            navigatorKey: demo?.navigatorKey,
+            // The panel's entry point has to outlive every route, so it is
+            // painted above the navigator rather than inside a Scaffold.
+            builder: (context, child) {
+              final navigator = child ?? const SizedBox.shrink();
+              if (demo == null) return navigator;
+              return DemoOverlay(demo: demo, child: navigator);
+            },
+            home: AppRoot(config: config),
+          ),
         ),
       );
     },

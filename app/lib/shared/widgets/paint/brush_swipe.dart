@@ -7,7 +7,7 @@ import 'paint_geometry.dart';
 
 /// A wide brush stroke: a band painted with one sideways swipe of a fat brush.
 ///
-/// It is the backdrop of the home hero and of the login screen, and it replaces
+/// It is the backdrop of the login screen, and it replaces
 /// the big splash there. The splash read as a rectangle with growths — a horn
 /// on top, an arm on the side, a drip below — because its arms were lobes stuck
 /// onto a body that was still a box. A stroke has no growths: it is one band
@@ -53,7 +53,7 @@ class BrushSwipe extends StatelessWidget {
     this.progress = 1,
   });
 
-  /// Keeps the stroke's exact silhouette across rebuilds, so the hero's two
+  /// Keeps the stroke's exact silhouette across rebuilds, so the login's two
   /// strokes stay aligned and a card does not change shape while scrolling.
   final int seed;
 
@@ -78,7 +78,7 @@ class BrushSwipe extends StatelessWidget {
   /// [paintSwipeContentInset], and either way it wins over `padding.right`
   /// rather than being added to it.
   ///
-  /// A caller that paints two bare strokes over each other (the hero) passes
+  /// A caller that paints two bare strokes over each other (the login) passes
   /// the same value to both, so the two silhouettes line up.
   final double? endInset;
 
@@ -87,7 +87,7 @@ class BrushSwipe extends StatelessWidget {
   ///
   /// The login screen needs it: 「hima.」 and 「いま、ひま？」 sit above a centred
   /// caption and button, and the right-only inset left them visibly off that
-  /// axis. The home hero keeps its content left-aligned, so it leaves this off.
+  /// axis. A caller with left-aligned content leaves this off.
   final bool centerContent;
 
   /// Overrides the number of droplets flicked off the end. Null paints 16, the
@@ -217,7 +217,7 @@ class _BrushSwipePainter extends CustomPainter {
     // It is a gradient rather than a shape, so it has no edge of its own, and
     // it is clipped to the body so it can never leave the band.
     //
-    // **It has to stay faint.** The declared hero draws white text straight on
+    // **It has to stay faint.** The band can carry text straight on the paint,
     // the band, and the lightest coral stop is only 3.4:1 against white. A
     // heavier sheen lifts that below 3:1 wherever it covers a label, so the
     // peak is 8% and it fades out in the top 42% of the band — the heading
