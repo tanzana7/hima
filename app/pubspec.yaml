@@ -84,6 +84,9 @@ flutter:
   # AppColors. CC0 1.0; see assets/textures/LICENSES.md for the sources.
   assets:
     - assets/textures/
+    # Mock users' avatars, cut from the app icon artwork (the owner's own
+    # illustration) and recoloured; see MockApiClient._avatarOf.
+    - assets/avatars/
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
