@@ -789,12 +789,17 @@ class AppViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> updateSettings({bool? autoMode, Mood? autoMood}) async {
+  Future<void> updateSettings({
+    bool? autoMode,
+    Mood? autoMood,
+    bool? suggestDm,
+  }) async {
     final profile = _me;
     if (profile == null) return;
     final updated = await _api.updateSettings(
       autoMode: autoMode,
       autoMood: autoMood,
+      suggestDm: suggestDm,
     );
     _invalidateLiveReads();
     _me = profile.withSettings(updated);

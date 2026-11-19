@@ -24,6 +24,11 @@
 ///   the space the caller reserves for them instead of out of the edge.
 /// * **Reduced motion.** The animated primitives take a `progress` and paint
 ///   the final state when `MediaQuery.disableAnimationsOf` is true.
+/// * **Detail, never colour.** The shipped textures are grayscale photographs
+///   that are tinted *inside* a shape ([paintDetail]) or used as coverage to
+///   take paint off ([paintDetailErase]); every colour still comes from
+///   `AppColors`, and a texture that is missing or still decoding only means
+///   less detail, never a blank shape.
 library;
 
 export 'brush_stroke.dart';
@@ -33,5 +38,7 @@ export 'paint_geometry.dart';
 export 'paint_mark.dart';
 export 'paint_splat.dart';
 export 'paint_swash.dart';
+export 'paint_texture.dart';
+export 'paint_thick.dart';
 export 'paint_wash.dart';
 export 'splatter_dots.dart';

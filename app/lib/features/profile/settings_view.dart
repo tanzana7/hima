@@ -9,6 +9,7 @@ import '../../app/theme/app_text_styles.dart';
 import '../../data/hima_suggest_bridge.dart';
 import '../../data/models/models.dart';
 import '../../shared/haptics.dart';
+import '../../shared/phrase_wrap.dart';
 import '../../shared/widgets/avatar_view.dart';
 import '../../shared/widgets/paint/paint.dart';
 import '../../shared/widgets/paint_button.dart';
@@ -21,6 +22,20 @@ import '../../state/session_owner.dart';
 /// 4.2:1 on the pastel wash, so text on paint takes this darker tone instead
 /// (5.4:1).
 const _washMuted = Color(0xFF635B6F);
+
+/// The 「自動ひま提案」 description: one clause per line, and inside each clause
+/// the line may turn only between its phrases.
+///
+/// Without the phrase boundaries a large text scale broke the second clause as
+/// 「いつもの時間に通知す／るよ」, leaving 「るよ」 alone on its own line.
+final String _suggestDescription = [
+  wrapPhrases(['使い続けた', 'ときと、']),
+  wrapPhrases(['いつもの時間に', '通知するよ']),
+].join('\n');
+
+/// The 「Discordでも受け取る」 switch label: two phrases, so a large text scale
+/// wraps before 「受け取る」 instead of splitting it.
+final String _suggestDmTitle = wrapPhrases(['Discordでも', '受け取る']);
 
 /// Settings content shared by the プロフィール tab and the header gear route.
 class SettingsView extends StatefulWidget {
@@ -142,7 +157,7 @@ class _SettingsViewState extends State<SettingsView> with WidgetsBindingObserver
   @override
   Widget build(BuildContext context) {
     final viewModel = context.watch<AppViewModel>();
-    final suggest = _suggestSection(context);
+    final suggest = _suggestSection(context, viewModel);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -272,13 +287,78 @@ class _SettingsViewState extends State<SettingsView> with WidgetsBindingObserver
     );
   }
 
+  /// Keeps the suggestion switch and its description readable at large scales.
+  Widget _suggestSwitchControl(
+    BuildContext context,
+    bool enabled,
+    ValueChanged<bool> onChanged,
+  ) {
+    final textScale = MediaQuery.textScalerOf(context).scale(16) / 16;
+    if (textScale < 1.4) {
+      return SwitchListTile(
+        title: const Text('自動ひま提案'),
+        subtitle: Text(
+          _suggestDescription,
+          semanticsLabel: plainPhrases(_suggestDescription),
+        ),
+        value: enabled,
+        onChanged: onChanged,
+      );
+    }
+
+    // SwitchListTile reserves the switch width for its subtitle too, which
+    // leaves punctuation stranded at 200%. Put the full-width copy below the
+    // title and switch; the InkWell keeps the whole row tappable and
+    // MergeSemantics keeps one labelled control for readers.
+    return MergeSemantics(
+      child: InkWell(
+        onTap: () => onChanged(!enabled),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '自動ひま提案',
+                      style:
+                          Theme.of(context).listTileTheme.titleTextStyle ??
+                          Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ),
+                  Switch(value: enabled, onChanged: onChanged),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.s4),
+              Text(
+                _suggestDescription,
+                semanticsLabel: plainPhrases(_suggestDescription),
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   /// The 「自動ひま提案」 card, or null where the native worker does not exist.
   ///
-  /// Everything here is device state, so it is read from the bridge instead of
-  /// `/app/me`: the worker lives in Android, and the server cannot describe it.
-  Widget? _suggestSection(BuildContext context) {
+  /// The worker is device state, so it is read from the bridge instead of
+  /// `/app/me`: it lives in Android, and the server cannot describe it. Only
+  /// 「Discordでも受け取る」 comes from the server's `suggest_dm`.
+  Widget? _suggestSection(BuildContext context, AppViewModel viewModel) {
     final suggest = context.watch<HimaSuggestController>();
     if (!suggest.isSupported) return null;
+    // `/app/me` carries the flag; settings missing from the payload mean the
+    // server's default.
+    final suggestDm =
+        viewModel.me?.settings.suggestDm ?? UserSettings.fallback.suggestDm;
     return _SectionCard(
       seed: paintSeedOf('settings-suggest'),
       color: AppColors.purpleSoft,
@@ -289,19 +369,22 @@ class _SettingsViewState extends State<SettingsView> with WidgetsBindingObserver
           builder: (context, enabled, onChanged) => Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              SwitchListTile(
-                title: const Text('自動ひま提案'),
-                // Two clauses with an explicit break: Japanese wraps at any
-                // character, so a greedy wrap split words (「提案」 left 「案」
-                // alone on a third line, and a shorter copy split 「ときと」).
-                // Each clause stays at 12 characters or fewer so it fits one
-                // line on a 360dp phone; at a larger text scale each clause
-                // wraps on its own instead of mid-word across the comma.
-                subtitle: const Text('使い続けたときと、\nいつもの時間に通知するよ'),
-                value: enabled,
-                onChanged: onChanged,
-              ),
+              _suggestSwitchControl(context, enabled, onChanged),
               if (enabled) ...[
+                // Only meaningful while the worker can fire: the switch exists
+                // to stop the server saying the same thing over Discord.
+                _SavingControl<bool>(
+                  value: suggestDm,
+                  onSave: (value) => _setSuggestDm(context, value),
+                  builder: (context, value, onChanged) => SwitchListTile(
+                    title: Text(
+                      _suggestDmTitle,
+                      semanticsLabel: plainPhrases(_suggestDmTitle),
+                    ),
+                    value: value,
+                    onChanged: onChanged,
+                  ),
+                ),
                 if (!suggest.usageAccess)
                   ListTile(
                     title: const Text('使用状況へのアクセス'),
@@ -388,9 +471,13 @@ class _SettingsViewState extends State<SettingsView> with WidgetsBindingObserver
 
   /// Turns the suggestion worker on or off.
   ///
-  /// `auto_mode` is still written so the server keeps a compatible value, but
-  /// nothing reads it any more: a failed write must not look like a failure to
-  /// the user who just flipped the device switch.
+  /// The device switch is the source of truth, and the same tap also flips
+  /// `suggest_dm`: the worker and the server's suggestion would otherwise tell
+  /// the user the same thing twice. `auto_mode` is still written so the server
+  /// keeps a compatible value, but nothing reads it any more.
+  ///
+  /// A failed settings write must not undo the switch: the device state already
+  /// changed, so the switch stays as flipped and only the failure is reported.
   Future<bool> _setSuggestEnabled(BuildContext context, bool value) async {
     final suggest = context.read<HimaSuggestController>();
     final viewModel = context.read<AppViewModel>();
@@ -402,8 +489,16 @@ class _SettingsViewState extends State<SettingsView> with WidgetsBindingObserver
       _showMessage(context, '保存できなかった。もう一度試してね');
       return false;
     }
+    // Turning the worker on hands the Discord side over to it; turning it off
+    // gives Discord its suggestions back so the user keeps getting them.
     unawaited(
-      viewModel.updateSettings(autoMode: value).catchError((Object _) {}),
+      viewModel
+          .updateSettings(autoMode: value, suggestDm: !value)
+          .catchError((Object _) {
+            if (!context.mounted) return;
+            AppHaptics.error();
+            _showMessage(context, '保存できなかった。もう一度試してね');
+          }),
     );
     if (value && !suggest.notificationsAllowed) {
       // Asked right away: without the permission the worker is silent, and the
@@ -415,6 +510,19 @@ class _SettingsViewState extends State<SettingsView> with WidgetsBindingObserver
       }
     }
     return true;
+  }
+
+  /// Stores whether the server may also suggest over Discord (and push).
+  Future<bool> _setSuggestDm(BuildContext context, bool value) async {
+    try {
+      await context.read<AppViewModel>().updateSettings(suggestDm: value);
+      return true;
+    } catch (_) {
+      if (!context.mounted) return false;
+      AppHaptics.error();
+      _showMessage(context, '保存できなかった。もう一度試してね');
+      return false;
+    }
   }
 
   /// Stores how long the target apps must be used before a suggestion.

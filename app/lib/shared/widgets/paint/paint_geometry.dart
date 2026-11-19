@@ -173,8 +173,8 @@ final _swashCache = PaintCache<Path>();
 /// The wobble, the arms, the beads and the droplets are all capped so that this
 /// is a hard bound rather than a typical value: a caller that wants the paint
 /// to land on paper instead of on the widget below reserves exactly this much
-/// and does not have to measure the shape. The home screen uses it as the gap
-/// around the hero.
+/// and does not have to measure the shape. A card grid uses it as the gap
+/// between the washes it lays down.
 ///
 /// The bound holds for the *painted* result: [paintBlob]'s `grow` scales the
 /// whole splash about its centre after it is built, and a stretched droplet is
@@ -318,10 +318,7 @@ PaintBlob _buildBlob({
   // the edge still looks ruled, above it the shape turns into a star. The
   // absolute cap keeps the outline inside the [paintMaxBleed] budget on a very
   // large box, where a percentage would spill far past the widget.
-  final amplitude = math.min(
-    wobble.clamp(0.0, 0.14) * shortSide,
-    _bleedWobble,
-  );
+  final amplitude = math.min(wobble.clamp(0.0, 0.14) * shortSide, _bleedWobble);
 
   final outline = lobes > 0
       ? _starOutline(shortSide, lobes, wobble, rng)
@@ -464,8 +461,8 @@ List<Offset> _starOutline(
   final points = <Offset>[];
   for (var i = 0; i < steps; i++) {
     final theta = 2 * math.pi * i / steps;
-    final r = radius * (1 + amount * math.sin(lobes * theta + phase)) /
-        (1 + amount);
+    final r =
+        radius * (1 + amount * math.sin(lobes * theta + phase)) / (1 + amount);
     points.add(Offset(math.cos(theta) * r, math.sin(theta) * r));
   }
   return points;
@@ -678,12 +675,7 @@ List<PaintDroplet> _buildDroplets({
 /// landed in. The two differ by a fraction of a degree, but on a wide box that
 /// is enough for the tip to slip past the budget by a dp if it is not
 /// corrected.
-double _maxArmLength(
-  Offset base,
-  Offset normal,
-  Offset center,
-  double grow,
-) {
+double _maxArmLength(Offset base, Offset normal, Offset center, double grow) {
   final offset = base - center;
   final rBase = offset.distance;
   var length =
@@ -692,9 +684,8 @@ double _maxArmLength(
   final tip = offset + normal * length;
   final rTip = tip.distance;
   if (rTip > 0) {
-    length = _bleedLimit(_boxRadius(tip / rTip, center), grow) -
-        rBase -
-        _bleedBead;
+    length =
+        _bleedLimit(_boxRadius(tip / rTip, center), grow) - rBase - _bleedBead;
   }
   return length;
 }
@@ -723,12 +714,7 @@ double _bleedLimit(double boxRadius, double grow) =>
 /// [radius] is the element's own painted extent, not just its nominal radius: a
 /// stretched droplet is an egg whose long axis is `radius * (1 + stretch)`, so
 /// passing the plain radius would let its tip out of the budget.
-Offset _clampToBleed(
-  Offset point,
-  Offset center,
-  double radius,
-  double grow,
-) {
+Offset _clampToBleed(Offset point, Offset center, double radius, double grow) {
   final delta = point - center;
   final distance = delta.distance;
   if (distance <= 0) return point;
@@ -984,10 +970,7 @@ Path smoothClosedPath(List<Offset> points) {
 /// A hand-painted underline: thick through the middle, tapering to nothing at
 /// both ends, with a ragged edge and a slow drift so it does not read as a
 /// rule.
-Path paintBrushPath({
-  required Size size,
-  required int seed,
-}) {
+Path paintBrushPath({required Size size, required int seed}) {
   return _brushCache.get((size, seed), () => _buildBrushPath(size, seed));
 }
 
@@ -1111,9 +1094,9 @@ class PaintSwipe {
 
   /// The whole stroke — fingers included — with the dry streaks cut out of it.
   ///
-  /// The streaks are real holes: whatever is behind the stroke (paper, or the
-  /// idle wash the hero paints over) shows through them instead of a
-  /// paper-coloured dash being painted on top of it.
+  /// The streaks are real holes: whatever is behind the stroke (paper, or a
+  /// painted band under it) shows through them instead of a paper-coloured dash
+  /// being painted on top of it.
   final Path body;
 
   /// Individual droplets flicked off the frayed end, scattered in a cone.
@@ -1152,8 +1135,8 @@ double _swipeReach(double width) =>
 /// It replaces the caller's `padding.right` rather than adding to it: the two
 /// used to be summed, which pushed the content left of the stroke's own centre.
 /// A caller that hands a child to `BrushSwipe` gets this inset for free; a
-/// caller that paints a bare stroke and places the content itself (the home
-/// hero, which stacks two strokes) insets by the same value so the two agree.
+/// caller that paints a bare stroke and places the content itself (the login
+/// screen, which stacks two strokes) insets by the same value so the two agree.
 double paintSwipeContentInset(double width) {
   if (width <= 0) return 0;
   return _swipeSplatterGap +
@@ -1452,6 +1435,206 @@ Path _catmullRomPath(List<Offset> points) {
   }
   path.close();
   return path;
+}
+
+// ---------------------------------------------------------------------------
+// Wiping paint off
+// ---------------------------------------------------------------------------
+
+/// The x of the wipe front, in the box's own coordinates.
+///
+/// Progress 0 puts it left of the box, 1 right of it, and the travel starts and
+/// ends well outside the paint so the paint never pops off at either end.
+double paintWipeFront(Size size, double progress) {
+  const bleed = paintMaxBleed + 12.0;
+  return -bleed + (size.width + bleed * 2) * progress.clamp(0.0, 1.0);
+}
+
+/// The area a wipe has already taken off the paint.
+///
+/// The front is a seeded, ragged vertical edge with a few long fingers, so the
+/// paint comes off along a dry-brush line instead of along a rule. It is built
+/// per frame on purpose: the shape changes with [progress] on every frame of the
+/// wipe, so caching it would only fill a cache.
+Path paintWipeRegionPath({
+  required Size size,
+  required double progress,
+  required int seed,
+}) {
+  const bleed = paintMaxBleed + 12.0;
+  final rng = math.Random(seed ^ 0x5bd1);
+  final front = paintWipeFront(size, progress);
+  final top = -bleed;
+  final bottom = size.height + bleed;
+  final phase = rng.nextDouble() * math.pi * 2;
+  // A handful of fingers reach further right than the rest: paint does not come
+  // off in one line, it comes off in strokes.
+  final fingers = <(double, double)>[
+    for (var i = 0; i < 5; i++)
+      (0.06 + 0.88 * rng.nextDouble(), 8 + 20 * rng.nextDouble()),
+  ];
+  const steps = 24;
+  final path = Path()..moveTo(-bleed, top);
+  for (var i = 0; i <= steps; i++) {
+    final s = i / steps;
+    final y = top + (bottom - top) * s;
+    var x =
+        front +
+        3.5 * math.sin(s * math.pi * 3.1 + phase) +
+        2 * math.sin(s * math.pi * 7.3 + phase * 1.7);
+    for (final (at, length) in fingers) {
+      final distance = (s - at).abs();
+      if (distance < 0.06) x += length * (1 - distance / 0.06);
+    }
+    path.lineTo(x, y);
+  }
+  path.lineTo(-bleed, bottom);
+  path.close();
+  return path;
+}
+
+/// Everything the wipe has left behind: the box and its bleeds, minus
+/// [paintWipeRegionPath].
+///
+/// The kept area has to include the paint that spills out of the box, so this is
+/// a large rect with the wiped region cut out of it rather than the region
+/// itself: clipping a blob's arms and droplets with the box would cut them off.
+Path paintWipeKeptPath({
+  required Size size,
+  required double progress,
+  required int seed,
+}) {
+  const bleed = paintMaxBleed + 60.0;
+  final everything = Rect.fromLTRB(
+    -bleed,
+    -bleed,
+    size.width + bleed,
+    size.height + bleed,
+  );
+  return Path.combine(
+    PathOperation.difference,
+    Path()..addRect(everything),
+    paintWipeRegionPath(size: size, progress: progress, seed: seed),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Painting the anatomy
+// ---------------------------------------------------------------------------
+
+/// Draws one arm, scaled along its own axis so it grows out of the body.
+///
+/// Shared by every primitive that carries arms: the paint has one way of
+/// spreading, so a splash on the home screen and a thick blob in the hero land
+/// their lobes the same way.
+void paintArm(
+  Canvas canvas,
+  Paint paint,
+  PaintArm arm, {
+  double progress = 1,
+  int index = 0,
+}) {
+  // Staggered so the arms land one after another, the way a splash spreads.
+  final ramp = Curves.easeOutCubic.transform(
+    ((progress - 0.03 * index) / 0.55).clamp(0.0, 1.0),
+  );
+  if (ramp <= 0) return;
+  // A small overshoot at the end of the travel: the lobe stretches past its
+  // resting length and settles back.
+  final reach = 0.2 + 0.8 * ramp + 0.08 * math.sin(math.pi * ramp);
+  final angle = math.atan2(arm.direction.dy, arm.direction.dx);
+  canvas.save();
+  canvas.translate(arm.base.dx, arm.base.dy);
+  canvas.rotate(angle);
+  canvas.scale(reach, 1);
+  canvas.rotate(-angle);
+  canvas.translate(-arm.base.dx, -arm.base.dy);
+  canvas.drawPath(arm.path, paint);
+  canvas.restore();
+
+  if (arm.bead > 0) {
+    final length = (arm.tip - arm.base).distance;
+    canvas.drawCircle(
+      arm.base + arm.direction * (length * reach),
+      arm.bead * (0.35 + 0.65 * ramp),
+      paint,
+    );
+  }
+}
+
+/// Draws one tongue of paint hanging off the bottom edge.
+void paintDrip(
+  Canvas canvas,
+  Paint paint,
+  PaintDrip drip, {
+  double progress = 1,
+}) {
+  // Drips land after the body: the paint has to arrive before it can run.
+  final stagger = Curves.easeOutCubic.transform(
+    ((progress - 0.3) / 0.7).clamp(0.0, 1.0),
+  );
+  if (stagger <= 0) return;
+  final end = Offset.lerp(drip.start, drip.end, stagger)!;
+  final delta = end - drip.start;
+  final length = delta.distance;
+  if (length < 0.5) return;
+  final direction = delta / length;
+  final normal = Offset(-direction.dy, direction.dx);
+  final half = drip.width * 0.5;
+  final tip = drip.width * 0.22;
+  // A filled tongue, wider at the edge and pinched at the end, with the bead on
+  // top. A stroke here would be a straight line hanging off the splash.
+  final path = Path()
+    ..moveTo(drip.start.dx + normal.dx * half, drip.start.dy + normal.dy * half)
+    ..quadraticBezierTo(
+      drip.start.dx + delta.dx * 0.55 + normal.dx * half * 0.9,
+      drip.start.dy + delta.dy * 0.55 + normal.dy * half * 0.9,
+      end.dx + normal.dx * tip,
+      end.dy + normal.dy * tip,
+    )
+    ..lineTo(end.dx - normal.dx * tip, end.dy - normal.dy * tip)
+    ..quadraticBezierTo(
+      drip.start.dx + delta.dx * 0.55 - normal.dx * half * 0.9,
+      drip.start.dy + delta.dy * 0.55 - normal.dy * half * 0.9,
+      drip.start.dx - normal.dx * half,
+      drip.start.dy - normal.dy * half,
+    )
+    ..close();
+  canvas.drawPath(path, paint);
+  canvas.drawCircle(end, drip.bead * (0.45 + 0.55 * stagger), paint);
+}
+
+/// Draws one detached droplet, flying out from [center] as it lands.
+void paintDroplet(
+  Canvas canvas,
+  Paint paint,
+  PaintDroplet droplet, {
+  required Offset center,
+  double progress = 1,
+  int index = 0,
+}) {
+  // Staggered so the droplets leave the splash in sequence instead of popping
+  // out as one ring.
+  final stagger = Curves.easeOutCubic.transform(
+    ((progress - 0.06 * index) / 0.55).clamp(0.0, 1.0),
+  );
+  if (stagger <= 0) return;
+  final fly = 0.35 + 0.65 * stagger;
+  final position = center + (droplet.center - center) * fly;
+  final radius = droplet.radius * (0.45 + 0.55 * stagger);
+  if (droplet.stretch > 0) {
+    // A filled egg, not a circle with a tail: the droplet was travelling fast
+    // when it hit the paper.
+    final angle = math.atan2(droplet.direction.dy, droplet.direction.dx);
+    canvas.save();
+    canvas.translate(position.dx, position.dy);
+    canvas.rotate(angle);
+    canvas.scale(1 + droplet.stretch, 1 - droplet.stretch * 0.35);
+    canvas.drawCircle(Offset.zero, radius, paint);
+    canvas.restore();
+    return;
+  }
+  canvas.drawCircle(position, radius, paint);
 }
 
 /// A thin lens with tapered ends: one dry streak.

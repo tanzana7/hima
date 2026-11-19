@@ -4,6 +4,7 @@ import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_spacing.dart';
 import '../../../app/theme/app_text_styles.dart';
 import '../../../data/models/models.dart';
+import '../../../shared/phrase_wrap.dart';
 import '../../../shared/widgets/avatar_view.dart';
 import '../../../shared/widgets/knock_pill.dart';
 import '../../../shared/widgets/mood_badge.dart';
@@ -18,7 +19,10 @@ const _matchEmoji = '🙂🙂';
 const _matchTint = AppColors.skySoft;
 const _matchAccent = AppColors.purple;
 const _matchMark = PaintMarkKind.star;
-const _matchMessage = 'お互い誘われ待ちだよ';
+
+/// Two phrases, so the header wraps between 「お互い」 and 「誘われ待ちだよ」
+/// instead of inside either of them when the text scale grows.
+final _matchMessage = wrapPhrases(['お互い', '誘われ待ちだよ']);
 
 /// One card per match kind, shown between the hero and the friend grid.
 ///
@@ -155,6 +159,9 @@ class _MatchCardState extends State<MatchCard>
                   Expanded(
                     child: Text(
                       _matchMessage,
+                      // The displayed copy carries the invisible break
+                      // characters; a reader gets the sentence as written.
+                      semanticsLabel: plainPhrases(_matchMessage),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: AppTextStyles.friendName.copyWith(fontSize: 15),
@@ -199,9 +206,8 @@ class _MatchCardState extends State<MatchCard>
 /// The avatars of one kind.
 ///
 /// They spread across the card when they fit, because a handful of people
-/// bunched against the left edge left the card looking half empty. Past that
-/// they scroll instead of shrinking, since the dab under each avatar has to
-/// stay readable.
+/// bunched against the left edge left the card looking half empty. When they do
+/// not fit, they wrap instead of clipping invitation controls at the card edge.
 class _AvatarRow extends StatelessWidget {
   const _AvatarRow({required this.cellWidth, required this.children});
 
@@ -220,17 +226,11 @@ class _AvatarRow extends StatelessWidget {
           children: children,
         );
       }
-      return SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            for (var index = 0; index < children.length; index++) ...[
-              if (index > 0) const SizedBox(width: AppSpacing.s8),
-              children[index],
-            ],
-          ],
-        ),
+      return Wrap(
+        alignment: WrapAlignment.spaceEvenly,
+        spacing: AppSpacing.s8,
+        runSpacing: AppSpacing.s8,
+        children: children,
       );
     },
   );

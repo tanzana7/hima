@@ -10,16 +10,19 @@ import '../../../shared/widgets/paint/paint.dart';
 
 /// 「なにする？」 chips. Optional, single select, and deselectable.
 ///
-/// They sit on the paper directly under the hero's stroke, as one horizontally
-/// scrolling row: choosing an activity used to require scrolling past the whole
-/// friend grid, so the choice was effectively hidden. Each activity keeps its own
-/// pastel ([ActivityStyle]) so the row reads as a set of playful dabs instead of
-/// five identical chips.
+/// They sit on the paper directly under the hero's stroke. The usual-width row
+/// scrolls horizontally; narrow rows and large text scales wrap so labels do not
+/// end mid-word.
+/// Choosing an activity used to require scrolling past the whole friend grid,
+/// so the choice was effectively hidden. Each activity keeps its own pastel
+/// ([ActivityStyle]) so the row reads as playful dabs instead of five identical
+/// chips.
 ///
 /// **On paper, not on the band.** Inside the stroke the row was cut by the
 /// band's straight right edge, and a fade over that edge took the chip labels'
 /// contrast with it. Below the stroke the row is cut at the viewport edge like
-/// any scroller, and every label stays fully opaque on paper.
+/// any scroller; below 300dp or above 1.3 text scale the chips wrap so no label
+/// is cut at that edge.
 ///
 /// The selected chip is the same hue pushed toward the activity's accent and
 /// carries a droplet or two, so the choice is shown by more paint rather than by
@@ -35,10 +38,63 @@ class ActivityChips extends StatelessWidget {
   final ValueChanged<Activity?> onSelected;
 
   @override
-  Widget build(BuildContext context) => Row(
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      Widget chip(Activity activity) => _ActivityChip(
+        activity: activity,
+        selected: selected == activity,
+        onTap: () {
+          AppHaptics.select();
+          onSelected(selected == activity ? null : activity);
+        },
+      );
+
+      final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
+      // Keep every activity label readable on narrow phones and at large text
+      // scales. At the usual width and scale the row stays compact and scrolls.
+      if (constraints.maxWidth < 300 || textScale > 1.3) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _activityLabel(),
+            const SizedBox(height: AppSpacing.s8),
+            Wrap(
+              spacing: AppSpacing.s8,
+              runSpacing: AppSpacing.s8,
+              children: [
+                for (final activity in Activity.values) chip(activity),
+              ],
+            ),
+          ],
+        );
+      }
+
+      return Row(
+        children: [
+          _activityLabel(),
+          const SizedBox(width: AppSpacing.s8),
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (final activity in Activity.values)
+                    Padding(
+                      padding: const EdgeInsets.only(right: AppSpacing.s8),
+                      child: chip(activity),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      );
+    },
+  );
+
+  Widget _activityLabel() => Row(
+    mainAxisSize: MainAxisSize.min,
     children: [
-      // Kept as a compact inline label so the chips still read as the optional
-      // 「なにする？」 choice (Design.md 4.4) without adding a second row.
       const Icon(Icons.bolt_rounded, size: 15, color: AppColors.coral),
       const SizedBox(width: 2),
       Text(
@@ -47,28 +103,6 @@ class ActivityChips extends StatelessWidget {
         style: AppTextStyles.caption.copyWith(
           fontWeight: FontWeight.w800,
           color: AppColors.ink,
-        ),
-      ),
-      const SizedBox(width: AppSpacing.s8),
-      Expanded(
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            children: [
-              for (final activity in Activity.values)
-                Padding(
-                  padding: const EdgeInsets.only(right: AppSpacing.s8),
-                  child: _ActivityChip(
-                    activity: activity,
-                    selected: selected == activity,
-                    onTap: () {
-                      AppHaptics.select();
-                      onSelected(selected == activity ? null : activity);
-                    },
-                  ),
-                ),
-            ],
-          ),
         ),
       ),
     ],

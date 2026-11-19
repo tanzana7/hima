@@ -1,4 +1,5 @@
 import '../../../data/models/models.dart';
+import '../../shared/phrase_wrap.dart';
 
 /// The three hero states from Design.md 2.
 enum HeroPhase { idle, declared, justExpired }
@@ -53,7 +54,9 @@ class HeroState {
   String get supporting => switch (phase) {
     HeroPhase.declared => remainingLabel(),
     HeroPhase.justExpired => 'ひま宣言が終了したよ',
-    HeroPhase.idle => 'ひまなら友達に知らせよう',
+    // Phrase by phrase, so a large text scale wraps between 「ひまなら」,
+    // 「友達に」 and 「知らせよう」 instead of inside one of them.
+    HeroPhase.idle => wrapPhrases(['ひまなら', '友達に', '知らせよう']),
   };
 
   String remainingLabel([DateTime? now]) {
@@ -75,4 +78,23 @@ String himaRemainingLabel(DateTime expiresAt, [DateTime? now]) {
     return rest == 0 ? 'あと$hours時間くらい' : 'あと$hours時間$rest分くらい';
   }
   return 'あと$minutes分くらい';
+}
+
+/// 「あと59分」: the hero's own remaining time, without the hedge.
+///
+/// The meta row puts the time, the activity and 「おわる」 on one line, and
+/// 「あと1時間くらい」 made the time the widest of the three for no extra
+/// information — the rounding is already a guess inside the number itself. The
+/// friend cards keep [himaRemainingLabel], where the hedge is the point: that
+/// is someone else's declaration.
+String himaRemainingShortLabel(DateTime expiresAt, [DateTime? now]) {
+  final seconds = expiresAt.difference(now ?? DateTime.now().toUtc()).inSeconds;
+  final minutes = (seconds + 59) ~/ 60;
+  if (minutes <= 0) return 'まもなく終了';
+  if (minutes >= 60) {
+    final hours = minutes ~/ 60;
+    final rest = minutes % 60;
+    return rest == 0 ? 'あと$hours時間' : 'あと$hours時間$rest分';
+  }
+  return 'あと$minutes分';
 }

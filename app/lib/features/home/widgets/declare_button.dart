@@ -5,23 +5,29 @@ import 'package:flutter/semantics.dart';
 
 import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_spacing.dart';
-import '../../../app/theme/app_text_styles.dart';
 import '../../../data/models/models.dart';
 import '../../../shared/haptics.dart';
 import '../../../shared/widgets/paint/paint.dart';
+import 'hero_paint.dart';
 import 'pickers.dart';
 
-/// The yellow 「ひまを宣言」 paint dab.
+/// The undeclared hero: the whole blob of paint is the declare control.
 ///
-/// Tap declares immediately with the last used mood (Design.md: the first
-/// declaration must not require answering a question). Long-press opens the
-/// mood bubbles around the finger; releasing on one declares with it, releasing
-/// anywhere else cancels.
+/// It replaces the separate yellow 「ひまを宣言」 dab. The heading sits on the
+/// paint and the blob *is* the button, so the screen has one obvious thing to
+/// press instead of a card with a second control under it; the small
+/// `タップで宣言` label inside the paint is what makes that discoverable.
+///
+/// Tap declares immediately with the last used mood (the first declaration must
+/// not require answering a question). Long-press opens the mood bubbles around
+/// the finger; releasing on one declares with it, releasing anywhere else
+/// cancels. A screen reader cannot hold, so the same choice is exposed as a
+/// custom semantics action.
 ///
 /// The bubbles and their scrim live in the root [Overlay], not in the hero: the
-/// bubbles arc above the button over the heading, and a scrim drawn inside the
+/// bubbles arc above the blob over the heading, and a scrim drawn inside the
 /// list would be painted over by the cards below it. The scrim is punched out
-/// around the button so the button and the bubbles stay the only bright things
+/// around the blob so the paint and the bubbles stay the only bright things
 /// while the rest of the screen dims.
 class DeclareButton extends StatefulWidget {
   const DeclareButton({
@@ -30,9 +36,13 @@ class DeclareButton extends StatefulWidget {
     required this.busy,
     required this.shakeToken,
     required this.onDeclare,
+    required this.child,
   });
 
   final Mood lastMood;
+
+  /// True while a declaration is in flight: the blob ignores input and its
+  /// label shows progress instead of inviting another tap.
   final bool busy;
 
   /// Incremented by the parent when a declaration failed, so the control can
@@ -41,21 +51,17 @@ class DeclareButton extends StatefulWidget {
 
   final ValueChanged<Mood> onDeclare;
 
+  /// The hero's heading and labels, laid out on the paint.
+  final Widget child;
+
   @override
-  State<DeclareButton> createState() => DeclareButtonState();
+  State<DeclareButton> createState() => _DeclareButtonState();
 }
 
-class DeclareButtonState extends State<DeclareButton>
+class _DeclareButtonState extends State<DeclareButton>
     with TickerProviderStateMixin {
-  /// Height of the button at the default text scale.
-  static const _minButtonHeight = 60.0;
-
-  /// Room the dab keeps above and below its label. The button height is derived
-  /// from it, so the two cannot drift apart.
-  static const _dabPaddingV = 10.0;
-
   static const _bubbleSize = 68.0;
-  static const _arcRadius = 104.0;
+  static const _arcRadius = 108.0;
 
   /// Width of the box a bubble is positioned in: the circle plus room for the
   /// label underneath it. Wide enough for the longest label at 200% text.
@@ -72,7 +78,7 @@ class DeclareButtonState extends State<DeclareButton>
   Mood? _committing;
   Size _stackSize = Size.zero;
 
-  /// Global rect of the button, captured when the menu opens. It anchors the
+  /// Global rect of the blob, captured when the menu opens. It anchors the
   /// bubbles and the hole in the scrim.
   Rect _buttonRect = Rect.zero;
 
@@ -105,10 +111,9 @@ class DeclareButtonState extends State<DeclareButton>
   @override
   void didUpdateWidget(DeclareButton oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.shakeToken != oldWidget.shakeToken) {
-      if (!MediaQuery.disableAnimationsOf(context)) {
-        _shakeController.forward(from: 0);
-      }
+    if (widget.shakeToken != oldWidget.shakeToken &&
+        !MediaQuery.disableAnimationsOf(context)) {
+      _shakeController.forward(from: 0);
     }
   }
 
@@ -124,22 +129,24 @@ class DeclareButtonState extends State<DeclareButton>
 
   bool get _reduceMotion => MediaQuery.disableAnimationsOf(context);
 
+  bool get _acceptsInput => !widget.busy;
+
+  /// A squash rather than a shrink: the paint gives under the finger and
+  /// springs back with a small overshoot.
   double get _pressScale {
     final t = _pressController.value;
     if (_pressController.status == AnimationStatus.reverse) {
-      // Spring back with a small overshoot so the tap feels physical.
       final spring = Curves.elasticOut.transform(1 - t);
-      return 0.92 + 0.08 * spring;
+      return 0.975 + 0.025 * spring;
     }
-    return 1 - 0.08 * Curves.easeOutCubic.transform(t);
+    return 1 - 0.025 * Curves.easeOutCubic.transform(t);
   }
 
   Offset _bubbleCenter(int index) {
     // An arc that opens upward around the finger: the bubbles are spread evenly
     // and centred on the vertical, so an even count stays symmetric.
     const step = 0.36 * math.pi;
-    final angle =
-        math.pi * 1.5 + step * (index - (Mood.values.length - 1) / 2);
+    final angle = math.pi * 1.5 + step * (index - (Mood.values.length - 1) / 2);
     final raw = _origin + Offset(math.cos(angle), math.sin(angle)) * _arcRadius;
     // Keep every bubble on screen so a press near an edge cannot make a mood
     // unreachable.
@@ -160,34 +167,34 @@ class DeclareButtonState extends State<DeclareButton>
   }
 
   void _handleTap() {
-    if (widget.busy) return;
+    if (!_acceptsInput) return;
     widget.onDeclare(widget.lastMood);
   }
 
   /// The squash-and-spring is decoration, so reduced motion drops it; the tap
   /// itself stays because declaring is the primary action of the screen.
   void _pressIn() {
-    if (_reduceMotion) return;
+    if (_reduceMotion || !_acceptsInput) return;
     _pressController.forward();
   }
 
   void _pressOut() {
-    if (_reduceMotion) return;
+    if (_reduceMotion || !_acceptsInput) return;
     _pressController.reverse();
   }
 
-  /// The bubbles only exist while a finger holds the button, which a screen
-  /// reader cannot do, so the same two choices are offered as an explicit
-  /// action that opens an operable picker.
+  /// The bubbles only exist while a finger holds the blob, which a screen reader
+  /// cannot do, so the same two choices are offered as an explicit action that
+  /// opens an operable picker.
   Future<void> _pickMood() async {
-    if (widget.busy) return;
+    if (!_acceptsInput) return;
     final mood = await showMoodPicker(context, current: widget.lastMood);
     if (mood == null || !mounted) return;
     widget.onDeclare(mood);
   }
 
   void _handleLongPressStart(LongPressStartDetails details) {
-    if (widget.busy) return;
+    if (!_acceptsInput) return;
     AppHaptics.openMenu();
     final box = context.findRenderObject();
     final origin = box is RenderBox
@@ -251,7 +258,7 @@ class DeclareButtonState extends State<DeclareButton>
     // Fade the scrim out and only then drop the overlay: removing it straight
     // away made the screen snap back to full brightness the moment a mood was
     // chosen. The declaration waits for the fade, because a rebuild would
-    // dispose this button (and its overlay) mid-fade.
+    // dispose this blob (and its overlay) mid-fade.
     _menuController
         .animateBack(
           0,
@@ -336,121 +343,70 @@ class DeclareButtonState extends State<DeclareButton>
     ),
   );
 
-  /// The button height follows the text scale.
-  ///
-  /// A fixed 60dp box left only 40dp for the label once the dab's padding was
-  /// taken out, and a 19sp label at 200% needs 45.6dp, so it clipped. Growing
-  /// with the label keeps the CTA inside the hero at every scale.
-  double _buttonHeightFor(BuildContext context) {
-    final style = AppTextStyles.button;
-    final label =
-        MediaQuery.textScalerOf(context).scale(style.fontSize ?? 19) *
-        (style.height ?? 1.2);
-    return math.max(_minButtonHeight, label + _dabPaddingV * 2 + 2);
-  }
-
   @override
   Widget build(BuildContext context) {
-    final buttonHeight = _buttonHeightFor(context);
     return LayoutBuilder(
       builder: (context, constraints) {
-        _stackSize = Size(constraints.maxWidth, buttonHeight);
-        return SizedBox(
-          height: buttonHeight,
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              Positioned.fill(
+        _stackSize = Size(constraints.maxWidth, constraints.maxHeight);
+        return Stack(
+          clipBehavior: Clip.none,
+          children: [
+            // The paint and its content move together: the blob gives under the
+            // finger, so the shadow between them would give the press away.
+            //
+            // `ExcludeSemantics`: the blob below is announced as one button, so
+            // the heading inside it must not be read a second time.
+            ExcludeSemantics(
+              child: AnimatedBuilder(
+                animation: Listenable.merge([
+                  _pressController,
+                  _shakeController,
+                ]),
+                builder: (context, child) {
+                  final shake = _shakeController.isAnimating
+                      ? math.sin(_shakeController.value * math.pi * 6) *
+                            9 *
+                            (1 - _shakeController.value)
+                      : 0.0;
+                  return Transform.translate(
+                    offset: Offset(shake, 0),
+                    child: Transform.scale(scale: _pressScale, child: child),
+                  );
+                },
+                child: HeroPaint(colors: heroIdleColors, child: widget.child),
+              ),
+            ),
+            Positioned.fill(
+              child: Semantics(
+                button: true,
+                label: 'ひまを宣言',
+                hint: 'タップで宣言、長押しで温度感を選べるよ',
+                // The tap action has to live on this node: `excludeSemantics`
+                // drops the gesture detector below, action included, so without
+                // it a screen reader could announce the blob but never declare.
+                onTap: _acceptsInput ? _handleTap : null,
+                customSemanticsActions: {
+                  const CustomSemanticsAction(label: '温度感を選んで宣言'):
+                      _pickMood,
+                },
+                excludeSemantics: true,
                 child: GestureDetector(
                   behavior: HitTestBehavior.opaque,
-                  onTapDown: widget.busy ? null : (_) => _pressIn(),
-                  onTapUp: widget.busy ? null : (_) => _pressOut(),
-                  onTapCancel: widget.busy ? null : _pressOut,
-                  onTap: widget.busy ? null : _handleTap,
+                  onTapDown: _acceptsInput ? (_) => _pressIn() : null,
+                  onTapUp: _acceptsInput ? (_) => _pressOut() : null,
+                  onTapCancel: _acceptsInput ? _pressOut : null,
+                  onTap: _acceptsInput ? _handleTap : null,
                   onLongPressStart: _handleLongPressStart,
                   onLongPressMoveUpdate: _handleLongPressMove,
                   onLongPressEnd: _handleLongPressEnd,
-                  child: AnimatedBuilder(
-                    animation: Listenable.merge([
-                      _pressController,
-                      _shakeController,
-                    ]),
-                    builder: (context, child) {
-                      final shake = _shakeController.isAnimating
-                          ? math.sin(_shakeController.value * math.pi * 6) *
-                                9 *
-                                (1 - _shakeController.value)
-                          : 0.0;
-                      return Transform.translate(
-                        offset: Offset(shake, 0),
-                        child: Transform.scale(
-                          scale: _pressScale,
-                          child: child,
-                        ),
-                      );
-                    },
-                    child: Semantics(
-                      button: true,
-                      label: 'ひまを宣言',
-                      hint: '温度感を選んで宣言できます',
-                      customSemanticsActions: {
-                        const CustomSemanticsAction(label: '温度感を選んで宣言'):
-                            _pickMood,
-                      },
-                      excludeSemantics: true,
-                      child: _buttonVisual(context),
-                    ),
-                  ),
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         );
       },
     );
   }
-
-  /// The main CTA is a paint dab, not a stadium: a perfect pill was the
-  /// straightest thing left on the home screen. The padding matches
-  /// [_dabPaddingV] so the label always has room inside the paint.
-  Widget _buttonVisual(BuildContext context) => PaintDab(
-    seed: 4242,
-    color: AppColors.yellow,
-    padding: const EdgeInsets.symmetric(
-      horizontal: AppSpacing.s24,
-      vertical: _dabPaddingV,
-    ),
-    wobble: 0.09,
-    child: Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        if (widget.busy)
-          const SizedBox(
-            width: 20,
-            height: 20,
-            child: CircularProgressIndicator(
-              strokeWidth: 2.4,
-              color: AppColors.ink,
-            ),
-          )
-        else
-          const Icon(
-            Icons.campaign_rounded,
-            color: AppColors.ink,
-            size: 24,
-          ),
-        const SizedBox(width: AppSpacing.s8),
-        Flexible(
-          child: Text(
-            'ひまを宣言',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: AppTextStyles.button,
-          ),
-        ),
-      ],
-    ),
-  );
 
   Widget _bubble(BuildContext context, Mood mood, int index) {
     final center = _buttonRect.topLeft + _bubbleCenter(index);
@@ -463,7 +419,8 @@ class DeclareButtonState extends State<DeclareButton>
     );
     final hoverScale = isHovered ? 1.3 : (_hovered == null ? 1.0 : 0.9);
     final buttonCenter =
-        _buttonRect.topLeft + Offset(_buttonRect.width / 2, _buttonRect.height / 2);
+        _buttonRect.topLeft +
+        Offset(_buttonRect.width / 2, _buttonRect.height / 2);
 
     return Positioned(
       left: center.dx - _bubbleSlotWidth / 2,
@@ -495,11 +452,8 @@ class DeclareButtonState extends State<DeclareButton>
               curve: Curves.easeOutBack,
               // Kept out of the accessibility tree: a bubble is a touch
               // affordance that only exists mid-long-press, so a focusable
-              // button here would be a dead end. The declare button exposes the
-              // same choice as a custom action instead.
-              // A paint dab rather than a bordered circle: the mood bubbles
-              // are thrown at the paper too, and the ink stroke that used to
-              // outline them was the last hairline on the home screen.
+              // button here would be a dead end. The blob exposes the same
+              // choice as a custom action instead.
               child: ExcludeSemantics(
                 child: PaintDab(
                   seed: 7000 + index,
@@ -559,7 +513,7 @@ class DeclareButtonState extends State<DeclareButton>
   };
 }
 
-/// Dims the screen except for the button, so the bubbles no longer sit on top of
+/// Dims the screen except for the blob, so the bubbles no longer sit on top of
 /// the readable heading.
 class _ScrimPainter extends CustomPainter {
   _ScrimPainter({required this.hole, required this.opacity});
@@ -573,10 +527,7 @@ class _ScrimPainter extends CustomPainter {
     final full = Path()..addRect(Offset.zero & size);
     final cut = Path()
       ..addRRect(
-        RRect.fromRectAndRadius(
-          hole,
-          const Radius.circular(AppSpacing.radiusPill),
-        ),
+        RRect.fromRectAndRadius(hole, const Radius.circular(AppSpacing.s32)),
       );
     canvas.drawPath(
       Path.combine(PathOperation.difference, full, cut),

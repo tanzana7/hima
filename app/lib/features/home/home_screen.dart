@@ -7,7 +7,7 @@ import '../../app/theme/app_spacing.dart';
 import '../../data/models/models.dart';
 import '../../shared/haptics.dart';
 import '../../shared/widgets/app_bottom_navigation.dart';
-import '../../shared/widgets/paint/paint_geometry.dart';
+import '../../shared/widgets/paint/paint_thick.dart';
 import '../../shared/widgets/shake.dart';
 import '../../state/app_view_model.dart';
 import '../knocks/knocks_screen.dart';
@@ -117,17 +117,24 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _end() async {
+  /// Ends the declaration and reports whether the server accepted it.
+  ///
+  /// The hero needs the answer: it wipes the declared paint off, and on a
+  /// failure it puts the paint back instead of leaving the paper state on screen
+  /// and then flipping back to the declared one.
+  Future<bool> _end() async {
     final viewModel = context.read<AppViewModel>();
     try {
       await viewModel.endHima();
-      if (!mounted) return;
+      if (!mounted) return true;
       AppHaptics.end();
       setState(() => _justExpired = false);
+      return true;
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted) return false;
       AppHaptics.error();
       _showMessage('終了できなかった。もう一度試してね');
+      return false;
     }
   }
 
@@ -271,10 +278,11 @@ class _HomeScreenState extends State<HomeScreen> {
           onOpenKnocks: _openKnocks,
           onOpenSettings: _openSettings,
         ),
-        // The hero is a brush swipe. The stroke keeps `paintSwipeBleed` of
-        // paper above and below, so its ragged edges never touch a neighbouring
-        // card — whether or not match cards follow, and at any text scale.
-        const SizedBox(height: paintSwipeBleed),
+        // The hero is a thick blob of paint. It throws its arms and droplets
+        // into `paintThickBleed` of paper above and below, so its ragged edge
+        // never touches a neighbouring card — whether or not match cards follow,
+        // and at any text scale.
+        const SizedBox(height: paintThickBleed),
         if (me != null)
           MyStatusHero(
             state: state,
@@ -299,9 +307,9 @@ class _HomeScreenState extends State<HomeScreen> {
         if (matchCards.isEmpty)
           // No match cards: the hero's paint is the last thing above the
           // friends section, so it needs the same reserved band here too.
-          const SizedBox(height: paintSwipeBleed)
+          const SizedBox(height: paintThickBleed)
         else ...[
-          const SizedBox(height: paintSwipeBleed),
+          const SizedBox(height: paintThickBleed),
           for (final card in matchCards)
             Padding(
               padding: const EdgeInsets.only(bottom: AppSpacing.s12),

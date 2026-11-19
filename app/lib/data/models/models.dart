@@ -323,23 +323,39 @@ class DiscordAuthRequest {
 /// /bot/users/{user_id}/settings`). The app neither reads nor sends it, so the
 /// settings screen does not offer a switch that would change nothing.
 class UserSettings {
-  const UserSettings({required this.autoMode, required this.autoMood});
+  const UserSettings({
+    required this.autoMode,
+    required this.autoMood,
+    required this.suggestDm,
+  });
 
   /// Used when a payload has no settings yet (the OAuth response, for example).
-  static const fallback = UserSettings(autoMode: false, autoMood: Mood.ok);
+  static const fallback = UserSettings(
+    autoMode: false,
+    autoMood: Mood.ok,
+    suggestDm: true,
+  );
 
   final bool autoMode;
   final Mood autoMood;
 
+  /// Whether the server may suggest a hima time to this user (Discord DM and
+  /// push). `users.suggest_dm` is true for every existing row, so a payload
+  /// that predates the column must not read as an opt-out.
+  final bool suggestDm;
+
   factory UserSettings.fromJson(JsonMap json) => UserSettings(
     autoMode: readBoolOr(json, 'auto_mode', fallback: false),
     autoMood: _moodOrOk(readOptionalString(json, 'auto_mood')),
+    suggestDm: readBoolOr(json, 'suggest_dm', fallback: true),
   );
 
-  UserSettings copyWith({bool? autoMode, Mood? autoMood}) => UserSettings(
-    autoMode: autoMode ?? this.autoMode,
-    autoMood: autoMood ?? this.autoMood,
-  );
+  UserSettings copyWith({bool? autoMode, Mood? autoMood, bool? suggestDm}) =>
+      UserSettings(
+        autoMode: autoMode ?? this.autoMode,
+        autoMood: autoMood ?? this.autoMood,
+        suggestDm: suggestDm ?? this.suggestDm,
+      );
 }
 
 /// `auto_mood` is optional, and [moodFromJson] already folds anything it cannot

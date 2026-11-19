@@ -475,9 +475,14 @@ class MockApiClient implements ApiClient {
   Future<UserSettings> updateSettings({
     bool? autoMode,
     Mood? autoMood,
+    bool? suggestDm,
   }) async {
     await _gate();
-    _settings = _settings.copyWith(autoMode: autoMode, autoMood: autoMood);
+    _settings = _settings.copyWith(
+      autoMode: autoMode,
+      autoMood: autoMood,
+      suggestDm: suggestDm,
+    );
     return _settings;
   }
 

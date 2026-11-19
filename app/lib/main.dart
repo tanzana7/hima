@@ -8,10 +8,14 @@ import 'data/app_config.dart';
 import 'data/hima_suggest_bridge.dart';
 import 'data/http_api_client.dart';
 import 'data/mock_api_client.dart';
+import 'shared/widgets/paint/paint_texture.dart';
 import 'state/session_owner.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  // The paint kit's detail maps are decoded once, in the background: a missing or
+  // still-loading map only falls back to flat paint, so nothing waits for them.
+  PaintTextures.instance.preload();
   const config = AppConfig.fromEnvironment;
   // No API_BASE_URL means the offline demo: the mock answers every call, which
   // is how the app runs without a server.
