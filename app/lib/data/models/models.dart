@@ -146,20 +146,28 @@ extension ActivityPresentation on Activity {
   };
 }
 
-/// Declare durations the app offers. The API accepts any minutes; the app keeps
-/// these three so the picker stays a one-tap choice.
-const List<int> himaDurationChoices = [30, 60, 120];
+/// Declare durations the app offers, as the stops of the duration slider.
+///
+/// The API accepts 1–1440 minutes. The range follows the Discord bot, whose
+/// presets start at 15 minutes and whose custom entry goes up to 12 hours, so a
+/// declaration made in either place can be shown and changed in the other.
+/// The steps widen as the time grows: the difference between 15 and 30 minutes
+/// matters, while between 8 and 9 hours it does not, and fewer stops keep each
+/// one wide enough to land on with a finger.
+const List<int> himaDurationChoices = [15, 30, 60, 90, 120, 180, 240, 360, 480, 720];
 const int defaultHimaDurationMin = 60;
 
 /// Weekday index 0 = 月曜 … 6 = 日曜, the same order as `regular_slots.weekday`.
 const List<String> weekdayLabels = ['月', '火', '水', '木', '金', '土', '日'];
 
-String durationLabel(int minutes) => switch (minutes) {
-  30 => '30分',
-  60 => '1時間',
-  120 => '2時間',
-  _ => '$minutes分',
-};
+/// 「15分」「1時間」「1時間30分」: whole hours drop the minutes, so the long
+/// stops read as short as the short ones.
+String durationLabel(int minutes) {
+  if (minutes < 60) return '$minutes分';
+  final hours = minutes ~/ 60;
+  final rest = minutes % 60;
+  return rest == 0 ? '$hours時間' : '$hours時間$rest分';
+}
 
 /// `HH:MM` for minutes after midnight. The forecast may end a range at 1440,
 /// which reads as 24:00.
