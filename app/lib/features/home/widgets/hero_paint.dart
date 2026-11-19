@@ -8,20 +8,20 @@ import '../../../shared/widgets/paint/paint.dart';
 /// Both states lay their content out with this, and the declare surface inside
 /// the same value, so the declared paint covers the idle one exactly and the
 /// wipe reveals a shape that lines up with it.
-const EdgeInsets heroBlobPadding = EdgeInsets.fromLTRB(22, 18, 22, 18);
+const EdgeInsets heroBlobPadding = EdgeInsets.fromLTRB(18, 20, 18, 20);
 
 /// The hero's one blob silhouette.
 ///
 /// The idle and the declared states are the same lump of paint in two colours:
 /// the declared paint then covers the idle paint to the edge, nothing shows
-/// around it, and the wipe can take the coral off to reveal the paper state
+/// around it, and the wipe can take the pink off to reveal the paper state
 /// underneath without a silhouette jump.
 const int heroBlobSeed = 20261117;
 
-const double _heroBlobWobble = 0.055;
-const int _heroBlobDroplets = 10;
-const int _heroBlobArms = 3;
-const double _heroBlobArmLength = 0.04;
+const double _heroBlobWobble = 0.075;
+const int _heroBlobDroplets = 14;
+const int _heroBlobArms = 4;
+const double _heroBlobArmLength = 0.05;
 
 /// The hero's paint: a thick blob, in the idle or in the declared colours.
 class HeroPaint extends StatelessWidget {
@@ -31,11 +31,9 @@ class HeroPaint extends StatelessWidget {
     this.child,
     this.progress = 1,
     this.wipe = 0,
-    this.detailUnderContent = 1,
   });
 
-  /// `[top, bottom]` from [AppColors]. Both states pass the pair their heading
-  /// was measured against.
+  /// `[top, bottom]` from [AppColors].
   final List<Color> colors;
 
   final Widget? child;
@@ -46,11 +44,6 @@ class HeroPaint extends StatelessWidget {
 
   /// 0 → the whole blob, 1 → wiped off. Only a user's 「おわる」 moves it.
   final double wipe;
-
-  /// How much bristle detail is left behind the content. The declared paint
-  /// passes a low value: its heading is white on coral, and a light bristle
-  /// would lift the paint under it below the 3:1 the heading is measured at.
-  final double detailUnderContent;
 
   @override
   Widget build(BuildContext context) => PaintThick(
@@ -63,7 +56,10 @@ class HeroPaint extends StatelessWidget {
     armLength: _heroBlobArmLength,
     progress: progress,
     wipe: wipe,
-    detailUnderContent: detailUnderContent,
+    // Repeated bristle and wipe maps read as wood grain and expose their tile
+    // edges. The hero uses its gradient, gloss, and ragged wipe silhouette.
+    bristles: false,
+    dryEdge: false,
     child: child,
   );
 }

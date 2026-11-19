@@ -38,19 +38,14 @@ abstract final class AppColors {
   static const blue = Color(0xFF1F6FB2);
   static const orange = Color(0xFFB4551A);
 
-  /// Hero backdrops. The declared hero is a bright coral→pink splash; the idle
+  /// Hero backdrops. The declared hero is a vivid hot-pink splash; the idle
   /// one a quiet lavender→lemon wash, so the two states read differently
   /// without the idle state looking like a warning.
   ///
-  /// **Contrast.** The only text directly on the declared paint is the heading:
-  /// 34sp, weight 800, i.e. WCAG *large* text, whose threshold is **3:1** rather
-  /// than 4.5:1. Every small label in the hero sits on a white paint dab. So the
-  /// stops only have to clear 3:1, and they do: white on [heroDeclaredTop] is
-  /// 3.8:1 and on [heroDeclaredBottom] 3.4:1. An earlier version darkened the
-  /// paint to `#C2143F` to reach 4.5:1 for text that does not need it, which
-  /// turned the brand's happy coral into a dark crimson.
-  static const heroDeclaredTop = Color(0xFFEE3F6A);
-  static const heroDeclaredBottom = Color(0xFFF0507A);
+  /// The hot-pink fill keeps the large white heading legible and makes the
+  /// declared state read as a fresh splash of paint.
+  static const heroDeclaredTop = Color(0xFFF83F98);
+  static const heroDeclaredBottom = Color(0xFFE91E73);
   static const heroIdleTop = Color(0xFFF1E6FF);
   static const heroIdleBottom = Color(0xFFFFF3C4);
 

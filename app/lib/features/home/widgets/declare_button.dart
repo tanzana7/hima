@@ -11,12 +11,9 @@ import '../../../shared/widgets/paint/paint.dart';
 import 'hero_paint.dart';
 import 'pickers.dart';
 
-/// The undeclared hero: the whole blob of paint is the declare control.
-///
-/// It replaces the separate yellow 「ひまを宣言」 dab. The heading sits on the
-/// paint and the blob *is* the button, so the screen has one obvious thing to
-/// press instead of a card with a second control under it; the small
-/// `タップで宣言` label inside the paint is what makes that discoverable.
+/// The undeclared hero: the whole paint blob declares, with a yellow 「ひまを
+/// 宣言」 dab as its visible cue. Tapping the cue and tapping the surrounding
+/// paint use the same action.
 ///
 /// Tap declares immediately with the last used mood (the first declaration must
 /// not require answering a question). Long-press opens the mood bubbles around
@@ -24,11 +21,9 @@ import 'pickers.dart';
 /// cancels. A screen reader cannot hold, so the same choice is exposed as a
 /// custom semantics action.
 ///
-/// The bubbles and their scrim live in the root [Overlay], not in the hero: the
-/// bubbles arc above the blob over the heading, and a scrim drawn inside the
-/// list would be painted over by the cards below it. The scrim is punched out
-/// around the blob so the paint and the bubbles stay the only bright things
-/// while the rest of the screen dims.
+/// Mood bubbles and their scrim live in the root [Overlay], so they can arc
+/// above the blob over the heading and remain visible above the rest of the
+/// scrolling page.
 class DeclareButton extends StatefulWidget {
   const DeclareButton({
     super.key,
@@ -386,8 +381,7 @@ class _DeclareButtonState extends State<DeclareButton>
                 // it a screen reader could announce the blob but never declare.
                 onTap: _acceptsInput ? _handleTap : null,
                 customSemanticsActions: {
-                  const CustomSemanticsAction(label: '温度感を選んで宣言'):
-                      _pickMood,
+                  const CustomSemanticsAction(label: '温度感を選んで宣言'): _pickMood,
                 },
                 excludeSemantics: true,
                 child: GestureDetector(

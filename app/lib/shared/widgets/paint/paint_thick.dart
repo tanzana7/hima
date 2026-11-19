@@ -23,17 +23,14 @@ const double paintThickBleed = 24;
 /// * **Bristles.** [PaintDetail.streak] is tinted inside the body. The fill
 ///   keeps its `AppColors` hue and only its lightness is broken up, the way a
 ///   loaded brush leaves it.
-/// * **Gloss.** A hard specular highlight and a wet rim sit in the paint's own
-///   edge band — the margin the content keeps clear of — so the shine reads as
-///   the top of a thick blob without lightening a single label. The sheen across
-///   the whole body stays at 7% white: the declared hero draws white 34sp text
-///   straight on the paint, where the best stop is only 3.8:1.
+/// * **Gloss.** A soft sheen and short specular marks are clipped to the body,
+///   so child-bearing blobs never show the safe rectangle as a second edge.
 /// * **Dry edge.** [PaintDetail.dryBrush] punches holes out of that edge band, so
 ///   the outline is not just wobbly but torn up like paint pulled off a brush.
-/// * **Thick.** A dark pooling rim along the bottom and a light one along the top
-///   give the body an edge instead of a silhouette.
-/// * **Wipe.** [wipe] takes the paint off from the left behind a dry-brush front,
-///   which is how a declaration ends (see `MyStatusHero`).
+/// * **Depth.** The fill gradient and silhouette wobble give the body volume
+///   without a rectangular inner rim.
+/// * **Wipe.** [wipe] takes the paint off from the left along a seeded, ragged
+///   front. The silhouette provides the paint edge without a tiled streak band.
 ///
 /// Like the rest of the kit it is seeded and cached, keeps its child inside
 /// [padding], spills into the band around it, and paints the finished state when
@@ -120,11 +117,9 @@ class PaintThick extends StatelessWidget {
   /// How much of the bristle detail is left inside the content's safe rect.
   ///
   /// 1 keeps it everywhere. Lower values fade it out under whatever sits on the
-  /// paint, which matters where small light text or white type is measured
-  /// against the fill: a bright bristle lifts the coral the declared hero writes
-  /// its heading on, and those stops are only 3.4:1 against white, so the
-  /// detail is kept to the paint's own edge band there. The fade is a radial
-  /// mask, so there is no seam where it starts.
+  /// paint, which matters wherever light text is measured against the fill: a
+  /// bright bristle can lift the colour enough to reduce contrast. The fade is
+  /// a radial mask, so there is no seam where it starts.
   final double detailUnderContent;
 
   @override
@@ -207,8 +202,7 @@ class _PaintThickPainter extends CustomPainter {
   final double detailUnderContent;
   final int detailRevision;
 
-  /// The margin between the blob's edge and the safe rect: where the gloss and
-  /// the dry edge are allowed to paint.
+  /// The margin between the blob's edge and the safe rect used by the dry edge.
   static final _rimCache = PaintCache<Path>(capacity: 32);
 
   PaintBlob _blobFor(Size size) => paintBlob(
@@ -286,9 +280,8 @@ class _PaintThickPainter extends CustomPainter {
     canvas.saveLayer(bounds, Paint());
     _paintBody(canvas, rect, blob, light, deep);
     if (bristles) _paintBristles(canvas, size, rect);
-    if (gloss > 0) _paintGloss(canvas, size, blob, rect);
+    if (gloss > 0) _paintGloss(canvas, size, blob);
     if (dryEdge) _paintDryEdge(canvas, size, rect);
-    if (wipe > 0) _paintWipeFront(canvas, size, rect);
     canvas.restore();
 
     canvas.restore();
@@ -395,15 +388,13 @@ class _PaintThickPainter extends CustomPainter {
     canvas.restore();
   }
 
-  /// The shine: a soft sheen over the whole body, then the wet edge, the ponded
-  /// shadow and two specular marks, all kept inside the rim band.
-  void _paintGloss(Canvas canvas, Size size, PaintBlob blob, Rect rect) {
-    final body = _bodyFor(size);
-    final rim = _rimFor(size);
+  /// The shine follows the silhouette so child-bearing blobs never reveal the
+  /// rectangular safe area as a second edge.
+  void _paintGloss(Canvas canvas, Size size, PaintBlob blob) {
+    final body = blob.path;
 
-    // The sheen is deliberately almost nothing: the declared hero draws white
-    // text on this paint, and 7% white on the coral stop is already the most it
-    // can take before the heading drops under 3:1.
+    // Keep the white sheen soft so it adds wet gloss without washing out the
+    // declared hero's white heading.
     final sheenRect = Rect.fromLTWH(0, 0, size.width, size.height * 0.55);
     canvas.save();
     canvas.clipPath(body);
@@ -419,40 +410,9 @@ class _PaintThickPainter extends CustomPainter {
           ],
         ).createShader(sheenRect),
     );
-    canvas.restore();
 
-    canvas.save();
-    canvas.clipPath(rim);
-    // Nothing here may reach the content, so the rim band is also clipped to the
-    // box: the arms outside it are already a shape of their own.
-    canvas.clipRect(rect.inflate(6));
-
-    // The wet edge: a light stroke sitting on the blob's own outline, clipped to
-    // the inside half by the rim band.
-    canvas.drawPath(
-      body,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 3
-        ..color = Colors.white.withValues(alpha: 0.5 * gloss)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2.2),
-    );
-    // The paint pools darker at the bottom, which is what gives the body a
-    // thickness instead of a silhouette.
-    canvas.save();
-    canvas.translate(0, 5);
-    canvas.drawPath(
-      body,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 8
-        ..color = paintTone(colors.last, -0.55).withValues(alpha: 0.36 * gloss)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5),
-    );
-    canvas.restore();
-
-    // Two hard specular marks, in the band above the content: a wet edge catches
-    // the light in short, bright slivers, not in one even gradient.
+    // These short ovals sit above the child-safe area. Drawing them directly on
+    // the body avoids the rectangular inner edge a safe-area rim creates.
     final top = math.max(6.0, padding.top);
     for (final (start, end, weight) in const <(double, double, double)>[
       (0.16, 0.46, 0.55),
@@ -464,17 +424,12 @@ class _PaintThickPainter extends CustomPainter {
         size.width * end,
         top * 0.30 + math.max(4.0, top * 0.32),
       );
-      canvas.save();
-      canvas.translate(mark.center.dx, mark.center.dy);
-      canvas.rotate(-0.06);
-      canvas.translate(-mark.center.dx, -mark.center.dy);
       canvas.drawOval(
         mark,
         Paint()
           ..color = Colors.white.withValues(alpha: weight * gloss)
           ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 1.6),
       );
-      canvas.restore();
     }
     canvas.restore();
   }
@@ -493,30 +448,6 @@ class _PaintThickPainter extends CustomPainter {
     canvas.clipPath(_rimFor(size));
     canvas.clipRect(rect.inflate(4));
     canvas.drawRect(rect.inflate(4), erase);
-    canvas.restore();
-  }
-
-  /// The dry-brush front of the wipe: the paint breaks up into streaks right
-  /// where it is being taken off, which is what makes it read as a brush drag
-  /// instead of a clip.
-  void _paintWipeFront(Canvas canvas, Size size, Rect rect) {
-    final erase = paintDetailErase(
-      PaintDetail.dryBrush,
-      tile: const Size(104, 62),
-      angle: 0.04,
-      strength: 0.95,
-    );
-    if (erase == null) return;
-    final front = paintWipeFront(size, wipe);
-    final band = Rect.fromLTRB(
-      front - 2,
-      -paintMaxBleed,
-      front + 46,
-      size.height + paintMaxBleed,
-    );
-    canvas.save();
-    canvas.clipRect(band);
-    canvas.drawRect(band, erase);
     canvas.restore();
   }
 

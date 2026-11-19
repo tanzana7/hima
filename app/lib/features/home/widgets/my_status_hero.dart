@@ -7,6 +7,7 @@ import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_spacing.dart';
 import '../../../app/theme/app_text_styles.dart';
 import '../../../data/models/models.dart';
+import '../../../shared/haptics.dart';
 import '../../../shared/phrase_wrap.dart';
 import '../../../shared/widgets/avatar_view.dart';
 import '../../../shared/widgets/mood_badge.dart';
@@ -16,21 +17,12 @@ import '../hero_state.dart';
 import 'activity_chips.dart';
 import 'declare_button.dart';
 import 'hero_paint.dart';
+import 'pickers.dart';
 
-/// The hero: the single most important area of the home screen.
-///
-/// Everything visual (paint, heading, meta row, actions) comes from [HeroState],
-/// so the two states can never contradict each other.
-///
-/// The paint is one thick blob, not a band: a band reads as a rectangle seen
-/// from the side, and the heading is meant to sit on a lump of paint. Both
-/// states are painted with the same seed, so the declared paint covers the paper
-/// state exactly; that is what lets the wipe reveal the paper state under it
-/// instead of a second, slightly different blob.
-///
-/// **Stable height.** The paper and the declared layer are laid out together
-/// while the paint is coming off, and [AnimatedSize] closes the difference
-/// afterwards, so the cards below do not jump between the two states.
+enum HeroInlinePicker { activity, duration }
+
+/// The home hero. Its state, paint, and controls change together so the OFF
+/// question and ON declaration can never contradict each other.
 class MyStatusHero extends StatefulWidget {
   const MyStatusHero({
     super.key,
@@ -38,6 +30,7 @@ class MyStatusHero extends StatefulWidget {
     required this.me,
     required this.lastMood,
     required this.selectedActivity,
+    required this.selectedDurationMin,
     required this.busy,
     required this.burstToken,
     required this.shakeToken,
@@ -48,9 +41,8 @@ class MyStatusHero extends StatefulWidget {
     required this.onDeclare,
     required this.onEnd,
     required this.onChangeMood,
-    required this.onChangeDuration,
+    required this.onSelectDuration,
     required this.onSelectActivity,
-    required this.onChangeActivity,
     required this.onExpired,
   });
 
@@ -58,59 +50,35 @@ class MyStatusHero extends StatefulWidget {
   final UserProfile me;
   final Mood lastMood;
   final Activity? selectedActivity;
+  final int selectedDurationMin;
   final bool busy;
 
   /// Bumped by the parent after a successful declaration to play the landing.
   final int burstToken;
   final int shakeToken;
 
-  /// Shaken by the parent when saving the mood / the remaining time / the
-  /// activity failed, so the control that failed is the one that moves.
   final GlobalKey<ShakeState> moodShakeKey;
   final GlobalKey<ShakeState> durationShakeKey;
   final GlobalKey<ShakeState> activityShakeKey;
   final bool showHint;
   final ValueChanged<Mood> onDeclare;
 
-  /// Ends the declaration and answers whether the server accepted it.
-  ///
-  /// The answer is what decides the wipe: on success the paint stays off, on
-  /// failure the declared state comes back exactly as it was instead of the
-  /// screen flashing the paper state and then the declared one again.
+  /// The answer decides whether the paint stays off or is restored on failure.
   final Future<bool> Function() onEnd;
   final VoidCallback onChangeMood;
-  final VoidCallback onChangeDuration;
+  final ValueChanged<int> onSelectDuration;
   final ValueChanged<Activity?> onSelectActivity;
-
-  /// Opens the activity picker from the declared meta row, where the chip row
-  /// is hidden.
-  final VoidCallback onChangeActivity;
   final VoidCallback onExpired;
 
   @override
-  State<MyStatusHero> createState() => _MyStatusHeroState();
+  MyStatusHeroState createState() => MyStatusHeroState();
 }
 
-class _MyStatusHeroState extends State<MyStatusHero>
+class MyStatusHeroState extends State<MyStatusHero>
     with TickerProviderStateMixin {
-  /// How long the stroke takes to reach [_wipeHold]: long enough to read as a
-  /// brush drag, short enough that the screen is not held up by it. Together
-  /// with [_wipeFinishDuration] it is the ~700ms the end takes when the server
-  /// answers at once.
   static const _wipeDuration = Duration(milliseconds: 560);
-
-  /// Where the stroke parks while the end is still open.
-  ///
-  /// The paper state has to stay covered until the server has accepted the end:
-  /// a request that fails after the paint is gone would have flashed OFF and
-  /// back to ON. So the stroke stops one strip short of the end and only the
-  /// answer takes the rest of the paint off.
   static const _wipeHold = 0.88;
-
-  /// The last strip of paint, taken off once the end has been accepted.
   static const _wipeFinishDuration = Duration(milliseconds: 140);
-
-  /// The paint being put back after a failed end never takes longer than a beat.
   static const _restoreDuration = Duration(milliseconds: 260);
 
   late final AnimationController _burst;
@@ -118,17 +86,14 @@ class _MyStatusHeroState extends State<MyStatusHero>
 
   bool _bursting = false;
   bool _ending = false;
-
-  /// The declared state the wipe started from. It keeps the heading, the meta
-  /// row and the mood under the brush for as long as the paint is coming off,
-  /// however early or late the request answers.
   HeroState? _endingState;
+  HeroInlinePicker? _picker;
+  HeroInlinePicker? _pendingDemoPicker;
+  Offset? _pickerOriginGlobal;
 
   @override
   void initState() {
     super.initState();
-    // Created eagerly: a lazy `late` field would be constructed from dispose()
-    // when no animation ever ran, which is not a safe time to make a Ticker.
     _burst = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 520),
@@ -139,6 +104,7 @@ class _MyStatusHeroState extends State<MyStatusHero>
   @override
   void didUpdateWidget(MyStatusHero oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.busy && !widget.busy) _openPendingDemoPicker();
     if (widget.burstToken != oldWidget.burstToken &&
         !MediaQuery.disableAnimationsOf(context)) {
       setState(() => _bursting = true);
@@ -155,18 +121,69 @@ class _MyStatusHeroState extends State<MyStatusHero>
     super.dispose();
   }
 
-  /// 「おわる」: the only way the paint ever comes off.
-  ///
-  /// The stroke runs over the still-declared state, and the request goes out at
-  /// the same time, so the tap answers at once. It stops at [_wipeHold] until
-  /// the end is accepted: only a finished wipe *and* an accepted end reveal the
-  /// paper state, so a failure never flashes OFF and back to ON. An expiry or a
-  /// server-driven change never runs this, so their behaviour is unchanged.
+  /// Demo panel requests enter the same inline picker as the hero controls.
+  bool openInlinePicker(HeroInlinePicker picker) {
+    if (!mounted) return false;
+    if (widget.busy || _ending) {
+      _pendingDemoPicker = picker;
+      return true;
+    }
+    _openPicker(picker, null);
+    return true;
+  }
+
+  void _openPendingDemoPicker() {
+    final picker = _pendingDemoPicker;
+    if (picker == null || widget.busy || _ending) return;
+    _pendingDemoPicker = null;
+    _openPicker(picker, null);
+  }
+
+  void _openPicker(HeroInlinePicker picker, Offset? originGlobal) {
+    if (widget.busy || _ending) return;
+    setState(() {
+      _picker = picker;
+      _pickerOriginGlobal = originGlobal == Offset.zero ? null : originGlobal;
+    });
+  }
+
+  void _closePicker() {
+    if (_picker == null) return;
+    setState(() {
+      _picker = null;
+      _pickerOriginGlobal = null;
+    });
+  }
+
+  void _chooseActivity(ActivityChoice choice) {
+    _closePicker();
+    widget.onSelectActivity(choice.activity);
+  }
+
+  int get _durationValue => widget.state.isDeclared
+      ? widget.state.durationMin
+      : widget.selectedDurationMin;
+
+  void _commitDuration(int minutes) {
+    _closePicker();
+    if (minutes != _durationValue) widget.onSelectDuration(minutes);
+  }
+
+  void _stepDuration(int direction) {
+    final currentIndex = himaDurationChoices.indexOf(_durationValue);
+    final index = (currentIndex + direction)
+        .clamp(0, himaDurationChoices.length - 1)
+        .toInt();
+    if (index == currentIndex) return;
+    AppHaptics.select();
+    widget.onSelectDuration(himaDurationChoices[index]);
+  }
+
+  /// The brush stops one strip short while the request is in flight. A failed
+  /// end paints the same declaration back without flashing the OFF state.
   Future<void> _handleEnd() async {
-    if (_ending || widget.busy) return;
-    if (!widget.state.isDeclared) return;
+    if (_ending || widget.busy || !widget.state.isDeclared) return;
     if (MediaQuery.disableAnimationsOf(context)) {
-      // Reduced motion: no stroke to run, the state changes on its own.
       await widget.onEnd();
       return;
     }
@@ -182,9 +199,6 @@ class _MyStatusHeroState extends State<MyStatusHero>
     final ended = await widget.onEnd();
     if (!mounted) return;
     if (ended) {
-      // The answer is yes: take the last strip off now. The paint is only
-      // fully gone once this finishes, which is what keeps the paper state
-      // hidden for as long as the end was unconfirmed.
       await stroke;
       if (!mounted) return;
       await _wipe.animateTo(
@@ -196,11 +210,9 @@ class _MyStatusHeroState extends State<MyStatusHero>
       setState(() => _ending = false);
       _endingState = null;
       _wipe.value = 0;
+      _openPendingDemoPicker();
       return;
     }
-    // The declaration is still live, so the paint goes back on. It is restored
-    // from the same controller, which is what keeps a failed end from flashing
-    // the paper state and then the declared one again.
     await _wipe.animateBack(
       0,
       duration: _restoreDuration,
@@ -209,13 +221,9 @@ class _MyStatusHeroState extends State<MyStatusHero>
     if (!mounted) return;
     setState(() => _ending = false);
     _endingState = null;
+    _openPendingDemoPicker();
   }
 
-  /// The paper state behind the declared one.
-  ///
-  /// While the paint is coming off, the state is still declared (or has just
-  /// stopped being so), and the heading under the brush must be the one the user
-  /// will be left with.
   HeroState _paperState(HeroState state) => state.isDeclared
       ? HeroState.fromSession(
           null,
@@ -227,6 +235,62 @@ class _MyStatusHeroState extends State<MyStatusHero>
   @override
   Widget build(BuildContext context) {
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    return PopScope<Object?>(
+      canPop: _picker == null,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _closePicker();
+      },
+      child: TapRegion(
+        onTapOutside: _picker == null ? null : (_) => _closePicker(),
+        child: AnimatedSize(
+          duration: reduceMotion
+              ? Duration.zero
+              : const Duration(milliseconds: 240),
+          curve: Curves.easeOutCubic,
+          alignment: Alignment.topCenter,
+          child: AnimatedSwitcher(
+            // Keep a short fade for reduced motion; disable the size animation.
+            duration: reduceMotion
+                ? const Duration(milliseconds: 100)
+                : const Duration(milliseconds: 180),
+            switchInCurve: Curves.easeOut,
+            switchOutCurve: Curves.easeIn,
+            transitionBuilder: (child, animation) =>
+                FadeTransition(opacity: animation, child: child),
+            child: _picker == null
+                ? _normalContent(
+                    key: ValueKey(
+                      reduceMotion
+                          ? 'hero-content-${widget.state.isDeclared}'
+                          : 'hero-content',
+                    ),
+                  )
+                : _inlinePicker(key: ValueKey(_picker)),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _inlinePicker({required Key key}) {
+    if (_picker == HeroInlinePicker.activity) {
+      return InlineActivityPicker(
+        key: key,
+        current: widget.selectedActivity,
+        originGlobal: _pickerOriginGlobal,
+        onSelected: _chooseActivity,
+        onClose: _closePicker,
+      );
+    }
+    return InlineDurationPicker(
+      key: key,
+      current: _durationValue,
+      onCommit: _commitDuration,
+      onClose: _closePicker,
+    );
+  }
+
+  Widget _normalContent({required Key key}) {
     final state = widget.state;
     final declared = state.isDeclared;
     final onState = _ending ? (_endingState ?? state) : state;
@@ -234,11 +298,12 @@ class _MyStatusHeroState extends State<MyStatusHero>
     final showPaper = !declared || _ending;
 
     return Column(
+      key: key,
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         AnimatedSize(
-          duration: reduceMotion
+          duration: MediaQuery.disableAnimationsOf(context)
               ? Duration.zero
               : const Duration(milliseconds: 260),
           curve: Curves.easeOutCubic,
@@ -247,24 +312,13 @@ class _MyStatusHeroState extends State<MyStatusHero>
             clipBehavior: Clip.none,
             alignment: Alignment.topLeft,
             children: [
-              // The paper the declared paint is laid over. Painted first so the
-              // wipe has something to reveal, and the same silhouette, so it
-              // never shows around the declared blob's edge.
               if (showPaint)
-                Positioned.fill(
-                  key: const ValueKey('paper-paint'),
-                  child: const HeroIdlePaint(),
+                const Positioned.fill(
+                  key: ValueKey('paper-paint'),
+                  child: HeroIdlePaint(),
                 ),
-              // The paper content. It sizes the hero whenever it is the visible
-              // picture, so the heading and the label sit on the paint instead
-              // of on paper left over from the other state.
               if (showPaper) _paperLayer(state),
               if (showPaint)
-                // The paint and the content it carries take the same wipe front
-                // from the same ticker, so the white heading can never be left
-                // on the paper state the brush has already uncovered. Both the
-                // landing and the wipe are driven from here: nothing else
-                // rebuilds the hero while a controller runs.
                 AnimatedBuilder(
                   key: const ValueKey('declared-layer'),
                   animation: Listenable.merge([_burst, _wipe]),
@@ -280,13 +334,10 @@ class _MyStatusHeroState extends State<MyStatusHero>
                             colors: heroDeclaredColors,
                             progress: _bursting ? _burst.value : 1,
                             wipe: front,
-                            // White heading on coral: the bristles stay in the
-                            // paint's edge band so they cannot lift the fill
-                            // under the text below its 3:1.
-                            detailUnderContent: 0.2,
                           ),
                         ),
                         _declaredLayer(onState, front),
+                        if (!_ending) _declaredSparkles(),
                       ],
                     );
                   },
@@ -294,20 +345,17 @@ class _MyStatusHeroState extends State<MyStatusHero>
             ],
           ),
         ),
-        // The chips sit on the paper below the blob, not on it: inside the paint
-        // they were cut by the shape's edge, and a fade over that edge would
-        // have taken the chip labels' contrast with it.
-        if (!declared) ...[
+        if (!declared && !_ending) ...[
           const SizedBox(height: AppSpacing.s8),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20),
-            // Optional and never a precondition for declaring, so it sits right
-            // under the hero.
             child: Shake(
               key: widget.activityShakeKey,
               child: ActivityChips(
                 selected: widget.selectedActivity,
                 onSelected: widget.onSelectActivity,
+                onOpenPicker: (origin) =>
+                    _openPicker(HeroInlinePicker.activity, origin),
               ),
             ),
           ),
@@ -316,12 +364,6 @@ class _MyStatusHeroState extends State<MyStatusHero>
     );
   }
 
-  /// The undeclared picture: the declare surface, or — while the paint is being
-  /// wiped off — the same content as the picture underneath.
-  ///
-  /// The content is unpadded here: the declare surface's paint applies
-  /// [heroBlobPadding] to it, and the inert copy under the wipe pads it itself,
-  /// so both states keep exactly one inset.
   Widget _paperLayer(HeroState state) {
     final content = _offContent(_paperState(state));
     if (!_ending) {
@@ -345,37 +387,32 @@ class _MyStatusHeroState extends State<MyStatusHero>
       ignoring: _ending,
       child: ExcludeSemantics(
         excluding: _ending,
-        // The declared paint has no child, so the inset is applied here — once,
-        // with the same value the paper state gets, so neither layout is
-        // narrower than the other.
         child: Padding(padding: heroBlobPadding, child: _onContent(state)),
       ),
     );
     if (wipe <= 0) return content;
-    // The content is clipped by the same front the paint is: white text must
-    // never sit on the paper state left behind by the wipe.
     return ClipPath(
       clipper: _WipeClipper(progress: wipe, seed: heroBlobSeed),
       child: content,
     );
   }
 
-  /// The hero headline is decorative, while its supporting copy and controls
-  /// carry information. Cap only this headline so it does not take over the
-  /// blob at large text scales; the content below still follows the full scale.
-  ///
-  /// The headline stays on one line and scales down into the paint: Japanese
-  /// offers a line break between every pair of characters, and 「いま、ひま？」
-  /// is one phrase, so wrapping it would have split it as 「いま、ひ／ま？」.
-  /// The child is a plain [Text], so the heading is still the semantics label.
-  Widget _heroHeading(BuildContext context, HeroState state, TextStyle style) {
-    final requestedSize = MediaQuery.textScalerOf(context).scale(34);
-    final fontSize = requestedSize.clamp(28.0, 42.0).toDouble();
+  Widget _heroHeading(
+    BuildContext context,
+    HeroState state,
+    TextStyle style, {
+    required double size,
+    Alignment alignment = Alignment.centerLeft,
+  }) {
+    final requested = MediaQuery.textScalerOf(context).scale(size);
+    final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
+    final maxFontSize = textScale > 1.25 ? size : size + 8;
+    final fontSize = requested.clamp(size, maxFontSize).toDouble();
     return MediaQuery(
       data: MediaQuery.of(context).copyWith(textScaler: TextScaler.noScaling),
       child: FittedBox(
         fit: BoxFit.scaleDown,
-        alignment: Alignment.centerLeft,
+        alignment: alignment,
         child: Text(
           state.heading,
           maxLines: 1,
@@ -386,20 +423,19 @@ class _MyStatusHeroState extends State<MyStatusHero>
     );
   }
 
-  /// The undeclared content: who I am, the question, and the one thing to do.
-  ///
-  /// It carries no padding: the declare surface's paint applies [heroBlobPadding]
-  /// to it, and so does the inert copy the wipe reveals, so the two pictures keep
-  /// the same single inset.
-  Widget _offContent(HeroState state) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            AvatarView(
+  Widget _offContent(HeroState state) => Column(
+    mainAxisSize: MainAxisSize.min,
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          MediaQuery(
+            // The avatar stays fixed-size; its decorative initial must fit too.
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: TextScaler.noScaling),
+            child: AvatarView(
               name: widget.me.displayName,
               imageUrl: widget.me.avatarUrl,
               size: 56,
@@ -407,152 +443,266 @@ class _MyStatusHeroState extends State<MyStatusHero>
               ring: AppColors.surface,
               ringWidth: 2,
             ),
-            const SizedBox(width: AppSpacing.s12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _heroHeading(
-                    context,
-                    state,
-                    AppTextStyles.heroTitle.copyWith(color: AppColors.ink),
+          ),
+          const SizedBox(width: AppSpacing.s12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _heroHeading(
+                  context,
+                  state,
+                  AppTextStyles.heroTitle.copyWith(color: AppColors.ink),
+                  size: 38,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  state.supporting,
+                  semanticsLabel: plainPhrases(state.supporting),
+                  style: AppTextStyles.body.copyWith(
+                    color: AppColors.ink.withValues(alpha: 0.78),
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    state.supporting,
-                    // The displayed copy carries the invisible break
-                    // characters between its phrases; a reader gets the copy
-                    // as it is written.
-                    semanticsLabel: plainPhrases(state.supporting),
-                    // [AppColors.muted] drops to about 4.2:1 over the lavender
-                    // stop of the idle paint. Translucent ink stays
-                    // secondary-looking but keeps about 6:1.
-                    style: AppTextStyles.body.copyWith(
-                      color: AppColors.ink.withValues(alpha: 0.72),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+      const SizedBox(height: AppSpacing.s12),
+      Center(
+        child: FractionallySizedBox(
+          widthFactor: MediaQuery.textScalerOf(context).scale(18) / 18 > 1.4
+              ? 0.94
+              : 0.68,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 60),
+            child: PaintDab(
+              seed: 4242,
+              color: AppColors.yellow,
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.s16,
+                vertical: AppSpacing.s12,
+              ),
+              wobble: 0.1,
+              droplets: 2,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  if (widget.busy)
+                    const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.4,
+                        color: AppColors.ink,
+                      ),
+                    )
+                  else
+                    const Icon(
+                      Icons.campaign_rounded,
+                      size: 23,
+                      color: AppColors.ink,
+                    ),
+                  const SizedBox(width: AppSpacing.s8),
+                  Flexible(
+                    child: Text(
+                      'ひまを宣言',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTextStyles.button.copyWith(fontSize: 18),
                     ),
                   ),
                 ],
+              ),
+            ),
+          ),
+        ),
+      ),
+      if (widget.showHint) ...[
+        const SizedBox(height: AppSpacing.s8),
+        Text(
+          '長押しで温度感を選べるよ',
+          textAlign: TextAlign.center,
+          style: AppTextStyles.caption.copyWith(
+            color: AppColors.ink.withValues(alpha: 0.78),
+          ),
+        ),
+      ],
+    ],
+  );
+
+  Widget _onContent(HeroState state) {
+    final textScale = MediaQuery.textScalerOf(context).scale(20) / 20;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Column(
+              children: [
+                _heroHeading(
+                  context,
+                  state,
+                  AppTextStyles.heroTitle.copyWith(
+                    color: AppColors.surface,
+                    shadows: const [
+                      Shadow(
+                        color: Color(0x442F124F),
+                        blurRadius: 8,
+                        offset: Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  size: 42,
+                  alignment: Alignment.center,
+                ),
+                const SizedBox(height: AppSpacing.s4),
+                const Center(
+                  child: BrushStroke(
+                    seed: 23,
+                    size: Size(156, 10),
+                    color: AppColors.yellow,
+                  ),
+                ),
+              ],
+            ),
+            Positioned(
+              left: -34,
+              top: -16,
+              child: _MoodAvatar(
+                mood: state.mood,
+                me: widget.me,
+                shakeKey: widget.moodShakeKey,
+                onTap: widget.onChangeMood,
+              ),
+            ),
+            Positioned(
+              top: 0,
+              right: 4,
+              child: IgnorePointer(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Transform.rotate(
+                      angle: -0.55,
+                      child: const BrushStroke(
+                        seed: 31,
+                        size: Size(7, 17),
+                        color: AppColors.yellow,
+                      ),
+                    ),
+                    const SizedBox(width: 5),
+                    Transform.rotate(
+                      angle: 0.25,
+                      child: const BrushStroke(
+                        seed: 32,
+                        size: Size(8, 22),
+                        color: AppColors.yellow,
+                      ),
+                    ),
+                    const SizedBox(width: 5),
+                    Transform.rotate(
+                      angle: 0.7,
+                      child: const BrushStroke(
+                        seed: 33,
+                        size: Size(7, 15),
+                        color: AppColors.yellow,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ],
         ),
         const SizedBox(height: AppSpacing.s12),
-        // The label is the only thing that says the paint is a button, so it is
-        // centred on the blob and always in view — it is not a second control,
-        // the whole blob answers the tap.
-        Center(child: _TapLabel(busy: widget.busy)),
-        if (widget.showHint) ...[
-          const SizedBox(height: AppSpacing.s8),
-          Text(
-            '長押しで温度感を選べるよ',
-            textAlign: TextAlign.center,
-            style: AppTextStyles.caption.copyWith(
-              color: AppColors.ink.withValues(alpha: 0.72),
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-
-  /// The declared content: the mood on the avatar, the heading, one meta row.
-  ///
-  /// Unpadded like [_offContent]; the declared layer applies [heroBlobPadding],
-  /// so neither state is laid out narrower than the other.
-  Widget _onContent(HeroState state) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _MoodAvatar(
-              mood: state.mood,
-              me: widget.me,
-              shakeKey: widget.moodShakeKey,
-              onTap: widget.onChangeMood,
-            ),
-            const SizedBox(width: AppSpacing.s12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Transform.rotate(
-                    // A couple of degrees of tilt: the heading is painted on
-                    // the blob, not set like a form label.
-                    angle: -0.03,
-                    alignment: Alignment.centerLeft,
-                    child: _heroHeading(
-                      context,
-                      state,
-                      AppTextStyles.heroTitle.copyWith(
-                        color: AppColors.surface,
-                        // 34sp bold is WCAG large text, so white needs 3:1
-                        // here, not 4.5:1. The coral stops are chosen for that
-                        // (3.8:1 and 3.4:1), and the paint makes sure the
-                        // bristles never lift them: the shadow only holds the
-                        // edge on the lighter end of the gradient.
-                        shadows: const [
-                          Shadow(
-                            color: Color(0x332F124F),
-                            blurRadius: 10,
-                            offset: Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.only(top: 2),
-                    // A brush stroke rather than a thin squiggle: thick in the
-                    // middle and tapering at both ends.
-                    child: BrushStroke(
-                      seed: 23,
-                      size: const Size(116, 9),
-                      color: AppColors.surface.withValues(alpha: 0.85),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: AppSpacing.s8),
-        // One wrap: how long is left, what I want to do, and the way out. All
-        // three stay tappable, so the mood and the activity are still
-        // changeable without the extra pills the hero used to carry.
-        Wrap(
-          spacing: AppSpacing.s8,
-          runSpacing: AppSpacing.s8,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            Shake(
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final stacked = constraints.maxWidth < 280 || textScale > 1.25;
+            final duration = Shake(
               key: widget.durationShakeKey,
               child: _RemainingPill(
                 expiresAt: state.expiresAt!,
-                onTap: widget.onChangeDuration,
+                onTap: (origin) =>
+                    _openPicker(HeroInlinePicker.duration, origin),
+                onStep: _stepDuration,
                 onExpired: widget.onExpired,
               ),
-            ),
-            Shake(
+            );
+            final activity = Shake(
               key: widget.activityShakeKey,
               child: _ActivityPill(
                 activity: state.activity,
-                onTap: widget.onChangeActivity,
+                onTap: (origin) =>
+                    _openPicker(HeroInlinePicker.activity, origin),
               ),
+            );
+            if (stacked) {
+              return Column(
+                children: [
+                  duration,
+                  const SizedBox(height: AppSpacing.s8),
+                  activity,
+                ],
+              );
+            }
+            return Row(
+              children: [
+                Expanded(child: duration),
+                const SizedBox(width: AppSpacing.s8),
+                Expanded(child: activity),
+              ],
+            );
+          },
+        ),
+        const SizedBox(height: AppSpacing.s12),
+        Center(
+          child: FractionallySizedBox(
+            widthFactor: textScale > 1.4 ? 0.94 : 0.64,
+            child: _EndPaintButton(
+              onTap: () => unawaited(_handleEnd()),
+              enabled: !_ending && !widget.busy,
             ),
-            _EndPill(onTap: _handleEnd),
-          ],
+          ),
         ),
       ],
     );
   }
+
+  Widget _declaredSparkles() => Positioned.fill(
+    child: IgnorePointer(
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Positioned(
+            right: 4,
+            top: 2,
+            child: PaintMark(
+              kind: PaintMarkKind.star,
+              seed: 41,
+              color: AppColors.yellow,
+              size: 22,
+            ),
+          ),
+          Positioned(
+            left: 0,
+            bottom: 8,
+            child: PaintMark(
+              kind: PaintMarkKind.star,
+              seed: 42,
+              color: AppColors.yellow,
+              size: 16,
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
-/// Clips the declared content to the paint the wipe has left behind.
 class _WipeClipper extends CustomClipper<Path> {
   const _WipeClipper({required this.progress, required this.seed});
 
@@ -568,54 +718,6 @@ class _WipeClipper extends CustomClipper<Path> {
       oldClipper.progress != progress || oldClipper.seed != seed;
 }
 
-/// `タップで宣言`: the one label that makes the paint discoverable.
-///
-/// It sits on a white dab because the idle paint is a pastel wash: small ink
-/// text on it keeps its contrast, and white text on pale paint would not
-/// (Design.md 3.1).
-class _TapLabel extends StatelessWidget {
-  const _TapLabel({required this.busy});
-
-  final bool busy;
-
-  @override
-  Widget build(BuildContext context) => PaintDab(
-    seed: 4242,
-    color: AppColors.surface.withValues(alpha: 0.95),
-    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-    wobble: 0.09,
-    droplets: 1,
-    child: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (busy)
-          const SizedBox(
-            width: 18,
-            height: 18,
-            child: CircularProgressIndicator(
-              strokeWidth: 2.4,
-              color: AppColors.ink,
-            ),
-          )
-        else
-          const Icon(Icons.touch_app_rounded, size: 20, color: AppColors.ink),
-        const SizedBox(width: AppSpacing.s8),
-        Flexible(
-          child: Text(
-            'タップで宣言',
-            textAlign: TextAlign.center,
-            style: AppTextStyles.button.copyWith(fontSize: 17),
-          ),
-        ),
-      ],
-    ),
-  );
-}
-
-/// The avatar with the mood as a small badge on its corner.
-///
-/// The emoji badge keeps the mood visible and tappable while the heading stays
-/// the loudest thing in the blob.
 class _MoodAvatar extends StatelessWidget {
   const _MoodAvatar({
     required this.mood,
@@ -638,39 +740,35 @@ class _MoodAvatar extends StatelessWidget {
       child: Stack(
         clipBehavior: Clip.none,
         children: [
-          AvatarView(
-            name: me.displayName,
-            imageUrl: me.avatarUrl,
-            size: 56,
-            background: AppColors.surface,
-            ring: AppColors.surface,
-            ringWidth: 2,
+          MediaQuery(
+            // The avatar stays fixed-size; its decorative initial must fit too.
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: TextScaler.noScaling),
+            child: AvatarView(
+              name: me.displayName,
+              imageUrl: me.avatarUrl,
+              size: 56,
+              background: AppColors.surface,
+              ring: AppColors.surface,
+              ringWidth: 2,
+            ),
           ),
           Positioned(
-            // Inside the avatar's box, not straddling its edge: a target that
-            // hangs outside the parent is painted (Clip.none) but not hit
-            // tested, which left only 40dp of the 48dp target reachable.
             right: 0,
             bottom: 0,
-            // 48dp keeps the badge a valid tap target even though it is drawn
-            // as a 26dp circle.
             width: AppSpacing.minTapTarget,
             height: AppSpacing.minTapTarget,
             child: Semantics(
               button: true,
               label: '温度感を変更',
               hint: mood.label,
-              // The tap action has to live on this node: `excludeSemantics`
-              // drops the InkWell below, action included, so without it a
-              // screen reader could announce the badge but not activate it.
               onTap: onTap,
               excludeSemantics: true,
               child: InkWell(
                 onTap: onTap,
                 customBorder: const CircleBorder(),
                 child: Padding(
-                  // Nudged into the corner so the circle still reads as a badge
-                  // on the avatar rather than one centred on it.
                   padding: const EdgeInsets.all(2),
                   child: Align(
                     alignment: Alignment.bottomRight,
@@ -686,47 +784,28 @@ class _MoodAvatar extends StatelessWidget {
   );
 }
 
-/// Shared shell of the small controls in the declared meta row.
-///
-/// It keeps a 48dp tap target and a 40dp minimum height but no fixed height, so
-/// the label can grow with the text scale instead of being clipped. The white
-/// background is a paint dab, not a stadium: on the thick blob a perfect pill
-/// would be the last vector shape in the hero.
-class _HeroPill extends StatelessWidget {
-  const _HeroPill({
-    required this.seed,
-    required this.semanticsLabel,
-    required this.onTap,
-    required this.child,
-  });
+class _HeroPillSurface extends StatelessWidget {
+  const _HeroPillSurface({required this.child, required this.seed});
 
-  final int seed;
-  final String semanticsLabel;
-  final VoidCallback onTap;
   final Widget child;
+  final int seed;
 
   @override
-  Widget build(BuildContext context) => Semantics(
-    button: true,
-    label: semanticsLabel,
-    child: InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
-      // Padding instead of a centred fixed box: the pill has to shrink-wrap so
-      // the Wrap can lay the pills out from the heading's left edge, and the
-      // padding still brings the tap target to 48dp.
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: AppSpacing.s4),
-        child: PaintDab(
-          seed: seed,
-          color: AppColors.surface.withValues(alpha: 0.94),
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 11),
-          // The dab is only ~40dp tall, so the wobble has to be a larger
-          // fraction of the short side than a card's to show at all.
-          wobble: 0.09,
-          child: child,
-        ),
-      ),
+  Widget build(BuildContext context) => ConstrainedBox(
+    constraints: const BoxConstraints(minHeight: 60),
+    child: PaintThick(
+      seed: seed,
+      colors: const [Color(0xFFFFF9FC), Color(0xFFFFEAF3)],
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 13),
+      wobble: 0.07,
+      droplets: 1,
+      drips: 0,
+      arms: 1,
+      armLength: 0.015,
+      gloss: 0.65,
+      bristles: false,
+      dryEdge: false,
+      child: child,
     ),
   );
 }
@@ -735,11 +814,13 @@ class _RemainingPill extends StatefulWidget {
   const _RemainingPill({
     required this.expiresAt,
     required this.onTap,
+    required this.onStep,
     required this.onExpired,
   });
 
   final DateTime expiresAt;
-  final VoidCallback onTap;
+  final ValueChanged<Offset> onTap;
+  final ValueChanged<int> onStep;
   final VoidCallback onExpired;
 
   @override
@@ -749,6 +830,8 @@ class _RemainingPill extends StatefulWidget {
 class _RemainingPillState extends State<_RemainingPill> {
   Timer? _timer;
   bool _reportedExpiry = false;
+  Offset _tapOrigin = Offset.zero;
+  double _dragDistance = 0;
 
   @override
   void initState() {
@@ -756,8 +839,9 @@ class _RemainingPillState extends State<_RemainingPill> {
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
       setState(() {});
-      final remaining = widget.expiresAt.difference(DateTime.now().toUtc());
-      if (remaining <= Duration.zero && !_reportedExpiry) {
+      if (widget.expiresAt.difference(DateTime.now().toUtc()) <=
+              Duration.zero &&
+          !_reportedExpiry) {
         _reportedExpiry = true;
         widget.onExpired();
       }
@@ -767,9 +851,7 @@ class _RemainingPillState extends State<_RemainingPill> {
   @override
   void didUpdateWidget(_RemainingPill oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.expiresAt != oldWidget.expiresAt) {
-      _reportedExpiry = false;
-    }
+    if (widget.expiresAt != oldWidget.expiresAt) _reportedExpiry = false;
   }
 
   @override
@@ -778,125 +860,167 @@ class _RemainingPillState extends State<_RemainingPill> {
     super.dispose();
   }
 
-  @override
-  Widget build(BuildContext context) => _HeroPill(
-    seed: 61,
-    semanticsLabel: 'ひまの長さを変更',
-    onTap: widget.onTap,
-    child: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        const Icon(Icons.schedule_rounded, size: 15, color: AppColors.ink),
-        const SizedBox(width: AppSpacing.s4),
-        Flexible(
-          child: Text(
-            himaRemainingShortLabel(widget.expiresAt),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: AppTextStyles.caption.copyWith(
-              color: AppColors.ink,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ),
-      ],
-    ),
-  );
-}
-
-/// The activity as one compact pill: the selected one, or 「なにする？」 when the
-/// optional choice is still open.
-class _ActivityPill extends StatelessWidget {
-  const _ActivityPill({required this.activity, required this.onTap});
-
-  final Activity? activity;
-  final VoidCallback onTap;
+  void _stepFromDrag() {
+    if (_dragDistance.abs() < 24) return;
+    widget.onStep(_dragDistance > 0 ? 1 : -1);
+  }
 
   @override
   Widget build(BuildContext context) {
-    final style = activity == null ? null : ActivityStyle.of(activity!);
-    return _HeroPill(
-      seed: 62,
-      semanticsLabel: activity == null ? 'やりたいことを選ぶ' : 'やりたいことを変更',
-      onTap: onTap,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            style?.icon ?? Icons.add_rounded,
-            size: 15,
-            color: style?.accent ?? AppColors.ink,
-          ),
-          const SizedBox(width: AppSpacing.s4),
-          Flexible(
-            child: Text(
-              activity?.label ?? 'なにする？',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: AppTextStyles.caption.copyWith(
+    final label = himaRemainingShortLabel(widget.expiresAt);
+    return Semantics(
+      button: true,
+      label: 'ひまの長さ、$label',
+      hint: 'タップで変更。左右にスワイプで長さを変更',
+      onTap: () => widget.onTap(_tapOrigin),
+      excludeSemantics: true,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapDown: (details) => _tapOrigin = details.globalPosition,
+        onTap: () => widget.onTap(_tapOrigin),
+        onHorizontalDragStart: (details) {
+          _tapOrigin = details.globalPosition;
+          _dragDistance = 0;
+        },
+        onHorizontalDragUpdate: (details) => _dragDistance += details.delta.dx,
+        onHorizontalDragEnd: (details) {
+          if (_dragDistance.abs() < 24 &&
+              (details.primaryVelocity ?? 0).abs() > 300) {
+            _dragDistance = details.primaryVelocity!;
+          }
+          _stepFromDrag();
+        },
+        child: _HeroPillSurface(
+          seed: 61,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(
+                Icons.schedule_rounded,
+                size: 21,
                 color: AppColors.ink,
-                fontWeight: FontWeight.w700,
               ),
-            ),
+              const SizedBox(width: 4),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTextStyles.body.copyWith(
+                    fontSize: 20,
+                    color: AppColors.ink,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: AppSpacing.s4),
-          const Icon(Icons.expand_more_rounded, size: 16, color: AppColors.ink),
-        ],
+        ),
       ),
     );
   }
 }
 
-/// 「おわる」: the quiet way out of a declaration.
-///
-/// It is the last pill in the meta wrap: still a 48dp target and still labelled
-/// for screen readers, but translucent and small enough that it reads as a way
-/// out rather than as the point of the blob. It is also the only thing that
-/// starts the wipe.
-class _EndPill extends StatelessWidget {
-  const _EndPill({required this.onTap});
+class _ActivityPill extends StatelessWidget {
+  const _ActivityPill({required this.activity, required this.onTap});
+
+  final Activity? activity;
+  final ValueChanged<Offset> onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final style = activity == null ? null : ActivityStyle.of(activity!);
+    var origin = Offset.zero;
+    final label = activity?.label ?? 'なにする？';
+    return Semantics(
+      button: true,
+      label: activity == null ? 'なにする？' : '活動、$label',
+      hint: '活動を選ぶ',
+      onTap: () => onTap(origin),
+      excludeSemantics: true,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapDown: (details) => origin = details.globalPosition,
+        onTap: () => onTap(origin),
+        child: _HeroPillSurface(
+          seed: 62,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                style?.icon ?? Icons.add_rounded,
+                size: 21,
+                color: style?.accent ?? AppColors.ink,
+              ),
+              const SizedBox(width: 4),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTextStyles.body.copyWith(
+                    fontSize: 20,
+                    color: AppColors.ink,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 3),
+              const Icon(
+                Icons.expand_more_rounded,
+                size: 19,
+                color: AppColors.ink,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _EndPaintButton extends StatelessWidget {
+  const _EndPaintButton({required this.onTap, required this.enabled});
 
   final VoidCallback onTap;
+  final bool enabled;
 
   @override
   Widget build(BuildContext context) => Semantics(
     button: true,
-    label: 'ひまを終了',
-    // `excludeSemantics` drops the InkWell below, action included, so the node
-    // carries the action itself or the exit is unreachable for screen readers.
-    onTap: onTap,
+    label: 'おわる',
+    onTap: enabled ? onTap : null,
     excludeSemantics: true,
-    child: InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
+    child: GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: enabled ? onTap : null,
       child: ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: AppSpacing.minTapTarget),
-        child: Center(
-          // Shrink-wraps horizontally so the tap area is the pill, not the row.
-          widthFactor: 1,
-          child: PaintDab(
-            seed: 63,
-            color: AppColors.surface.withValues(alpha: 0.6),
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-            wobble: 0.10,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  Icons.check_rounded,
-                  size: 15,
-                  color: AppColors.ink.withValues(alpha: 0.75),
+        constraints: const BoxConstraints(minHeight: 68),
+        child: PaintThick(
+          seed: 6401,
+          colors: const [Color(0xFFFFB9DA), Color(0xFFFF9ECB)],
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+          wobble: 0.09,
+          droplets: 3,
+          drips: 0,
+          arms: 2,
+          armLength: 0.02,
+          gloss: 0.85,
+          bristles: false,
+          dryEdge: false,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.check_rounded, size: 30, color: AppColors.ink),
+              const SizedBox(width: AppSpacing.s8),
+              Text(
+                'おわる',
+                style: AppTextStyles.button.copyWith(
+                  fontSize: 24,
+                  color: AppColors.ink,
                 ),
-                const SizedBox(width: AppSpacing.s4),
-                Text(
-                  'おわる',
-                  style: AppTextStyles.caption.copyWith(
-                    fontWeight: FontWeight.w800,
-                    color: AppColors.ink.withValues(alpha: 0.85),
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
