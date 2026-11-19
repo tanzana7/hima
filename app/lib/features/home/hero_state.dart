@@ -76,3 +76,22 @@ String himaRemainingLabel(DateTime expiresAt, [DateTime? now]) {
   }
   return 'あと$minutes分くらい';
 }
+
+/// 「あと59分」: the hero's own remaining time, without the hedge.
+///
+/// The meta row puts the time, the activity and 「おわる」 on one line, and
+/// 「あと1時間くらい」 made the time the widest of the three for no extra
+/// information — the rounding is already a guess inside the number itself. The
+/// friend cards keep [himaRemainingLabel], where the hedge is the point: that
+/// is someone else's declaration.
+String himaRemainingShortLabel(DateTime expiresAt, [DateTime? now]) {
+  final seconds = expiresAt.difference(now ?? DateTime.now().toUtc()).inSeconds;
+  final minutes = (seconds + 59) ~/ 60;
+  if (minutes <= 0) return 'まもなく終了';
+  if (minutes >= 60) {
+    final hours = minutes ~/ 60;
+    final rest = minutes % 60;
+    return rest == 0 ? 'あと$hours時間' : 'あと$hours時間$rest分';
+  }
+  return 'あと$minutes分';
+}

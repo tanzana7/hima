@@ -78,10 +78,12 @@ flutter:
         - asset: assets/fonts/MPLUSRounded1c-ExtraBold.ttf
           weight: 800
 
-  # To add assets to your application, add an assets section, like this:
-  # assets:
-  #   - images/a_dot_burr.jpeg
-  #   - images/a_dot_ham.jpeg
+  # Grayscale paint detail maps, decoded once by PaintTextures and tinted inside
+  # the procedural paint shapes (lib/shared/widgets/paint/paint_texture.dart).
+  # They carry no colour of their own, so every colour still comes from
+  # AppColors. CC0 1.0; see assets/textures/LICENSES.md for the sources.
+  assets:
+    - assets/textures/
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
