@@ -142,7 +142,7 @@ class _SettingsViewState extends State<SettingsView> with WidgetsBindingObserver
   @override
   Widget build(BuildContext context) {
     final viewModel = context.watch<AppViewModel>();
-    final suggest = _suggestSection(context);
+    final suggest = _suggestSection(context, viewModel);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -274,11 +274,16 @@ class _SettingsViewState extends State<SettingsView> with WidgetsBindingObserver
 
   /// The 「自動ひま提案」 card, or null where the native worker does not exist.
   ///
-  /// Everything here is device state, so it is read from the bridge instead of
-  /// `/app/me`: the worker lives in Android, and the server cannot describe it.
-  Widget? _suggestSection(BuildContext context) {
+  /// The worker is device state, so it is read from the bridge instead of
+  /// `/app/me`: it lives in Android, and the server cannot describe it. Only
+  /// 「Discordでも受け取る」 comes from the server's `suggest_dm`.
+  Widget? _suggestSection(BuildContext context, AppViewModel viewModel) {
     final suggest = context.watch<HimaSuggestController>();
     if (!suggest.isSupported) return null;
+    // `/app/me` carries the flag; settings missing from the payload mean the
+    // server's default.
+    final suggestDm =
+        viewModel.me?.settings.suggestDm ?? UserSettings.fallback.suggestDm;
     return _SectionCard(
       seed: paintSeedOf('settings-suggest'),
       color: AppColors.purpleSoft,
@@ -302,6 +307,17 @@ class _SettingsViewState extends State<SettingsView> with WidgetsBindingObserver
                 onChanged: onChanged,
               ),
               if (enabled) ...[
+                // Only meaningful while the worker can fire: the switch exists
+                // to stop the server saying the same thing over Discord.
+                _SavingControl<bool>(
+                  value: suggestDm,
+                  onSave: (value) => _setSuggestDm(context, value),
+                  builder: (context, value, onChanged) => SwitchListTile(
+                    title: const Text('Discordでも受け取る'),
+                    value: value,
+                    onChanged: onChanged,
+                  ),
+                ),
                 if (!suggest.usageAccess)
                   ListTile(
                     title: const Text('使用状況へのアクセス'),
@@ -388,9 +404,13 @@ class _SettingsViewState extends State<SettingsView> with WidgetsBindingObserver
 
   /// Turns the suggestion worker on or off.
   ///
-  /// `auto_mode` is still written so the server keeps a compatible value, but
-  /// nothing reads it any more: a failed write must not look like a failure to
-  /// the user who just flipped the device switch.
+  /// The device switch is the source of truth, and the same tap also flips
+  /// `suggest_dm`: the worker and the server's suggestion would otherwise tell
+  /// the user the same thing twice. `auto_mode` is still written so the server
+  /// keeps a compatible value, but nothing reads it any more.
+  ///
+  /// A failed settings write must not undo the switch: the device state already
+  /// changed, so the switch stays as flipped and only the failure is reported.
   Future<bool> _setSuggestEnabled(BuildContext context, bool value) async {
     final suggest = context.read<HimaSuggestController>();
     final viewModel = context.read<AppViewModel>();
@@ -402,8 +422,16 @@ class _SettingsViewState extends State<SettingsView> with WidgetsBindingObserver
       _showMessage(context, '保存できなかった。もう一度試してね');
       return false;
     }
+    // Turning the worker on hands the Discord side over to it; turning it off
+    // gives Discord its suggestions back so the user keeps getting them.
     unawaited(
-      viewModel.updateSettings(autoMode: value).catchError((Object _) {}),
+      viewModel
+          .updateSettings(autoMode: value, suggestDm: !value)
+          .catchError((Object _) {
+            if (!context.mounted) return;
+            AppHaptics.error();
+            _showMessage(context, '保存できなかった。もう一度試してね');
+          }),
     );
     if (value && !suggest.notificationsAllowed) {
       // Asked right away: without the permission the worker is silent, and the
@@ -415,6 +443,19 @@ class _SettingsViewState extends State<SettingsView> with WidgetsBindingObserver
       }
     }
     return true;
+  }
+
+  /// Stores whether the server may also suggest over Discord (and push).
+  Future<bool> _setSuggestDm(BuildContext context, bool value) async {
+    try {
+      await context.read<AppViewModel>().updateSettings(suggestDm: value);
+      return true;
+    } catch (_) {
+      if (!context.mounted) return false;
+      AppHaptics.error();
+      _showMessage(context, '保存できなかった。もう一度試してね');
+      return false;
+    }
   }
 
   /// Stores how long the target apps must be used before a suggestion.

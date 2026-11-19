@@ -163,12 +163,14 @@ class HttpApiClient implements ApiClient {
   Future<UserSettings> updateSettings({
     bool? autoMode,
     Mood? autoMood,
+    bool? suggestDm,
   }) async {
     // The endpoint takes a partial update, so only the changed keys are sent.
     final autoMoodValue = autoMood == null ? null : moodToJson(autoMood);
     final body = <String, Object?>{
       'auto_mode': ?autoMode,
       'auto_mood': ?autoMoodValue,
+      'suggest_dm': ?suggestDm,
     };
     return UserSettings.fromJson(
       _map(await _request('PUT', '/app/me/settings', body: body)),
