@@ -47,7 +47,7 @@ def declare_session(
     guild_name: str | None = None,
     rest=None,
 ) -> dict:
-    """宣言（新規 or 延長）。マッチング評価・見守りキュー登録も行う。"""
+    """宣言（新規 or 延長）。マッチング評価も行う。"""
     if mood not in MOODS:
         raise HTTPException(status_code=400, detail="invalid mood")
     if activity not in ACTIVITIES:
