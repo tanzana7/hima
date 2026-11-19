@@ -176,16 +176,22 @@ class DemoHimaSuggestBridge implements HimaSuggestBridge {
     _forecast = const [];
   }
 
-  /// Reads the real slot and hands a demo tap to the shell as a declaration.
+  /// Reads the real slot and hands a demo action to the shell as the real one.
   ///
   /// A real `declare` taken while the demo is on screen belongs to the account
   /// that is not being shown, so it is dropped. The read consumes it either
-  /// way, which is an accepted edge of a developer tool.
+  /// way, which is an accepted edge of a developer tool. Both demo actions are
+  /// mapped to their real counterparts for the same reason the notification
+  /// reuses the real bodies: the demo has to behave like the real thing, and
+  /// what keeps that safe is the demo-only token the notification carries.
   @override
   Future<String?> takePendingAction() async {
     final action = await _real.takePendingAction();
-    if (action == himaSuggestDemoDeclareAction) return himaSuggestDeclareAction;
-    return null;
+    return switch (action) {
+      himaSuggestDemoDeclareAction => himaSuggestDeclareAction,
+      himaSuggestDemoDeclareNowAction => himaSuggestDeclareNowAction,
+      _ => null,
+    };
   }
 
   @override

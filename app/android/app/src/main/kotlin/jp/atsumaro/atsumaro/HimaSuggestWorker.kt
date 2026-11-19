@@ -77,6 +77,10 @@ internal class HimaSuggestWorker(
         store.lastRunAt = now
 
         if (store.declaredUntil?.let { it > now } == true) return
+        // 「今はいい」 paused the suggestions for a while; the pause is checked here, next to the
+        // declared session, because both are a length of time the worker must stay quiet for. The
+        // learning above still ran, so the usual times are not lost by a pause.
+        if (store.snoozeUntil?.let { it > now } == true) return
         if (now - store.lastSuggestAt < SUGGEST_INTERVAL_MS) return
         val minutesOfDay = TokyoTime.minutesOfDay(now)
         if (minutesOfDay in QUIET_HOURS_START until QUIET_HOURS_END) return

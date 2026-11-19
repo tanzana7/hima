@@ -36,6 +36,12 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- 「今はいい」 on a suggestion notification. Not exported: only the notification's own
+             PendingIntent names it, and no other app may silence the suggestion. No intent filter
+             is needed because that PendingIntent is explicit. -->
+        <receiver
+            android:name=".HimaSuggestSnoozeReceiver"
+            android:exported="false" />
         <!-- Receives the Discord OAuth redirect. The scheme is
              `discord-<client id>` and is filled in from DISCORD_CLIENT_ID by the
              Gradle build (see android/app/build.gradle.kts); it must match the

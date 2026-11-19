@@ -630,6 +630,42 @@ class AppViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Whether a declaration still has to land on the home screen.
+  ///
+  /// The hero button runs its own landing effect. A declaration that arrives
+  /// from the suggestion notification's 「ひまにする」 goes straight through
+  /// [declareHima] from the shell, so it leaves a request here instead; the home
+  /// screen takes it with [takeDeclareBurst] when it is displayed and runs the
+  /// same effect.
+  ///
+  /// It is a pending request rather than a counter: a count would have to be
+  /// baselined by the first build, which loses a request that arrives while
+  /// another tab is shown or before the home screen exists at all. A pending
+  /// request waits for the screen instead.
+  bool _declareBurstPending = false;
+
+  bool get declareBurstPending => _declareBurstPending;
+
+  /// Asks for the landing effect of a declaration the home screen did not start.
+  ///
+  /// Two declarations before the request is taken still leave one request: the
+  /// screen shows the state the last of them produced.
+  void requestDeclareBurst() {
+    if (_declareBurstPending) return;
+    _declareBurstPending = true;
+    notifyListeners();
+  }
+
+  /// Takes the pending landing request, if there is one.
+  ///
+  /// Taking it consumes it, so the effect plays once however often the screen
+  /// rebuilds.
+  bool takeDeclareBurst() {
+    if (!_declareBurstPending) return false;
+    _declareBurstPending = false;
+    return true;
+  }
+
   /// Declares hima. Passing no mood keeps the last used one so the hero button
   /// stays a true one-tap action.
   ///
