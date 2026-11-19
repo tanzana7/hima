@@ -7,6 +7,7 @@ import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_spacing.dart';
 import '../../../app/theme/app_text_styles.dart';
 import '../../../data/models/models.dart';
+import '../../../shared/phrase_wrap.dart';
 import '../../../shared/widgets/avatar_view.dart';
 import '../../../shared/widgets/mood_badge.dart';
 import '../../../shared/widgets/paint/paint.dart';
@@ -362,12 +363,26 @@ class _MyStatusHeroState extends State<MyStatusHero>
   /// The hero headline is decorative, while its supporting copy and controls
   /// carry information. Cap only this headline so it does not take over the
   /// blob at large text scales; the content below still follows the full scale.
+  ///
+  /// The headline stays on one line and scales down into the paint: Japanese
+  /// offers a line break between every pair of characters, and 「いま、ひま？」
+  /// is one phrase, so wrapping it would have split it as 「いま、ひ／ま？」.
+  /// The child is a plain [Text], so the heading is still the semantics label.
   Widget _heroHeading(BuildContext context, HeroState state, TextStyle style) {
     final requestedSize = MediaQuery.textScalerOf(context).scale(34);
     final fontSize = requestedSize.clamp(28.0, 42.0).toDouble();
     return MediaQuery(
       data: MediaQuery.of(context).copyWith(textScaler: TextScaler.noScaling),
-      child: Text(state.heading, style: style.copyWith(fontSize: fontSize)),
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: Alignment.centerLeft,
+        child: Text(
+          state.heading,
+          maxLines: 1,
+          softWrap: false,
+          style: style.copyWith(fontSize: fontSize),
+        ),
+      ),
     );
   }
 
@@ -406,6 +421,10 @@ class _MyStatusHeroState extends State<MyStatusHero>
                   const SizedBox(height: 2),
                   Text(
                     state.supporting,
+                    // The displayed copy carries the invisible break
+                    // characters between its phrases; a reader gets the copy
+                    // as it is written.
+                    semanticsLabel: plainPhrases(state.supporting),
                     // [AppColors.muted] drops to about 4.2:1 over the lavender
                     // stop of the idle paint. Translucent ink stays
                     // secondary-looking but keeps about 6:1.

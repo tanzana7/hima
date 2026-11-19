@@ -76,11 +76,11 @@ class AppBottomNavigation extends StatelessWidget {
   /// Height of the transparent-to-paper fade painted above the tabs.
   ///
   /// It is a fixed height rather than a fraction of the nav: the nav grows with
-  /// the text scale (a 200% label wraps to two lines), and a fractional stop
-  /// would make the fade band change height with it. 48–72dp is the range where
-  /// scrolled content dissolves into the paper instead of ending at a straight
-  /// edge, and it also leaves the selected tab's splash room to throw an arm
-  /// upwards.
+  /// the text scale (a 200% label is taller than a 13sp one), and a fractional
+  /// stop would make the fade band change height with it. 48–72dp is the range
+  /// where scrolled content dissolves into the paper instead of ending at a
+  /// straight edge, and it also leaves the selected tab's splash room to throw
+  /// an arm upwards.
   static const double fadeHeight = 56;
 
   /// The bottom padding a scrolling tab keeps so its last item can be scrolled
@@ -89,8 +89,8 @@ class AppBottomNavigation extends StatelessWidget {
   /// The nav floats over the content, and `Scaffold.extendBody` makes the
   /// scaffold report the nav's height as the body's bottom `MediaQuery`
   /// padding. Reading it back instead of hard-coding a height is what keeps the
-  /// last card reachable at 200% text scale, where the nav grows by a second
-  /// label line, and on a device with a taller system inset.
+  /// last card reachable at 200% text scale, where the tabs are taller, and on
+  /// a device with a taller system inset.
   static double listBottomInset(BuildContext context) =>
       MediaQuery.paddingOf(context).bottom + AppSpacing.s32;
 
@@ -319,19 +319,23 @@ class _NavItemState extends State<_NavItem>
                 // 10dp: room for the splash's arms and wobble to stop short of
                 // the label, so the paint never runs into the text.
                 const SizedBox(height: 10),
-                // No text-scale clamp and no single-line ellipsis: at 200% the
-                // label wraps to a second line instead of turning
-                // 「プロフィール」 into 「プロフィ…」. The nav grows with it.
-                Text(
-                  widget.destination.label,
-                  maxLines: 2,
-                  textAlign: TextAlign.center,
-                  softWrap: true,
-                  style: AppTextStyles.caption.copyWith(
-                    color: color,
-                    fontWeight: widget.selected
-                        ? FontWeight.w800
-                        : FontWeight.w600,
+                // One line, scaled down to the tab: the label is a single
+                // phrase, and Japanese offers a break between any two
+                // characters, so letting it wrap split 「プロフィール」 as
+                // 「プロフィ／ール」. An ellipsis would hide part of the name
+                // instead. The Semantics node above carries the plain label.
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    widget.destination.label,
+                    maxLines: 1,
+                    softWrap: false,
+                    style: AppTextStyles.caption.copyWith(
+                      color: color,
+                      fontWeight: widget.selected
+                          ? FontWeight.w800
+                          : FontWeight.w600,
+                    ),
                   ),
                 ),
               ],
