@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 
 import 'app/app.dart';
 import 'data/api_client.dart';
@@ -9,8 +8,7 @@ import 'data/app_config.dart';
 import 'data/hima_suggest_bridge.dart';
 import 'data/http_api_client.dart';
 import 'data/mock_api_client.dart';
-import 'state/app_view_model.dart';
-import 'state/hima_suggest_controller.dart';
+import 'state/session_owner.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -23,19 +21,16 @@ void main() {
   // One bridge for the whole app: the native worker holds a single state, so a
   // second instance would answer with a second, diverging copy of it.
   final suggestBridge = createHimaSuggestBridge();
-  final viewModel = AppViewModel(api, suggestBridge);
+  // The owner holds the real session (and, once entered, the demo one); it is
+  // created here so the real view model exists before the first frame, and it
+  // outlives every rebuild of the widget tree.
+  final sessions = SessionOwner(
+    config: config,
+    api: api,
+    bridge: suggestBridge,
+  );
   // A token saved by a previous launch is restored in the background; the login
   // screen stays up until /app/me accepts it.
-  unawaited(viewModel.restoreSession());
-  runApp(
-    MultiProvider(
-      providers: [
-        ChangeNotifierProvider<AppViewModel>.value(value: viewModel),
-        ChangeNotifierProvider<HimaSuggestController>.value(
-          value: HimaSuggestController(suggestBridge),
-        ),
-      ],
-      child: HimaApp(config: config),
-    ),
-  );
+  unawaited(sessions.restore());
+  runApp(HimaApp(config: config, sessions: sessions));
 }

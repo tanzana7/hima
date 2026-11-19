@@ -14,6 +14,7 @@ import '../knocks/knocks_screen.dart';
 import '../knocks/widgets/knock_sheet.dart';
 import '../profile/settings_screen.dart';
 import 'declare_feedback.dart';
+import 'hero_picks.dart';
 import 'hero_state.dart';
 import 'widgets/friends_section.dart';
 import 'widgets/home_header.dart';
@@ -136,16 +137,14 @@ class _HomeScreenState extends State<HomeScreen> {
     if (current == null) return;
     final mood = await showMoodPicker(context, current: current.mood);
     if (mood == null || mood == current.mood || !mounted) return;
-    try {
-      await viewModel.changeMood(mood);
-      if (!mounted) return;
-      AppHaptics.select();
-    } catch (_) {
-      if (!mounted) return;
-      AppHaptics.error();
-      _moodShakeKey.currentState?.shake();
-      _showMessage('変更できなかった。もう一度試してね');
+    if (await applyMoodPick(viewModel, mood)) {
+      if (mounted) AppHaptics.select();
+      return;
     }
+    if (!mounted) return;
+    AppHaptics.error();
+    _moodShakeKey.currentState?.shake();
+    _showMessage('変更できなかった。もう一度試してね');
   }
 
   Future<void> _changeDuration() async {
@@ -157,28 +156,23 @@ class _HomeScreenState extends State<HomeScreen> {
       current: current.durationMin,
     );
     if (minutes == null || minutes == current.durationMin || !mounted) return;
-    try {
-      await viewModel.selectDuration(minutes);
-      if (!mounted) return;
-      AppHaptics.select();
-    } catch (_) {
-      if (!mounted) return;
-      AppHaptics.error();
-      _durationShakeKey.currentState?.shake();
-      _showMessage('変更できなかった。もう一度試してね');
+    if (await applyDurationPick(viewModel, minutes)) {
+      if (mounted) AppHaptics.select();
+      return;
     }
+    if (!mounted) return;
+    AppHaptics.error();
+    _durationShakeKey.currentState?.shake();
+    _showMessage('変更できなかった。もう一度試してね');
   }
 
   Future<void> _selectActivity(Activity? activity) async {
     final viewModel = context.read<AppViewModel>();
-    try {
-      await viewModel.selectActivity(activity);
-    } catch (_) {
-      if (!mounted) return;
-      AppHaptics.error();
-      _activityShakeKey.currentState?.shake();
-      _showMessage('変更できなかった。もう一度試してね');
-    }
+    if (await applyActivityPick(viewModel, activity)) return;
+    if (!mounted) return;
+    AppHaptics.error();
+    _activityShakeKey.currentState?.shake();
+    _showMessage('変更できなかった。もう一度試してね');
   }
 
   /// The declared hero hides the chip row, so the same optional choice is made

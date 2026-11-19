@@ -15,6 +15,7 @@ import '../../shared/widgets/paint_button.dart';
 import '../../shared/widgets/shake.dart';
 import '../../state/app_view_model.dart';
 import '../../state/hima_suggest_controller.dart';
+import '../../state/session_owner.dart';
 
 /// Captions that sit directly on a [PaintWash]. [AppColors.muted] measures
 /// 4.2:1 on the pastel wash, so text on paint takes this darker tone instead
@@ -254,6 +255,17 @@ class _SettingsViewState extends State<SettingsView> with WidgetsBindingObserver
             color: AppColors.purpleSoft,
             foreground: AppColors.ink,
             onPressed: () => viewModel.logout(),
+          ),
+        ],
+        // A developer tool, kept out of the release build and out of the demo
+        // session itself; `showDemoEntry` is the one place that decides.
+        if (context.read<SessionOwner>().showDemoEntry) ...[
+          const SizedBox(height: AppSpacing.s24),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('デモモード'),
+            trailing: const Icon(Icons.chevron_right_rounded),
+            onTap: () => unawaited(context.read<SessionOwner>().enterDemo()),
           ),
         ],
       ],

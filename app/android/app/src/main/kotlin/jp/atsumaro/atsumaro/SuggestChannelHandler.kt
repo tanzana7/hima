@@ -50,6 +50,11 @@ internal class SuggestChannelHandler(private val activity: Activity) : MethodCha
                     clear()
                     result.success(null)
                 }
+                "postDemoSuggestion" -> postDemoSuggestion(call.arguments, result)
+                "cancelDemoSuggestion" -> {
+                    HimaSuggestNotifier(activity).cancelDemo(store)
+                    result.success(null)
+                }
                 "takePendingAction" -> result.success(
                     store.pendingAction.also { store.pendingAction = null },
                 )
@@ -199,6 +204,26 @@ internal class SuggestChannelHandler(private val activity: Activity) : MethodCha
         store.clearSuggestionState()
         HimaSuggestScheduler.cancel(activity)
         HimaSuggestNotifier(activity).cancel()
+    }
+
+    /**
+     * Developer demo post: answers whether the notification was posted or scheduled. A missing or
+     * unknown kind is a Dart/native contract mismatch, so it fails instead of posting a
+     * notification whose body nobody can interpret.
+     *
+     * `marked` and `delayMs` are optional so a Dart side that predates them still works: it means
+     * a marked notification posted immediately.
+     */
+    private fun postDemoSuggestion(arguments: Any?, result: MethodChannel.Result) {
+        val args = arguments as? Map<*, *>
+        val body = HimaSuggestNotifier.demoBody(args?.get("kind") as? String, args?.get("label") as? String)
+        if (body == null) {
+            result.error("bad_args", "unknown demo suggestion kind", null)
+            return
+        }
+        val marked = args?.get("marked") as? Boolean ?: true
+        val delayMs = (args?.get("delayMs") as? Number)?.toLong() ?: 0L
+        result.success(HimaSuggestNotifier(activity).postDemo(body, store, marked, delayMs.coerceAtLeast(0L)))
     }
 
     private companion object {

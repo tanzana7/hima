@@ -20,6 +20,7 @@ import '../shared/widgets/avatar_view.dart';
 import '../shared/widgets/confetti_burst.dart';
 import '../state/app_view_model.dart';
 import '../state/hima_suggest_controller.dart';
+import '../state/session_owner.dart';
 
 /// Three tabs with a fixed bottom navigation, plus the foreground polling that
 /// keeps friends, matches and knocks fresh.
@@ -38,6 +39,19 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   int _selectedIndex = 0;
   AppViewModel? _viewModel;
   HimaSuggestController? _suggest;
+
+  /// The handler this shell installs on the bridge.
+  ///
+  /// One stable closure per shell, because the bridge compares the installed
+  /// handler by identity when the session is swapped, and [_actionInstalled] is
+  /// what says whether it is still on the bridge.
+  late final VoidCallback _actionHandler = _handlePendingAction;
+
+  bool _actionInstalled = false;
+
+  /// The tab the demo panel asked for. Null in the real session, so the demo
+  /// panel cannot move the real shell and nothing else changes there.
+  ValueNotifier<int>? _demoTabs;
 
   /// True while a pending suggestion action is being read, so the shell's first
   /// frame, a resume and the channel callback cannot act on the same tap twice;
@@ -77,9 +91,17 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     }
     final suggest = context.read<HimaSuggestController>();
     if (_suggest != suggest) {
-      _suggest?.onAction = null;
+      _releaseActionHandler();
       _suggest = suggest;
-      suggest.onAction = () => unawaited(_checkPendingAction());
+      _actionInstalled = true;
+      suggest.onAction = _actionHandler;
+    }
+    final demoTabs = context.read<DemoSession?>()?.tabs;
+    if (_demoTabs != demoTabs) {
+      _demoTabs?.removeListener(_handleDemoTab);
+      _demoTabs = demoTabs;
+      demoTabs?.addListener(_handleDemoTab);
+      if (demoTabs != null) _selectedIndex = demoTabs.value;
     }
     if (!_checkedPendingAction) {
       _checkedPendingAction = true;
@@ -113,8 +135,41 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     _celebrationTimer?.cancel();
     _viewModel?.removeListener(_handleViewModelChanged);
     _viewModel?.stopPolling();
-    _suggest?.onAction = null;
+    _demoTabs?.removeListener(_handleDemoTab);
+    _releaseActionHandler();
     super.dispose();
+  }
+
+  /// Takes this shell's handler off the bridge, but only while the bridge still
+  /// holds it.
+  ///
+  /// The session swap mounts the other session's shell before this one is
+  /// disposed, and the channel has a single handler slot. Clearing it blindly
+  /// would silence the owner that has already registered, so a nudge would only
+  /// be noticed again on the next resume.
+  void _releaseActionHandler() {
+    final suggest = _suggest;
+    if (suggest == null || !_actionInstalled) return;
+    _actionInstalled = false;
+    if (identical(suggest.onAction, _actionHandler)) suggest.onAction = null;
+  }
+
+  /// The bridge's nudge: a suggestion was tapped.
+  void _handlePendingAction() => unawaited(_checkPendingAction());
+
+  /// The demo panel moved the shell.
+  void _handleDemoTab() {
+    final tabs = _demoTabs;
+    if (tabs == null || !mounted) return;
+    setState(() => _selectedIndex = tabs.value);
+  }
+
+  /// Switches tab, keeping the demo panel's copy in step. In the real session
+  /// there is no copy, so this is only what the navigation already did.
+  void _selectTab(int index) {
+    _demoTabs?.value = index;
+    if (!mounted) return;
+    setState(() => _selectedIndex = index);
   }
 
   /// Takes a pending 「いまひまじゃない？」 action, if there is one.
@@ -140,6 +195,10 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
         _checkQueued = false;
         final action = await suggest.takePendingAction();
         if (!mounted) return;
+        // Anything else is consumed and dropped. The demo notification's action
+        // only reaches this shell through the demo bridge, which hands it over
+        // as a declaration; a stray one taken here belongs to no session the
+        // user is looking at.
         if (action == himaSuggestDeclareAction) {
           await _offerSuggestedDeclaration();
         }
@@ -159,7 +218,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     final viewModel = context.read<AppViewModel>();
     // The declaration belongs to the home tab, and a pushed route would cover
     // the picker, so both go first.
-    setState(() => _selectedIndex = 0);
+    _selectTab(0);
     Navigator.of(context).popUntil((route) => route.isFirst);
     // Extending a live session is not what the suggestion offered.
     if (viewModel.isDeclared) return;
@@ -278,7 +337,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
           body: SafeArea(bottom: false, child: page),
           bottomNavigationBar: AppBottomNavigation(
             selectedIndex: _selectedIndex,
-            onSelected: (index) => setState(() => _selectedIndex = index),
+            onSelected: _selectTab,
           ),
         ),
         if (celebration != null)
