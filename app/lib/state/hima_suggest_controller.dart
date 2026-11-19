@@ -23,6 +23,10 @@ class HimaSuggestController extends ChangeNotifier {
   bool get usageAccess => _state.usageAccess;
   bool get notificationsAllowed => _state.notificationsAllowed;
 
+  /// How long the target apps must have been used in total before the
+  /// suggestion fires, one of [himaSuggestTriggerMinuteChoices].
+  int get appTriggerMinutes => _state.appTriggerMinutes;
+
   /// A tapped notification while the app is running.
   VoidCallback? get onAction => _bridge.onAction;
   set onAction(VoidCallback? value) => _bridge.onAction = value;
@@ -47,6 +51,10 @@ class HimaSuggestController extends ChangeNotifier {
 
   Future<void> setTargets(List<String> packages) async {
     _apply(await _bridge.setTargets(packages));
+  }
+
+  Future<void> setAppTriggerMinutes(int minutes) async {
+    _apply(await _bridge.setAppTriggerMinutes(minutes));
   }
 
   Future<List<HimaSuggestApp>> listLaunchableApps() =>

@@ -8,19 +8,20 @@ internal data class ForecastSlot(val weekday: Int, val startMin: Int, val endMin
 
 /**
  * Foreground state handed from one worker run to the next, so a target-app session that
- * started before the query window is still counted. The screen flag rides along because the
- * next run has no other way to tell whether a still-open session is really in front of the
- * user when the last screen event fell outside its window.
+ * started before the query window is still counted.
+ *
+ * Only the package travels with it: the screen state at the start of a run is rebuilt from that
+ * run's own events, because the carried flag would describe the end of the previous run, which
+ * is a different instant once a run reads further back (see [TargetUsageReader.read]).
  */
 internal data class CarriedForeground(
     val packageName: String?,
     val sinceMs: Long,
-    val screenInteractive: Boolean,
 ) {
     /**
-     * Ends the open interval but keeps the last known screen state. Used when the events
-     * between two runs were not observed: carrying the package would replay a pause or a
-     * screen lock that happened in the gap as "still in front".
+     * Ends the open interval. Used when the events between two runs were not observed:
+     * carrying the package would replay a pause or a screen lock that happened in the gap as
+     * "still in front".
      */
     fun withoutForeground(): CarriedForeground = copy(packageName = null, sinceMs = 0L)
 }
@@ -57,6 +58,22 @@ internal class HimaSuggestStore(context: Context) {
         }
         set(value) {
             prefs.edit().putString(KEY_TARGETS, JSONArray(value).toString()).apply()
+        }
+
+    /**
+     * Minutes of target use the app suggestion waits for. Like [targets] this describes the
+     * phone rather than the signed-in account, so [clearSuggestionState] keeps it.
+     *
+     * A stored value the settings screen does not offer reads as the default: the worker must
+     * always have a threshold, and guessing one from an old or foreign build is worse than
+     * falling back to the default the user sees.
+     */
+    var appTriggerMinutes: Int
+        get() = prefs.getInt(KEY_APP_TRIGGER_MINUTES, HimaSuggest.DEFAULT_APP_TRIGGER_MINUTES)
+            .takeIf { it in HimaSuggest.APP_TRIGGER_MINUTE_CHOICES }
+            ?: HimaSuggest.DEFAULT_APP_TRIGGER_MINUTES
+        set(value) {
+            prefs.edit().putInt(KEY_APP_TRIGGER_MINUTES, value).apply()
         }
 
     var declaredUntil: Long?
@@ -123,7 +140,6 @@ internal class HimaSuggestStore(context: Context) {
         get() = CarriedForeground(
             packageName = prefs.getString(KEY_FOREGROUND_PACKAGE, null),
             sinceMs = prefs.getLong(KEY_FOREGROUND_SINCE, 0L),
-            screenInteractive = prefs.getBoolean(KEY_SCREEN_INTERACTIVE, true),
         )
         set(value) {
             prefs.edit().apply {
@@ -133,7 +149,6 @@ internal class HimaSuggestStore(context: Context) {
                     putString(KEY_FOREGROUND_PACKAGE, value.packageName)
                 }
                 putLong(KEY_FOREGROUND_SINCE, value.sinceMs)
-                putBoolean(KEY_SCREEN_INTERACTIVE, value.screenInteractive)
             }.apply()
         }
 
@@ -174,7 +189,8 @@ internal class HimaSuggestStore(context: Context) {
 
     /**
      * Logout only drops what belongs to the signed-in account's suggestion history.
-     * Targets and the learned slots describe the phone, so they survive a re-login.
+     * Targets, the learned slots and the trigger length describe the phone, so they survive a
+     * re-login.
      */
     fun clearSuggestionState() {
         prefs.edit()
@@ -200,6 +216,7 @@ internal class HimaSuggestStore(context: Context) {
     private companion object {
         const val KEY_ENABLED = "enabled"
         const val KEY_TARGETS = "targets"
+        const val KEY_APP_TRIGGER_MINUTES = "appTriggerMinutes"
         const val KEY_DECLARED_UNTIL = "declaredUntil"
         const val KEY_FORECAST = "forecast"
         const val KEY_LAST_SUGGEST_AT = "lastSuggestAt"
@@ -207,7 +224,6 @@ internal class HimaSuggestStore(context: Context) {
         const val KEY_LAST_RUN_AT = "lastRunAt"
         const val KEY_FOREGROUND_PACKAGE = "foregroundPackage"
         const val KEY_FOREGROUND_SINCE = "foregroundSince"
-        const val KEY_SCREEN_INTERACTIVE = "screenInteractive"
         const val KEY_OBSERVATIONS = "observations"
         const val KEY_PENDING_ACTION = "pendingAction"
         const val KEY_NOTIFICATION_TOKEN = "notificationToken"
