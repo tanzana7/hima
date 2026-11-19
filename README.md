@@ -1,89 +1,108 @@
-# hima-bot（MVP）
+<p align="center"><img src="docs/images/icon.png" width="140" alt="hima. のアイコン"></p>
 
-サーバーの友達同士で「今ヒマ」を共有する Discord Bot。
-パネルからヒマ宣言を登録すると、一覧メッセージが常に最新に保たれ、「ノック」でヒマな人をDMで誘えます。
+<h1 align="center">hima.</h1>
+<p align="center"><b>いま、ひま？</b>　ひまを友達と共有して、気軽に遊びに誘えるアプリ</p>
 
-> Botの表示名はDiscord Developer Portal側で設定されるため、コード内に製品名はハードコードしていません。
-> パネル見出し等の表示名は `.env` の `BOT_DISPLAY_NAME`（未設定時は「今ヒマ！」）から読み込みます。
+「遊びたいけど、誘って断られたらどうしよう」「今は忙しいかも」。hima. は、そんな迷いをなくすためのアプリです。ひまなときに「いま、ひま」と宣言しておけば、同じくひまな友達が見つかり、そのまま気軽に誘えます。スマホアプリと Discord Bot のどちらからでも使え、状態は共有されます。
+
+| ひまを宣言 | ひまの状態 | やりたいこと | ひまの長さ |
+|:---:|:---:|:---:|:---:|
+| <img src="docs/images/screen-off.png" width="190"> | <img src="docs/images/screen-on.png" width="190"> | <img src="docs/images/screen-activity.png" width="190"> | <img src="docs/images/screen-duration.png" width="190"> |
+
+| 自動ひま提案の通知 | 自動ひま提案の設定 |
+|:---:|:---:|
+| <img src="docs/images/screen-notification.png" width="400"> | <img src="docs/images/screen-settings.png" width="190"> |
+
+## 特徴
+1. **誘う心理的なハードルを下げる**：ひまを共有している友達なら、断られる心配が少なく声をかけやすくなります。遊びたいのに誘えない問題を解消します。
+2. **宣言の手間まで減らす（自動ひま提案）**：YouTube や X などを一定時間使い続けたときや、いつものひまな時間に、アプリが「いまひまじゃない？」と通知で提案します。通知の「ひまにする」ボタンひとつで宣言できます（Android）。
+3. **Discord の友達とそのままつながる**：Discord でログインし、同じサーバーの仲間がそのまま友達になります。友達関係をゼロから作る必要はありません。
+4. **Discord Bot からも使える**：普段使っている Discord から、ひまの宣言や確認ができます。
+5. **「さそう」で気軽に誘える**：ひまな友達に「ゲームしない？」などを送るだけ。相手は「いいよ！ ／ あとで ／ パス」で返事します。見つけてから誘うまでがつながっています。
+6. **アプリと Discord の両方に対応**：わかりやすいアプリと、手軽な Bot から、自分に合う方法を選べます。
+7. **偶然の遊びの機会を増やす**：予定を立てるほどでもない「ちょっと遊ぼう」のきっかけを作ります。
+
+## できること
+### アプリ
+- **ひまの宣言**：ホームの「いま、ひま？」で「ひまを宣言」。長押しで温度感を選べます（🙂 誘われたら行く ／ 🌙 ひっそり暇）。
+- **やりたいこと**：ゲーム、雑談・通話、作業通話、外出、なんでもOK から選べます。
+- **ひまの長さ**：15分〜12時間から選べます。時間が来るか「おわる」で終わります。
+- **ひまな友達**：今ひまな友達と、その残り時間・やりたいことが並びます。サーバーごとに、自分を見せるかを選べます。
+- **さそう**：ひまな友達に誘いを送れます。誘いは Discord の DM にも届き、DM のボタンからも返事ができます。
+- **マッチ**：🙂同士がひまになると「お互い誘われ待ちだよ」と知らせます（アプリと Discord の DM）。
+- **自動ひま提案（Android）**：対象アプリ（既定は X と YouTube。追加・削除できます）を設定した時間（5分・15分・30分・1時間）使い続けたときと、いつものひまな時間に通知します。勝手に宣言はしません。Discord の提案 DM と重ならないよう、「Discordでも受け取る」を選べます。
+- **デモモード**：ログインなしで、全画面をモックのデータで試せます（下の「デモモード」）。
+
+### Discord Bot
+| コマンド・操作 | できること |
+|---|---|
+| `/panel 募集` | ひまを宣言します（時間・温度感・やりたいこと・ひとこと） |
+| `/panel 確認` | 今ひまな人と自分の状態を見ます |
+| `/panel 参加` | ひまな人に参加を申し込みます（誘い） |
+| `/panel 取り消し` | 宣言を取り消します |
+| 掲示板のボタン | 「ヒマ宣言する」「お返事する」「ブロック設定」 |
+| DM | 誘いの着信（「いいよ！ ／ あとで ／ パス」で返事）、マッチのお知らせ、いつもの時間の提案（「このまま宣言する」） |
+
+Bot の応答は、すべて自分だけに表示されます。
 
 ## 構成
+```
+Flutter アプリ ──┐
+                 ├── API（FastAPI） ── PostgreSQL
+Discord Bot ─────┘        └── ワーカー（期限切れ・マッチ・提案の DM）
+```
 
-| ファイル | 役割 |
-| --- | --- |
-| `bot.py` | 起動・スラッシュコマンド定義・30秒間隔の期限切れクリーンアップ |
-| `storage.py` | SQLite（標準ライブラリ `sqlite3`）でのデータ操作 |
-| `views.py` | パネルの永続View・登録画面・ノック画面・DM返答ボタン・Modal |
-| `requirements.txt` | 依存パッケージ |
-| `.env.example` | 環境変数のテンプレート |
+| 場所 | 役割 |
+|---|---|
+| `app/` | Flutter アプリ（Android / iOS、表示名 `hima.`）。自動ひま提案は Android のネイティブ（Kotlin、WorkManager） |
+| `api/` | FastAPI のサーバー。DB は PostgreSQL（SQLAlchemy、Alembic）。ワーカーも API のプロセス内で動く |
+| `bot.py`、`views.py`、`api_client.py` | Discord Bot（discord.py）。API を通して状態を読み書きする |
+| `docs/` | [API 契約書](docs/api-contract.md)、[アプリが必要とする API](docs/app-api-requests.md)、[デザイン仕様](docs/design/Design.md) |
 
-- Python 3.11以上 / discord.py 2.x / python-dotenv
-- Privileged Intent（Presence / Server Members / Message Content）は**すべてOFFで動作**します
-- 外部DB・Web管理画面・Dockerは不要。DBはローカルの `data.db` のみ
+## 動かし方（サーバーと Bot）
+### 1. Discord の準備
+[Discord Developer Portal](https://discord.com/developers/applications) でアプリケーションを作り、次を用意します。
+- Bot のトークン（Privileged Intent はすべてオフで動きます）
+- OAuth2 のクライアント ID とシークレット
+- アプリのログイン用リダイレクト URI：`discord-<アプリケーションID>:/authorize/callback`
+- `bot` と `applications.commands` のスコープを付けて、サーバーに Bot を招待する
 
-## セットアップ
+### 2. データベース
+```bash
+docker compose up -d db
+```
 
-1. [Discord Developer Portal](https://discord.com/developers/applications) でアプリケーションを作成し、Botタブでトークンを取得する
-   - **Privileged Intent はすべてOFFのままでOK**
-2. OAuth2 > URL Generator で `bot` + `applications.commands` スコープを付け、サーバーに招待する
-3. リポジトリ直下で依存をインストールする
+### 3. API
+```bash
+python -m venv .venv
+# Windows: .venv\Scripts\activate / macOS・Linux: source .venv/bin/activate
+pip install -r requirements.txt httpx fastapi "uvicorn[standard]" sqlalchemy "psycopg[binary]" alembic pydantic-settings "pyjwt[crypto]"
+```
 
-   ```bash
-   python -m pip install -r requirements.txt
-   ```
+`api/.env` を作ります。
 
-4. `.env.example` をコピーして `.env` を作り、トークンを書く
+| 変数 | 説明 |
+|---|---|
+| `DATABASE_URL` | 既定は `postgresql+psycopg://postgres:postgres@localhost:5432/atsumaro` |
+| `BOT_API_SECRET` | Bot と API の共有シークレット（ルートの `.env` と同じ値） |
+| `API_JWT_SECRET` | アプリのログイン用 JWT の署名シークレット |
+| `DISCORD_BOT_TOKEN` | Bot のトークン（DM の送信に使う） |
+| `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` | OAuth2 のクライアント情報 |
+| `FCM_SERVICE_ACCOUNT_JSON` | 任意。未設定ならプッシュ通知はログだけ（dry-run） |
 
-   ```bash
-   cp .env.example .env
-   # .env を編集して DISCORD_TOKEN を設定
-   ```
+```bash
+cd api && alembic upgrade head && cd ..
+uvicorn api.main:app --host 0.0.0.0 --port 8000
+```
 
-   | 変数 | 必須 | 説明 |
-   | --- | --- | --- |
-   | `DISCORD_TOKEN` | ✅ | Botトークン |
-   | `DEV_GUILD_ID` | 任意 | 設定するとそのギルドへスラッシュコマンドを即時同期。未設定はグローバル同期（反映に最大1時間） |
-   | `BOT_DISPLAY_NAME` | 任意 | パネル見出し等の表示名。未設定は「今ヒマ！」 |
+### 4. Discord Bot
+`.env.example` をコピーして `.env` を作り、`DISCORD_TOKEN`、`API_BASE_URL`（例：`http://127.0.0.1:8000`）、`BOT_API_SECRET` を設定します。`DEV_GUILD_ID` を設定すると、そのサーバーにスラッシュコマンドがすぐ反映されます。
 
-5. 起動する
+```bash
+python bot.py
+```
 
-   ```bash
-   python bot.py
-   ```
-
-   トークン未設定で起動すると、Tracebackではなく `DISCORD_TOKENが未設定です` と表示して終了します。
-
-## 使い方
-
-1. サーバー管理権限のある人が `/panel_setup` を実行 → 実行したチャンネルに「パネル」と「一覧」の2つのメッセージが投稿され、IDが保存される
-2. パネルの **「今ヒマ！」**（または `/hima`）を押す → 自分だけに見える操作画面で
-   - 時間：5分／15分／30分／1時間／3時間
-   - 温度感：🔥今すぐ遊びたい／🙂誘われたら行く／🌙ひっそり暇
-   - やりたいこと：🎮ゲーム／💬雑談・通話／💻作業通話／🚶外出／✨なんでもOK
-   - 任意の「ひとこと追加」（50文字まで。ゲーム名などの用途）→ Modal
-
-   を選び **「決定」** で登録。登録済みの人が再登録すると上書き（延長）される
-3. 一覧メッセージはBotが編集して常に最新に保つ（表示名／温度感／やりたいこと／ひとこと／あと◯分。0人なら「今ヒマな人はいません」）
-4. 期限が来るとバックグラウンドループ（30秒間隔）が登録を削除して一覧を更新する
-5. **「やめる」** ボタンまたは `/hima_off` で自分の登録を解除。`/hima_list` で一覧をephemeral表示
-6. パネルの **「ノックする」** を押す → ephemeral画面で
-   - 今ヒマな相手（自分以外、最大25人）
-   - 誘い文テンプレ（ゲームしない？／ちょっと話さない？／作業通話しない？）
-
-   を選んで送信 → 相手へDMでノックが届き、DMには返答ボタン **「いいよ！／あとで／今回はパス」** が付く。押すとノックした人へDMで結果が通知され、`knock_log` の status も更新される
-   - 同一ペアのノックは5分に1回まで（連打防止）
-   - 相手のDMが閉じられている場合は送った人にその旨を通知
-
-## データベーススキーマ（SQLite: `data.db`）
-
-- `guild_config(guild_id PRIMARY KEY, channel_id, panel_message_id, list_message_id)`
-- `hima_status(guild_id, user_id, display_name, started_at, expires_at, mood, activity, note, PRIMARY KEY(guild_id, user_id))`
-- `knock_log(id INTEGER PRIMARY KEY AUTOINCREMENT, guild_id, from_user_id, to_user_id, template, status, created_at)`
-
-## MVPでやらないこと
-
-こっそりマッチング、同じゲーム同士の自動マッチング、人数募集、プレイ中ゲーム連携、よく暇になる時間帯の登録、複数サーバーをまたいだ友達リスト、課金・有料機能。
-
-## Flutterアプリ
+## アプリ（Flutter）
 
 `app/` に Android / iOS 向け Flutter アプリ（表示名 `hima.`）があります。見た目と操作の仕様は [デザイン仕様](docs/design/Design.md)、API の契約は [API 契約書](docs/api-contract.md) を参照してください。
 
