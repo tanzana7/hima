@@ -20,12 +20,10 @@ MOOD_OPTIONS = [("ok", "🙂 誘われ待ち"), ("moon", "🌙 ひっそり（�
 ACTIVITY_LABELS = {"game": "ゲーム", "chat": "雑談・通話", "work": "作業通話", "out": "外出", "any": "なんでもOK"}
 RESULT_LABELS = {"accepted": "いいよ！", "later": "あとで", "passed": "今回はパス"}
 KNOCK_TEMPLATES = ["ゲームしない？", "ちょっと話さない？", "作業通話しない？"]
-DURATIONS = [(5, "5分"), (15, "15分"), (30, "30分"), (60, "1時間"), (180, "3時間")]
-# 「時間を指定する」のカスタム時間セレクト用（5〜720分・API は 1〜1440 にクランプ）
-CUSTOM_DURATIONS = [
+DURATIONS = [
     (10, "10分"), (15, "15分"), (30, "30分"), (45, "45分"), (60, "1時間"),
     (90, "1時間30分"), (120, "2時間"), (180, "3時間"), (300, "5時間"), (720, "12時間"),
-]
+]  # 既定 30分（API は 1〜1440 分にクランプ）
 DEFAULT_MINUTES = 30
 NOTE_MAX = 50
 CANDIDATE_LIMIT = 25
@@ -455,11 +453,6 @@ class JoinView(ErrorFollowupView):
     async def note_button(self, interaction: discord.Interaction, _: ui.Button) -> None:
         await interaction.response.send_modal(JoinNoteModal(self))
 
-    @ui.button(label="時間を指定する", style=discord.ButtonStyle.secondary, row=3, emoji="⏱️")
-    async def custom_duration_button(self, interaction: discord.Interaction, _: ui.Button) -> None:
-        # テキスト入力の Modal から、セレクトで選ぶ方式に変更（issue 依頼：30分などの時間をこの中で選択）
-        await interaction.response.edit_message(view=CustomDurationView(self))
-
     @ui.button(label="確定", style=discord.ButtonStyle.success, row=4)
     async def decide(self, interaction: discord.Interaction, _: ui.Button) -> None:
         if self.guild_id is None:
@@ -485,32 +478,6 @@ class JoinView(ErrorFollowupView):
         await interaction.followup.send(
             f"{kind} あと{self.duration_min}分ヒマ宣言中。マッチしたらDMが届くよ🚀{suffix}", ephemeral=True
         )
-
-
-class CustomDurationView(ui.View):
-    """「時間を指定する」で開くカスタム時間セレクト（5〜720分から選択・選んだら元の画面に戻る）。"""
-
-    def __init__(self, join_view: JoinView) -> None:
-        super().__init__(timeout=300)
-        self.join_view = join_view
-        for opt in self.select.options:  # 現在値を選択済み表示に
-            opt.default = int(opt.value) == join_view.duration_min
-
-    @ui.select(
-        placeholder="あとどれくらいヒマ？（選ぶと元の画面に戻ります）",
-        options=[
-            discord.SelectOption(label=label, value=str(minutes))
-            for minutes, label in CUSTOM_DURATIONS
-        ],
-        row=0,
-    )
-    async def select(self, interaction: discord.Interaction, select: ui.Select) -> None:
-        self.join_view.duration_min = int(select.values[0])
-        await interaction.response.edit_message(view=self.join_view)
-
-    @ui.button(label="もどる", style=discord.ButtonStyle.secondary, row=1)
-    async def back(self, interaction: discord.Interaction, _: ui.Button) -> None:
-        await interaction.response.edit_message(view=self.join_view)
 
 
 class JoinNoteModal(ui.Modal):
