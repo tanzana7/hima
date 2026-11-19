@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../app/theme/app_colors.dart';
 import '../../app/theme/app_spacing.dart';
 import '../../app/theme/app_text_styles.dart';
+import '../../data/hima_suggest_bridge.dart';
 import '../../data/models/models.dart';
 import '../../shared/haptics.dart';
 import '../../shared/widgets/avatar_view.dart';
@@ -11,6 +14,7 @@ import '../../shared/widgets/paint/paint.dart';
 import '../../shared/widgets/paint_button.dart';
 import '../../shared/widgets/shake.dart';
 import '../../state/app_view_model.dart';
+import '../../state/hima_suggest_controller.dart';
 
 /// Captions that sit directly on a [PaintWash]. [AppColors.muted] measures
 /// 4.2:1 on the pastel wash, so text on paint takes this darker tone instead
@@ -27,28 +31,28 @@ class SettingsView extends StatefulWidget {
   State<SettingsView> createState() => _SettingsViewState();
 }
 
-class _SettingsViewState extends State<SettingsView> {
-  /// Saves a setting and reports whether it was stored.
-  ///
-  /// The error haptic and the message live here so every settings control fails
-  /// the same way; the control that failed shakes itself.
-  Future<bool> _updateSettings(
-    BuildContext context, {
-    bool? autoMode,
-    Mood? autoMood,
-  }) async {
-    try {
-      await context.read<AppViewModel>().updateSettings(
-        autoMode: autoMode,
-        autoMood: autoMood,
-      );
-      return true;
-    } catch (_) {
-      if (!context.mounted) return false;
-      AppHaptics.error();
-      _showMessage(context, '保存できなかった。もう一度試してね');
-      return false;
-    }
+class _SettingsViewState extends State<SettingsView> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    // The device state is not part of /app/me, so the section has to read it
+    // when it appears.
+    unawaited(context.read<HimaSuggestController>().load());
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    // A permission is granted in system settings, so the row that asked for it
+    // only goes away once the app is back.
+    unawaited(context.read<HimaSuggestController>().load());
   }
 
   Future<bool> _setGuildVisibility(
@@ -137,47 +141,12 @@ class _SettingsViewState extends State<SettingsView> {
   @override
   Widget build(BuildContext context) {
     final viewModel = context.watch<AppViewModel>();
-    final settings = viewModel.me?.settings;
+    final suggest = _suggestSection(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (settings != null) ...[
-          _SectionCard(
-            seed: paintSeedOf('settings-auto'),
-            color: AppColors.purpleSoft,
-            children: [
-              _SavingControl<bool>(
-                value: settings.autoMode,
-                onSave: (value) => _updateSettings(context, autoMode: value),
-                builder: (context, autoMode, onChanged) => Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    SwitchListTile(
-                      title: const Text('自動でひま宣言'),
-                      value: autoMode,
-                      onChanged: onChanged,
-                    ),
-                    // The mood only matters while auto mode is on, so it folds
-                    // away instead of sitting there as a dead control.
-                    AnimatedSize(
-                      duration: MediaQuery.disableAnimationsOf(context)
-                          ? Duration.zero
-                          : const Duration(milliseconds: 220),
-                      curve: Curves.easeOutCubic,
-                      alignment: Alignment.topCenter,
-                      child: autoMode
-                          ? _AutoMoodChips(
-                              mood: settings.autoMood,
-                              onSave: (mood) =>
-                                  _updateSettings(context, autoMood: mood),
-                            )
-                          : const SizedBox(width: double.infinity),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
+        if (suggest != null) ...[
+          suggest,
           const SizedBox(height: AppSpacing.s24),
         ],
         const _SectionHeading('サーバーごとの表示'),
@@ -277,9 +246,7 @@ class _SettingsViewState extends State<SettingsView> {
                 ],
         ),
         const SizedBox(height: AppSpacing.s24),
-        _detectionPlaceholder(context),
         if (widget.showLogout) ...[
-          const SizedBox(height: AppSpacing.s24),
           PaintButton(
             seed: 991,
             label: 'ログアウト',
@@ -293,40 +260,224 @@ class _SettingsViewState extends State<SettingsView> {
     );
   }
 
-  Widget _detectionPlaceholder(BuildContext context) => _SectionCard(
-    seed: paintSeedOf('settings-detection'),
-    color: AppColors.lemonSoft,
-    children: [
-      Padding(
-        padding: const EdgeInsets.all(AppSpacing.s16),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Icon(Icons.phone_android_rounded, color: AppColors.muted),
-            const SizedBox(width: AppSpacing.s12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Xの利用時間から検出',
-                    style: AppTextStyles.friendName.copyWith(fontSize: 15),
-                  ),
-                  const SizedBox(height: AppSpacing.s4),
-                  Text(
-                    'Androidのみ。近日対応予定です。',
-                    style: AppTextStyles.caption.copyWith(color: _washMuted),
-                  ),
-                  // TODO: The Android usage-detection task adds the
-                  // usage-access flow here.
-                ],
+  /// The 「自動ひま提案」 card, or null where the native worker does not exist.
+  ///
+  /// Everything here is device state, so it is read from the bridge instead of
+  /// `/app/me`: the worker lives in Android, and the server cannot describe it.
+  Widget? _suggestSection(BuildContext context) {
+    final suggest = context.watch<HimaSuggestController>();
+    if (!suggest.isSupported) return null;
+    return _SectionCard(
+      seed: paintSeedOf('settings-suggest'),
+      color: AppColors.purpleSoft,
+      children: [
+        _SavingControl<bool>(
+          value: suggest.enabled,
+          onSave: (value) => _setSuggestEnabled(context, value),
+          builder: (context, enabled, onChanged) => Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SwitchListTile(
+                title: const Text('自動ひま提案'),
+                // Two clauses with an explicit break: Japanese wraps at any
+                // character, so a greedy wrap split words (「提案」 left 「案」
+                // alone on a third line, and a shorter copy split 「ときと」).
+                // Each clause stays at 12 characters or fewer so it fits one
+                // line on a 360dp phone; at a larger text scale each clause
+                // wraps on its own instead of mid-word across the comma.
+                subtitle: const Text('使い続けたときと、\nいつもの時間に通知するよ'),
+                value: enabled,
+                onChanged: onChanged,
               ),
-            ),
-          ],
+              if (enabled) ...[
+                if (!suggest.usageAccess)
+                  ListTile(
+                    title: const Text('使用状況へのアクセス'),
+                    trailing: TextButton(
+                      onPressed: () => _openUsageAccess(context),
+                      child: const Text('許可'),
+                    ),
+                  ),
+                if (!suggest.notificationsAllowed)
+                  ListTile(
+                    title: const Text('通知'),
+                    trailing: TextButton(
+                      onPressed: () => _allowNotifications(context),
+                      child: const Text('許可'),
+                    ),
+                  ),
+                _SavingControl<int>(
+                  value: suggest.appTriggerMinutes,
+                  onSave: (minutes) =>
+                      _setSuggestTriggerMinutes(context, minutes),
+                  builder: (context, minutes, onChanged) => ListTile(
+                    // Body size rather than the tile's 16sp default: the label
+                    // is long, and the smaller size is what keeps it on one
+                    // line at 200% text on a 360dp phone.
+                    title: const Text(
+                      '通知までの利用時間',
+                      style: AppTextStyles.body,
+                    ),
+                    subtitle: Padding(
+                      padding: const EdgeInsets.only(top: AppSpacing.s8),
+                      child: Wrap(
+                        // Wraps rather than shrinks: four pills do not fit one
+                        // line at 360dp and 200% text, and a Row would overflow.
+                        spacing: AppSpacing.s8,
+                        runSpacing: AppSpacing.s8,
+                        children: [
+                          for (final option in himaSuggestTriggerMinuteChoices)
+                            _TriggerMinutesChoice(
+                              label: durationLabel(option),
+                              selected: option == minutes,
+                              onTap: () => onChanged(option),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                for (final target in suggest.targets)
+                  ListTile(
+                    // Rich text so 「未インストール」 wraps under the label at a
+                    // large text scale instead of pushing the row wider.
+                    title: Text.rich(
+                      TextSpan(
+                        text: target.label,
+                        children: [
+                          if (!target.installed)
+                            TextSpan(
+                              text: '  未インストール',
+                              style: AppTextStyles.caption.copyWith(
+                                color: _washMuted,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    trailing: IconButton(
+                      tooltip: '外す',
+                      onPressed: () => _removeTarget(context, target),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                  ),
+                ListTile(
+                  title: const Text('アプリを追加'),
+                  trailing: const Icon(Icons.add_rounded),
+                  onTap: () => _addTarget(context),
+                ),
+              ],
+            ],
+          ),
         ),
+      ],
+    );
+  }
+
+  /// Turns the suggestion worker on or off.
+  ///
+  /// `auto_mode` is still written so the server keeps a compatible value, but
+  /// nothing reads it any more: a failed write must not look like a failure to
+  /// the user who just flipped the device switch.
+  Future<bool> _setSuggestEnabled(BuildContext context, bool value) async {
+    final suggest = context.read<HimaSuggestController>();
+    final viewModel = context.read<AppViewModel>();
+    try {
+      await suggest.setEnabled(value);
+    } catch (_) {
+      if (!context.mounted) return false;
+      AppHaptics.error();
+      _showMessage(context, '保存できなかった。もう一度試してね');
+      return false;
+    }
+    unawaited(
+      viewModel.updateSettings(autoMode: value).catchError((Object _) {}),
+    );
+    if (value && !suggest.notificationsAllowed) {
+      // Asked right away: without the permission the worker is silent, and the
+      // user is already on the screen that explains it.
+      try {
+        await suggest.requestNotificationPermission();
+      } catch (_) {
+        // The 「通知」 row stays, so 許可 can be pressed again.
+      }
+    }
+    return true;
+  }
+
+  /// Stores how long the target apps must be used before a suggestion.
+  Future<bool> _setSuggestTriggerMinutes(
+    BuildContext context,
+    int minutes,
+  ) async {
+    try {
+      await context.read<HimaSuggestController>().setAppTriggerMinutes(minutes);
+      return true;
+    } catch (_) {
+      if (!context.mounted) return false;
+      AppHaptics.error();
+      _showMessage(context, '保存できなかった。もう一度試してね');
+      return false;
+    }
+  }
+
+  Future<void> _openUsageAccess(BuildContext context) async {
+    try {
+      await context.read<HimaSuggestController>().openUsageAccessSettings();
+    } catch (_) {
+      if (!context.mounted) return;
+      _showMessage(context, '開けなかった。もう一度試してね');
+    }
+  }
+
+  Future<void> _allowNotifications(BuildContext context) async {
+    final suggest = context.read<HimaSuggestController>();
+    try {
+      await suggest.requestNotificationPermission();
+    } catch (_) {
+      if (!context.mounted) return;
+      _showMessage(context, '許可できなかった。もう一度試してね');
+    }
+  }
+
+  Future<void> _removeTarget(
+    BuildContext context,
+    HimaSuggestTarget target,
+  ) async {
+    final suggest = context.read<HimaSuggestController>();
+    // The list is the display order, so the remaining packages keep theirs.
+    final packages = [
+      for (final item in suggest.targets)
+        if (item.package != target.package) item.package,
+    ];
+    try {
+      await suggest.setTargets(packages);
+    } catch (_) {
+      if (!context.mounted) return;
+      _showMessage(context, '外せなかった。もう一度試してね');
+    }
+  }
+
+  Future<void> _addTarget(BuildContext context) async {
+    final suggest = context.read<HimaSuggestController>();
+    final packages = [for (final target in suggest.targets) target.package];
+    final added = await showModalBottomSheet<HimaSuggestApp>(
+      context: context,
+      useSafeArea: true,
+      isScrollControlled: true,
+      builder: (sheetContext) => _AddAppSheet(
+        targeted: packages.toSet(),
+        loadApps: suggest.listLaunchableApps,
       ),
-    ],
-  );
+    );
+    if (added == null || !context.mounted) return;
+    try {
+      await suggest.setTargets([...packages, added.package]);
+    } catch (_) {
+      if (!context.mounted) return;
+      _showMessage(context, '追加できなかった。もう一度試してね');
+    }
+  }
 
   static String _slotLabel(RegularSlot slot) =>
       '${weekdayLabels[slot.weekday]} ${clockLabel(slot.startMin)}–${clockLabel(slot.endMin)}';
@@ -482,140 +633,132 @@ class _SettingsViewState extends State<SettingsView> {
   );
 }
 
-/// The 自動宣言の温度感 choice, shown only while auto mode is on.
-class _AutoMoodChips extends StatelessWidget {
-  const _AutoMoodChips({required this.mood, required this.onSave});
+/// The 「アプリを追加」 sheet: the templates first, then every other launchable
+/// app behind a search field.
+class _AddAppSheet extends StatefulWidget {
+  const _AddAppSheet({required this.targeted, required this.loadApps});
 
-  final Mood mood;
-  final Future<bool> Function(Mood mood) onSave;
+  /// Packages already in the target list; they are not offered again.
+  final Set<String> targeted;
+
+  final Future<List<HimaSuggestApp>> Function() loadApps;
+
+  @override
+  State<_AddAppSheet> createState() => _AddAppSheetState();
+}
+
+class _AddAppSheetState extends State<_AddAppSheet> {
+  final TextEditingController _search = TextEditingController();
+  String _query = '';
+
+  /// Read once per sheet: the app list cannot change while the sheet is open.
+  late final Future<List<HimaSuggestApp>> _apps = widget.loadApps();
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  /// Every launchable app that is not offered above or already a target.
+  List<HimaSuggestApp> _matches(List<HimaSuggestApp> apps) {
+    final query = _query.trim().toLowerCase();
+    return [
+      for (final app in apps)
+        if (!widget.targeted.contains(app.package) &&
+            !himaSuggestTemplates.any(
+              (template) => template.package == app.package,
+            ) &&
+            (query.isEmpty || app.label.toLowerCase().contains(query)))
+          app,
+    ];
+  }
+
+  void _choose(HimaSuggestApp app) => Navigator.of(context).pop(app);
 
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.fromLTRB(
-      AppSpacing.s16,
+    // The keyboard would otherwise cover the search field at the bottom of the
+    // sheet.
+    padding: EdgeInsets.fromLTRB(
+      AppSpacing.s24,
       0,
-      AppSpacing.s16,
-      AppSpacing.s12,
+      AppSpacing.s24,
+      AppSpacing.s24 + MediaQuery.viewInsetsOf(context).bottom,
     ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+    child: ListView(
+      shrinkWrap: true,
       children: [
-        Text(
-          '自動宣言の温度感',
-          style: AppTextStyles.caption.copyWith(color: _washMuted),
+        const Text('アプリを追加', style: AppTextStyles.sectionTitle),
+        const SizedBox(height: AppSpacing.s8),
+        for (final template in himaSuggestTemplates)
+          if (!widget.targeted.contains(template.package))
+            ListTile(
+              title: Text(template.label),
+              onTap: () => _choose(template),
+            ),
+        const SizedBox(height: AppSpacing.s8),
+        PaintDab(
+          seed: paintSeedOf('suggest-search'),
+          color: AppColors.purpleSoft,
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.s8,
+            vertical: 6,
+          ),
+          wobble: 0.10,
+          child: TextField(
+            controller: _search,
+            textInputAction: TextInputAction.search,
+            onChanged: (value) => setState(() => _query = value),
+            decoration: InputDecoration(
+              hintText: 'アプリ名でさがす',
+              hintStyle: AppTextStyles.body.copyWith(color: _washMuted),
+              // The dab is the field's background, so the theme's fill and
+              // borders are both turned off, like the friends search field.
+              filled: false,
+              border: InputBorder.none,
+              enabledBorder: InputBorder.none,
+              focusedBorder: InputBorder.none,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.s8,
+                vertical: 10,
+              ),
+              prefixIcon: const Icon(Icons.search_rounded, color: _washMuted),
+            ),
+          ),
         ),
         const SizedBox(height: AppSpacing.s8),
-        _SavingControl<Mood>(
-          value: mood,
-          onSave: onSave,
-          builder: (context, value, onChanged) =>
-              _MoodChips(selected: value, onSelected: onChanged),
-        ),
-      ],
-    ),
-  );
-}
-
-/// The two auto-declaration moods as compact chips. The full mood names are
-/// too long to sit side by side, so each chip carries the emoji plus a short
-/// label and keeps the full name as its accessible label.
-class _MoodChips extends StatelessWidget {
-  const _MoodChips({required this.selected, required this.onSelected});
-
-  final Mood selected;
-  final ValueChanged<Mood> onSelected;
-
-  static String _shortLabel(Mood mood) => switch (mood) {
-    Mood.ok => '誘い待ち',
-    Mood.quiet => 'ひっそり',
-  };
-
-  /// Full name for screen readers. `Mood.label` still spells ひま as 暇, and the
-  /// app writes it in hiragana everywhere, so the spoken name is spelled here.
-  static String _semanticLabel(Mood mood) => switch (mood) {
-    Mood.ok => '誘われたら行く',
-    Mood.quiet => 'ひっそりひま',
-  };
-
-  @override
-  Widget build(BuildContext context) => Wrap(
-    spacing: AppSpacing.s8,
-    runSpacing: AppSpacing.s8,
-    children: [
-      for (final mood in Mood.values)
-        _MoodChip(
-          mood: mood,
-          label: _shortLabel(mood),
-          semanticLabel: _semanticLabel(mood),
-          selected: mood == selected,
-          onTap: () {
-            if (mood == selected) return;
-            AppHaptics.select();
-            onSelected(mood);
+        FutureBuilder<List<HimaSuggestApp>>(
+          future: _apps,
+          builder: (context, snapshot) {
+            final apps = snapshot.data;
+            if (apps == null) {
+              // The templates above are already usable, so a slow or failed
+              // read never blocks adding X or YouTube.
+              return snapshot.connectionState == ConnectionState.waiting
+                  ? const Padding(
+                      padding: EdgeInsets.all(AppSpacing.s16),
+                      child: Center(child: CircularProgressIndicator()),
+                    )
+                  : const _SectionNote('アプリの一覧を読み込めなかったよ');
+            }
+            final matches = _matches(apps);
+            if (matches.isEmpty) {
+              return const _SectionNote('追加できるアプリはないよ');
+            }
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (final app in matches)
+                  ListTile(
+                    title: Text(app.label),
+                    onTap: () => _choose(app),
+                  ),
+              ],
+            );
           },
         ),
-    ],
-  );
-}
-
-class _MoodChip extends StatelessWidget {
-  const _MoodChip({
-    required this.mood,
-    required this.label,
-    required this.semanticLabel,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final Mood mood;
-  final String label;
-  final String semanticLabel;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) => Semantics(
-    button: true,
-    selected: selected,
-    label: '${mood.emoji} $semanticLabel',
-    // The child's semantics are excluded, so the wrapper has to carry the
-    // action itself or the chip cannot be activated by a screen reader.
-    onTap: onTap,
-    excludeSemantics: true,
-    child: InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
-      child: PaintDab(
-        seed: paintSeedOf('mood-chip-${mood.name}'),
-        // The chosen chip is the saturated purple with white text, the others a
-        // soft tint with ink. The fill swaps in one step: a half-faded fill
-        // would drop the label below 4.5:1 for the length of the animation.
-        color: selected ? AppColors.purple : AppColors.purpleSoft,
-        // 14dp of vertical padding brings the dab to the 48dp tap target
-        // without a fixed height, so it still grows with the text.
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.s12,
-          vertical: 14,
-        ),
-        wobble: 0.045,
-        droplets: selected ? 2 : 0,
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(mood.emoji, style: const TextStyle(fontSize: 15)),
-            const SizedBox(width: AppSpacing.s4 + 2),
-            Text(
-              label,
-              maxLines: 1,
-              style: AppTextStyles.body.copyWith(
-                fontSize: 14,
-                fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-                color: selected ? AppColors.surface : AppColors.ink,
-              ),
-            ),
-          ],
-        ),
-      ),
+      ],
     ),
   );
 }
@@ -674,6 +817,64 @@ class _SavingControlState<T> extends State<_SavingControl<T>> {
   Widget build(BuildContext context) => Shake(
     key: _shakeKey,
     child: widget.builder(context, _shown, _handleChanged),
+  );
+}
+
+/// One length offered by 「通知までの利用時間」.
+///
+/// A pill instead of another row: four rows would push the app list far down,
+/// and the surrounding [Wrap] breaks the pills into lines rather than
+/// overflowing. The pill is as tall as the design's minimum tap target, and the
+/// selected one is a filled pill, not only a bolder label, so the choice is
+/// visible without relying on colour alone.
+class _TriggerMinutesChoice extends StatelessWidget {
+  const _TriggerMinutesChoice({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    button: true,
+    selected: selected,
+    label: label,
+    // `excludeSemantics` drops the InkWell below, including its tap action, so
+    // the node has to carry the action itself or the choice is unreachable for
+    // screen reader users.
+    onTap: onTap,
+    excludeSemantics: true,
+    child: InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
+      child: Container(
+        constraints: const BoxConstraints(
+          minHeight: AppSpacing.minTapTarget,
+          minWidth: AppSpacing.minTapTarget,
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s16),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: selected ? AppColors.purpleSoft : AppColors.surface,
+          borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
+          border: Border.all(
+            color: selected ? AppColors.purple : AppColors.purpleSoft,
+            width: AppSpacing.borderWidth,
+          ),
+        ),
+        child: Text(
+          label,
+          style: AppTextStyles.body.copyWith(
+            fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+            color: selected ? AppColors.purple : AppColors.ink,
+          ),
+        ),
+      ),
+    ),
   );
 }
 

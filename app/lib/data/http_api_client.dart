@@ -181,10 +181,14 @@ class HttpApiClient implements ApiClient {
   }
 
   @override
-  Future<void> declareHima(HimaDeclaration declaration) async {
-    // The response only carries the session id and the new expiry; the caller
-    // re-reads /app/me instead of trusting that shape.
-    await _request('POST', '/app/sessions', body: declaration.toJson());
+  Future<DateTime> declareHima(HimaDeclaration declaration) async {
+    // `{session_id, created, expires_at}`. The expiry is handed back instead of
+    // being re-read from /app/me, so a declaration that succeeded is never lost
+    // when the following read fails.
+    final json = _map(
+      await _request('POST', '/app/sessions', body: declaration.toJson()),
+    );
+    return readDateTime(json, 'expires_at');
   }
 
   @override

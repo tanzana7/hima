@@ -3,16 +3,22 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../data/api_client.dart';
+import '../data/hima_suggest_bridge.dart';
 import '../data/models/models.dart';
 
 class AppViewModel extends ChangeNotifier {
-  AppViewModel(this._api) {
+  AppViewModel(this._api, this._bridge) {
     // The client reports any 401 here: the JWT cannot be refreshed, so the only
     // recovery is to drop it and show the login screen again.
     _api.onUnauthorized = _handleUnauthorized;
   }
 
   final ApiClient _api;
+
+  /// The native 「自動ひま提案」 worker. It only suggests, so everything sent
+  /// here is a mirror of what the server already holds.
+  final HimaSuggestBridge _bridge;
+
   Timer? _pollTimer;
   bool _isAuthenticated = false;
   bool _isBusy = false;
@@ -62,8 +68,8 @@ class AppViewModel extends ChangeNotifier {
   final Map<String, DateTime> _matchCreatedAt = {};
 
   // Remembered between declarations so a single tap can declare again without
-  // asking a question. `auto_mood` in settings is unrelated (it belongs to the
-  // server-side auto mode) and must not be reused here.
+  // asking a question. `auto_mood` in settings is only written for compatibility
+  // with the server and must not be reused here.
   Mood _lastMood = Mood.ok;
   Activity? _pendingActivity;
   int _durationMin = defaultHimaDurationMin;
@@ -265,6 +271,7 @@ class AppViewModel extends ChangeNotifier {
     _rebuildFriendServers();
     _regularSlots = List.of(slots);
     _suggestions = List.of(forecast);
+    _publishForecast(forecast);
     _liveError = false;
   }
 
@@ -304,6 +311,9 @@ class AppViewModel extends ChangeNotifier {
       _pendingActivity = session.activity;
     }
     _myHima = session?.withDurationMin(_durationMin);
+    // This also picks up a declaration made elsewhere (the Discord bot), so the
+    // worker stops suggesting while the user is already hima.
+    _publishDeclaredUntil();
   }
 
   static int _nearestDurationChoice(int minutes) {
@@ -499,10 +509,53 @@ class AppViewModel extends ChangeNotifier {
     _stateGeneration++;
   }
 
+  /// Mirrors the live declaration to the native worker, so it stops suggesting
+  /// while the user is already hima.
+  ///
+  /// [expiresAt] is the expiry a declaration or an extend just returned;
+  /// without it the local session decides.
+  void _publishDeclaredUntil({DateTime? expiresAt}) {
+    final until = expiresAt ?? _myHima?.expiresAt;
+    // An expired session has to read as "not declared", or the worker would
+    // stay silent after the user is free again.
+    final live = until != null && until.isAfter(DateTime.now().toUtc());
+    _ignoreBridgeErrors(_bridge.setDeclaredUntil(live ? until : null));
+  }
+
+  void _publishForecast(List<HimaTimeSuggestion> forecast) =>
+      _ignoreBridgeErrors(_bridge.setForecast(forecast));
+
+  /// The worker is a convenience: a failed mirror must not surface as an error
+  /// in a flow that already succeeded on the server.
+  static void _ignoreBridgeErrors(Future<void> call) {
+    unawaited(call.catchError((Object _) {}));
+  }
+
+  /// Re-reads the forecast and hands it to the worker, which suggests around the
+  /// times the user is usually free.
+  ///
+  /// Runs when the app comes back to the foreground and after a regular slot
+  /// changes, so a deleted slot stops being suggested.
+  Future<void> refreshSuggestForecast() async {
+    // Nothing to mirror where the worker does not exist, and the request would
+    // be paid on every resume.
+    if (!_bridge.isSupported) return;
+    try {
+      final forecast = await _api.getForecast();
+      _suggestions = List.of(forecast);
+      _publishForecast(forecast);
+    } catch (_) {
+      // Best effort: the worker keeps the slots it already has.
+    }
+  }
+
   void startPolling() {
     if (!_isAuthenticated || _pollTimer != null) return;
     // Push is not configured yet, so foreground updates use the shared API.
     unawaited(refreshLiveData());
+    // Coming back to the foreground is when the times the worker suggests from
+    // are most likely to be stale.
+    unawaited(refreshSuggestForecast());
     _pollTimer = Timer.periodic(
       const Duration(seconds: 30),
       (_) => unawaited(refreshLiveData()),
@@ -530,28 +583,34 @@ class AppViewModel extends ChangeNotifier {
 
   /// Declares hima. Passing no mood keeps the last used one so the hero button
   /// stays a true one-tap action.
+  ///
+  /// [source] records where the declaration came from: the home actions leave it
+  /// [DeclarationSource.manual], and the notification suggestion passes
+  /// [DeclarationSource.suggested].
   Future<void> declareHima({
     Mood? mood,
     Activity? activity,
     int? durationMin,
     String? note,
+    DeclarationSource source = DeclarationSource.manual,
   }) async {
     final minutes = durationMin ?? _durationMin;
-    await _api.declareHima(
+    final expiresAt = await _api.declareHima(
       HimaDeclaration(
         mood: mood ?? _lastMood,
         activity: activity ?? _pendingActivity,
         note: note,
         durationMin: minutes,
-        source: DeclarationSource.manual,
+        source: source,
       ),
     );
     _durationMin = minutes;
     _durationPicked = true;
     _invalidateLiveReads();
     _retireSentKnocks();
-    // The declare response only carries the session id and the new expiry, so
-    // the state is re-read from /app/me instead of being patched from it.
+    // The response carries the new expiry, so the native side is correct even
+    // if the follow-up /app/me read fails.
+    _publishDeclaredUntil(expiresAt: expiresAt);
     await _refreshAfterMutation();
   }
 
@@ -605,7 +664,7 @@ class AppViewModel extends ChangeNotifier {
     required Activity? activity,
     int? durationMin,
   }) async {
-    await _api.declareHima(
+    final expiresAt = await _api.declareHima(
       HimaDeclaration(
         mood: mood ?? current.mood,
         activity: activity,
@@ -615,6 +674,9 @@ class AppViewModel extends ChangeNotifier {
       ),
     );
     _invalidateLiveReads();
+    // An extend moves the expiry as well, and the worker would go quiet too
+    // early with the old one.
+    _publishDeclaredUntil(expiresAt: expiresAt);
     await _refreshAfterMutation();
   }
 
@@ -622,6 +684,8 @@ class AppViewModel extends ChangeNotifier {
     await _api.endHima();
     _invalidateLiveReads();
     _myHima = null;
+    // Nothing is declared any more, so the worker may suggest again.
+    _publishDeclaredUntil();
     notifyListeners();
     await _refreshAfterMutation();
   }
@@ -749,6 +813,7 @@ class AppViewModel extends ChangeNotifier {
     _invalidateLiveReads();
     _regularSlots = [..._regularSlots, saved]..sort(_compareSlots);
     notifyListeners();
+    await refreshSuggestForecast();
   }
 
   Future<void> deleteRegularSlot(RegularSlot slot) async {
@@ -761,6 +826,9 @@ class AppViewModel extends ChangeNotifier {
         if (item.id != id) item,
     ];
     notifyListeners();
+    // The forecast is built from these slots, so a removed time must be pushed
+    // again or the worker keeps suggesting it.
+    await refreshSuggestForecast();
   }
 
   static int _compareSlots(RegularSlot a, RegularSlot b) {
@@ -813,5 +881,11 @@ class AppViewModel extends ChangeNotifier {
     _lastMood = Mood.ok;
     _moodHintShown = false;
     _liveError = false;
+    // The worker keeps this user's forecast, declaration and suggestion
+    // history, so they are wiped (and the worker stopped) whenever the app
+    // goes back to the login screen. Target apps and the learned usual times
+    // describe the phone, not the account, and survive a re-login (see
+    // HimaSuggestStore.clearSuggestionState).
+    _ignoreBridgeErrors(_bridge.clear());
   }
 }

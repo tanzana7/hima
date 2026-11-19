@@ -78,3 +78,11 @@ android {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // 自動ひま提案 runs its periodic check as a plain (non-foreground) WorkManager job and
+    // reacts to a notification tap with core's NotificationCompat/PendingIntent helpers.
+    implementation("androidx.work:work-runtime-ktx:2.12.0")
+    implementation("androidx.core:core:1.13.1")
+}
+
