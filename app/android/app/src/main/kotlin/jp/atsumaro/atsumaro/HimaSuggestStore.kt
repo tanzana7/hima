@@ -84,6 +84,23 @@ internal class HimaSuggestStore(context: Context) {
             }.apply()
         }
 
+    /**
+     * Epoch time until which 「今はいい」 suppressed every suggestion, or null when the user never
+     * asked for a pause.
+     *
+     * It lives beside [declaredUntil] because the worker treats both the same way: a length of
+     * time during which it must not suggest. Unlike the declared session this is not account
+     * state, so [clearSuggestionState] keeps it: logging out does not undo a 「今はいい」 the user
+     * just pressed.
+     */
+    var snoozeUntil: Long?
+        get() = if (prefs.contains(KEY_SNOOZE_UNTIL)) prefs.getLong(KEY_SNOOZE_UNTIL, 0L) else null
+        set(value) {
+            prefs.edit().apply {
+                if (value == null) remove(KEY_SNOOZE_UNTIL) else putLong(KEY_SNOOZE_UNTIL, value)
+            }.apply()
+        }
+
     var lastSuggestAt: Long
         get() = prefs.getLong(KEY_LAST_SUGGEST_AT, 0L)
         set(value) {
@@ -110,8 +127,12 @@ internal class HimaSuggestStore(context: Context) {
      *
      * MainActivity is the exported launcher, so any app can start it with an explicit intent
      * and copy the action extra. Only the notification's own PendingIntent knows this random
-     * value, which is what makes a tap from it distinguishable from a forged launch. A new
-     * post replaces it, and accepting a tap clears it, so a token works once.
+     * value, which is what makes a tap from it distinguishable from a forged launch.
+     *
+     * A new post replaces it. Accepting the body tap clears it at once, because that launch also
+     * dismisses the notification; accepting 「ひまにする」 leaves it valid until the notification
+     * itself is cancelled, so a declaration that fails can be retried from the notification the
+     * user is still looking at (see [HimaSuggestNotifier.cancel]).
      */
     var notificationToken: String?
         get() = prefs.getString(KEY_NOTIFICATION_TOKEN, null)
@@ -234,6 +255,7 @@ internal class HimaSuggestStore(context: Context) {
         const val KEY_TARGETS = "targets"
         const val KEY_APP_TRIGGER_MINUTES = "appTriggerMinutes"
         const val KEY_DECLARED_UNTIL = "declaredUntil"
+        const val KEY_SNOOZE_UNTIL = "snoozeUntil"
         const val KEY_FORECAST = "forecast"
         const val KEY_LAST_SUGGEST_AT = "lastSuggestAt"
         const val KEY_NOTIFIED_SLOTS = "notifiedSlots"

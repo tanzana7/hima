@@ -39,7 +39,7 @@ internal class SuggestChannelHandler(private val activity: Activity) : MethodCha
                 }
                 "requestNotificationPermission" -> requestNotificationPermission(result)
                 "setDeclaredUntil" -> {
-                    store.declaredUntil = (call.arguments as? Number)?.toLong()
+                    setDeclaredUntil((call.arguments as? Number)?.toLong())
                     result.success(null)
                 }
                 "setForecast" -> {
@@ -92,7 +92,7 @@ internal class SuggestChannelHandler(private val activity: Activity) : MethodCha
             HimaSuggestScheduler.schedule(activity)
         } else {
             HimaSuggestScheduler.cancel(activity)
-            HimaSuggestNotifier(activity).cancel()
+            HimaSuggestNotifier(activity).cancel(store)
         }
         return state()
     }
@@ -101,6 +101,20 @@ internal class SuggestChannelHandler(private val activity: Activity) : MethodCha
         // Order is the user's; duplicates would only make the list ambiguous.
         store.targets = packages.distinct()
         return state()
+    }
+
+    /**
+     * Mirrors the live declaration, and drops the suggestion that is no longer needed.
+     *
+     * A suggestion posted a minute ago described a user who had not declared yet. Once Dart
+     * reports a declaration that is still running, the notification is only a stale duplicate that
+     * would open the picker on a session the user already started. It is cancelled through the
+     * notifier so the write and the cancel happen under the same lock the worker's post takes: a
+     * run that has already begun to post is then either refused or cancelled, instead of leaving a
+     * suggestion in the shade after the user has declared.
+     */
+    private fun setDeclaredUntil(until: Long?) {
+        HimaSuggestNotifier(activity).applyDeclaredUntil(store, until)
     }
 
     /**
@@ -203,7 +217,7 @@ internal class SuggestChannelHandler(private val activity: Activity) : MethodCha
         store.enabled = false
         store.clearSuggestionState()
         HimaSuggestScheduler.cancel(activity)
-        HimaSuggestNotifier(activity).cancel()
+        HimaSuggestNotifier(activity).cancel(store)
     }
 
     /**
