@@ -285,8 +285,7 @@ class _SettingsViewState extends State<SettingsView> with WidgetsBindingObserver
                 // Each clause stays at 12 characters or fewer so it fits one
                 // line on a 360dp phone; at a larger text scale each clause
                 // wraps on its own instead of mid-word across the comma.
-                subtitle: const Text('使い続けたときと、
-いつもの時間に通知するよ'),
+                subtitle: const Text('使い続けたときと、\nいつもの時間に通知するよ'),
                 value: enabled,
                 onChanged: onChanged,
               ),
