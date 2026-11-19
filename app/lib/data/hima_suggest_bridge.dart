@@ -140,11 +140,21 @@ abstract interface class HimaSuggestBridge {
   /// Posts the developer demo variant of a suggestion, outside every condition
   /// the worker applies, so it can be checked from the app itself.
   ///
-  /// True when the notification was posted, false when the platform says
-  /// notifications are not allowed.
+  /// [marked] adds the 「デモ」 subtext; the demo's capture mode turns it off so
+  /// the notification looks exactly like a real one on camera.
+  ///
+  /// A nonzero [delayMs] schedules the post on the native main looper instead of
+  /// posting it now. That is the only timer that still runs while the app is in
+  /// the background, which is where the owner is when the notification has to
+  /// arrive.
+  ///
+  /// True when the notification was posted or scheduled, false when the platform
+  /// says notifications are not allowed.
   Future<bool> postDemoSuggestion({
     required DemoSuggestionKind kind,
     String? label,
+    bool marked = true,
+    int delayMs = 0,
   });
 
   /// Drops the demo notification and its token, so a tap on one that was
@@ -310,10 +320,14 @@ class MethodChannelHimaSuggestBridge implements HimaSuggestBridge {
   Future<bool> postDemoSuggestion({
     required DemoSuggestionKind kind,
     String? label,
+    bool marked = true,
+    int delayMs = 0,
   }) async =>
       await _channel.invokeMethod<bool>(_methodPostDemoSuggestion, {
         'kind': kind.name,
         'label': label,
+        'marked': marked,
+        'delayMs': delayMs,
       }) ??
       false;
 
@@ -439,6 +453,8 @@ class NoopHimaSuggestBridge implements HimaSuggestBridge {
   Future<bool> postDemoSuggestion({
     required DemoSuggestionKind kind,
     String? label,
+    bool marked = true,
+    int delayMs = 0,
   }) async => false;
 
   @override

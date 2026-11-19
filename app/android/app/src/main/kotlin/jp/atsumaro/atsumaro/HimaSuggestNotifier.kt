@@ -9,6 +9,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -29,17 +31,49 @@ internal class HimaSuggestNotifier(private val context: Context) {
 
     /**
      * Posts the developer demo variant: same channel, icon, title and bodies as a real
-     * suggestion, so it can be checked visually, plus a "デモ" subtext so it is told apart.
+     * suggestion, so it can be checked visually. [marked] adds a "デモ" subtext so it is told
+     * apart; the app's 撮影モード turns it off so a recording shows a notification that looks
+     * exactly like a real one.
+     *
+     * A nonzero [delayMs] schedules the post instead of posting it now. It runs on the main
+     * looper, because that is the only timer that still fires once the app is in the background,
+     * where the owner is while another app fills the screen.
      *
      * It is outside every real condition on purpose (the enabled flag, a live declaration, quiet
      * hours, the 90-minute interval), and it records nothing the worker reads: a demo must not
      * delay, replace or suppress a real suggestion. Only the demo notification and its token
      * change. Usage access is not read either, because nothing is observed.
+     *
+     * Answers false at once when notifications are not allowed, and true once the notification
+     * was posted or scheduled.
      */
-    fun postDemo(body: String, store: HimaSuggestStore): Boolean = synchronized(LOCK) {
-        if (!notificationsAllowed()) return false
-        postLocked(HimaSuggest.DEMO_NOTIFICATION_ID, body, demoPendingIntent(store), DEMO_SUB_TEXT)
-    }
+    fun postDemo(body: String, store: HimaSuggestStore, marked: Boolean, delayMs: Long): Boolean =
+        synchronized(LOCK) {
+            // Every request replaces the one that has not fired yet, including a request that is
+            // refused below: a post left queued by an earlier tap would otherwise still be waiting
+            // and could appear once the permission is granted again.
+            cancelPendingDemoLocked()
+            if (!notificationsAllowed()) return false
+            if (delayMs <= 0L) return postDemoLocked(body, store, marked)
+            // Declared before the runnable so the runnable can recognise itself as the one that
+            // is still pending.
+            lateinit var task: Runnable
+            task = Runnable {
+                synchronized(LOCK) {
+                    // Cancelled or replaced between the delay elapsing and this run: it must not
+                    // post, even where removeCallbacks already missed it.
+                    if (pendingDemo === task) {
+                        pendingDemo = null
+                        // The permission can be revoked during the delay, so it is read again
+                        // here rather than trusted from when the post was scheduled.
+                        if (notificationsAllowed()) postDemoLocked(body, store, marked)
+                    }
+                }
+            }
+            pendingDemo = task
+            mainHandler.postDelayed(task, delayMs)
+            true
+        }
 
     /** Cancels only the real suggestion; the demo notification has its own ID. */
     fun cancel() {
@@ -51,12 +85,21 @@ internal class HimaSuggestNotifier(private val context: Context) {
     /**
      * Drops the demo notification and its token, so a tap on a notification the user already
      * dismissed does nothing instead of declaring later.
+     *
+     * A demo post that is still waiting is dropped here too: ending the demo must never be
+     * followed by the notification it had scheduled.
      */
     fun cancelDemo(store: HimaSuggestStore) {
         synchronized(LOCK) {
+            cancelPendingDemoLocked()
             NotificationManagerCompat.from(context).cancel(HimaSuggest.DEMO_NOTIFICATION_ID)
             store.demoNotificationToken = null
         }
+    }
+
+    private fun cancelPendingDemoLocked() {
+        pendingDemo?.let { mainHandler.removeCallbacks(it) }
+        pendingDemo = null
     }
 
     private fun notificationsAllowed(): Boolean {
@@ -88,6 +131,14 @@ internal class HimaSuggestNotifier(private val context: Context) {
         NotificationManagerCompat.from(context).notify(id, notification)
         return true
     }
+
+    private fun postDemoLocked(body: String, store: HimaSuggestStore, marked: Boolean): Boolean =
+        postLocked(
+            HimaSuggest.DEMO_NOTIFICATION_ID,
+            body,
+            demoPendingIntent(store),
+            if (marked) DEMO_SUB_TEXT else null,
+        )
 
     private fun ensureChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
@@ -143,6 +194,17 @@ internal class HimaSuggestNotifier(private val context: Context) {
 
         /** Serializes posting and cancelling so a disable cannot be followed by a late post. */
         private val LOCK = Any()
+
+        /**
+         * The demo post that has been scheduled but has not run yet.
+         *
+         * Process-wide, not per instance: a notifier is created per channel call, while the
+         * scheduled post and the cancel that has to replace it arrive in separate calls.
+         */
+        private var pendingDemo: Runnable? = null
+
+        /** Created on first use: only a scheduled demo post ever needs it. */
+        private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
 
         private const val KIND_APP = "app"
         private const val KIND_USUAL = "usual"
