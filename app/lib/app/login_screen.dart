@@ -10,6 +10,7 @@ import '../app/theme/app_text_styles.dart';
 import '../data/api_client.dart';
 import '../data/app_config.dart';
 import '../data/discord_oauth.dart';
+import '../shared/phrase_wrap.dart';
 import '../shared/widgets/hima_logo.dart';
 import '../shared/widgets/paint/paint.dart';
 import '../shared/widgets/paint_button.dart';
@@ -221,7 +222,8 @@ class LoginScreen extends StatelessWidget {
                   // 「ひまなら友達に知らせよう」.
                   const SizedBox(height: AppSpacing.s32),
                   Text(
-                    'ひまなら友達に知らせよう',
+                    wrapPhrases(['ひまなら', '友達に', '知らせよう']),
+                    semanticsLabel: 'ひまなら友達に知らせよう',
                     textAlign: TextAlign.center,
                     style: AppTextStyles.body.copyWith(color: AppColors.muted),
                   ),
