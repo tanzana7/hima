@@ -6,6 +6,7 @@ carries over from commit a9ca819.
 """
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import time
@@ -28,6 +29,8 @@ from views import (
 )
 
 load_dotenv()
+
+log = logging.getLogger("atsumaro.bot")
 
 
 class HimaBot(commands.Bot):
@@ -100,10 +103,16 @@ class HimaBot(commands.Bot):
     async def _send_board(self, interaction: discord.Interaction) -> None:
         # 3秒制限: まず defer してから API 結果を followup で返す
         await interaction.response.defer(ephemeral=True, thinking=True)
-        embeds, view = await _build_board(self, interaction)
+        embeds, view, has_results = await _build_board(self, interaction)
         if embeds is None:
             return
         await interaction.followup.send(embeds=embeds, view=view, ephemeral=True)
+        if has_results:
+            # 結果を表示できたら確認済みにする。失敗時は掲示板表示を壊さず、次回もう一度表示される
+            try:
+                await self.api.results_seen(interaction.user.id)
+            except Exception:  # noqa: BLE001
+                log.warning("results_seen failed (results will be shown again)", exc_info=True)
 
 
 class HimaCog(commands.Cog):

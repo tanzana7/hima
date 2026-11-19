@@ -346,7 +346,10 @@ class BoardView(ErrorFollowupView):
             ephemeral=True,
         )
 
-async def _build_board(bot: "HimaBot", interaction: discord.Interaction) -> tuple[list[discord.Embed] | None, ui.View | None]:
+async def _build_board(
+    bot: "HimaBot", interaction: discord.Interaction
+) -> tuple[list[discord.Embed] | None, ui.View | None, bool]:
+    """掲示板データを取得して描画する。（embeds, view, 未確認の結果があったか）を返す。"""
     guild_id = interaction.guild_id
     assert guild_id is not None
     try:
@@ -356,9 +359,9 @@ async def _build_board(bot: "HimaBot", interaction: discord.Interaction) -> tupl
         )
     except Exception as exc:  # noqa: BLE001
         await send_api_error(interaction, exc)
-        return None, None
+        return None, None, False
     view = BoardView(bot, data)
-    return render_board(data), view
+    return render_board(data), view, bool(data.get("results"))
 
 
 # ------------------------------------------------------------------ panel view
@@ -374,7 +377,7 @@ class AtsumaroPanelView(ErrorFollowupView):
     @ui.button(label="掲示板を見る", style=discord.ButtonStyle.primary, custom_id="atsumaro:board", emoji="📜", row=0)
     async def board_btn(self, interaction: discord.Interaction, _: ui.Button) -> None:
         await interaction.response.defer(ephemeral=True, thinking=True)
-        embeds, view = await _build_board(self.bot, interaction)
+        embeds, view, _ = await _build_board(self.bot, interaction)
         if embeds is None:
             return
         await interaction.followup.send(embeds=embeds, view=view, ephemeral=True)
