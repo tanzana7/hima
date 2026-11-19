@@ -1,4 +1,4 @@
-"""Worker pass: suggest declarations 15 min before a forecast / regular slot."""
+"""Worker pass: suggest declarations 15 min after a forecast / regular slot starts."""
 from __future__ import annotations
 
 import logging
@@ -35,8 +35,8 @@ def suggestion_pass(db: Session, rest=None, now: datetime | None = None) -> int:
             if slot["weekday"] != today.weekday():
                 continue
             start = slot["start_min"]
-            if not (start - 15 <= now_min < start):
-                continue  # 開始15分前の窓外
+            if not (start <= now_min < start + 15):
+                continue  # 開始後15分の窓外（start <= now_min < start + 15）
             if active_session(db, uid) is not None:
                 continue  # 宣言中は送らない
             exists = db.execute(

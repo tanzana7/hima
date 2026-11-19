@@ -150,7 +150,7 @@
 ### 提案（ワーカー）
 
 - ワーカーは **15分ごと**（30秒tick × 30）に判定する
-- いまが「forecast（history/manual/both いずれも）または regular_slots の枠の**開始15分前**」に当たるユーザーがいて、
+- いまが「forecast（history/manual/both いずれも）または regular_slots の枠の**開始後15分**（開始時刻〜開始+15分）」に当たるユーザーがいて、
   ①そのユーザーが宣言中でなく、②同じ枠・同じ日に suggestion_log の送信実績がなければ、提案を1回送る
 - **除外条件：`users.suggest_dm = false` のユーザーは提案対象から除外する**（Discord DM も FCM プッシュも送らない。suggestion_log も書かないので、同じ枠の途中で true に戻せばその後のパスで送られる）
 - 送信先：devices があればプッシュ（dry-run 可）。あわせて Discord DM も送る。DM には「このまま宣言する」ボタン（`atsumaro:suggest:declare`）を付ける。文面は「そろそろヒマな時間じゃない？ HH:MM 頃のあなたのいつもの時間だよ。このまま宣言する？」
