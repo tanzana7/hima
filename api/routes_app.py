@@ -106,6 +106,7 @@ def me(user_id: int = Depends(require_app_user)) -> dict:
                 "notify_on_hima": user.notify_on_hima,
                 "auto_mode": user.auto_mode,
                 "auto_mood": user.auto_mood,
+                "suggest_dm": user.suggest_dm,
             },
             "session": session_out,
             "memberships": [
@@ -129,11 +130,14 @@ def update_settings(body: AppSettingsIn, user_id: int = Depends(require_app_user
             if body.auto_mood not in MOODS:
                 raise HTTPException(status_code=400, detail="invalid mood")
             user.auto_mood = body.auto_mood
+        if body.suggest_dm is not None:
+            user.suggest_dm = body.suggest_dm
         db.commit()
         return {
             "notify_on_hima": user.notify_on_hima,
             "auto_mode": user.auto_mode,
             "auto_mood": user.auto_mood,
+            "suggest_dm": user.suggest_dm,
         }
 
 

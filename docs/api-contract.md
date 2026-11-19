@@ -127,7 +127,7 @@
 
 ## 4. データモデル（主要テーブル）
 
-- `users`, `guilds`, `memberships`（PK: guild_id+user_id, visible, last_seen_at）
+- `users`（id=Discord ID, display_name, avatar, auto_mode, auto_mood, notify_on_hima, **suggest_dm**（既定 true／提案 DM・プッシュの許可。false なら提案ワーカーの対象外））, `guilds`, `memberships`（PK: guild_id+user_id, visible, last_seen_at）
 - `hima_sessions`（部分ユニークインデックスで有効セッション1人1つ。延長=同ID更新、終了→再宣言=新ID）
 - `blocks`（blocker_id+blocked_id PK。双方向に効果：掲示板・マッチング・ノックですべてで不可視/対象外）
 - `matches`（(session_a_id, session_b_id) ユニーク）
@@ -152,6 +152,7 @@
 - ワーカーは **15分ごと**（30秒tick × 30）に判定する
 - いまが「forecast（history/manual/both いずれも）または regular_slots の枠の**開始15分前**」に当たるユーザーがいて、
   ①そのユーザーが宣言中でなく、②同じ枠・同じ日に suggestion_log の送信実績がなければ、提案を1回送る
+- **除外条件：`users.suggest_dm = false` のユーザーは提案対象から除外する**（Discord DM も FCM プッシュも送らない。suggestion_log も書かないので、同じ枠の途中で true に戻せばその後のパスで送られる）
 - 送信先：devices があればプッシュ（dry-run 可）。あわせて Discord DM も送る。DM には「このまま宣言する」ボタン（`atsumaro:suggest:declare`）を付ける。文面は「そろそろヒマな時間じゃない？ HH:MM 頃のあなたのいつもの時間だよ。このまま宣言する？」
 - DM 送信は Discord REST 失敗でも例外を投げない（ログのみ）
 
@@ -180,8 +181,8 @@
 
 | Method | Path | 概要 |
 | --- | --- | --- |
-| GET | `/app/me` | プロフィール・設定・**自分の有効セッション（source を含む）**・memberships 一覧 |
-| PUT | `/app/me/settings` | `notify_on_hima` / `auto_mode` / `auto_mood` の部分更新 |
+| GET | `/app/me` | プロフィール・設定（`suggest_dm` を含む）・**自分の有効セッション（source を含む）**・memberships 一覧 |
+| PUT | `/app/me/settings` | `notify_on_hima` / `auto_mode` / `auto_mood` / `suggest_dm` の部分更新（未指定の項目は変更しない） |
 | PUT | `/app/memberships/{guild_id}/visibility` | 自分の**既存 membership の visible 更新のみ**。membership が無い（自分が入っていないサーバー）場合は **404**（このエンドポイントでは新規作成しない。作成は OAuth の参加サーバー一覧と Bot interaction 由来のみ） |
 | GET | `/app/board` | **横断掲示板**：自分が member の全サーバーを統合。共有可視・ブロック除外判定は Bot 側と同じ。各行に `shared_guild_ids`（共通の visible サーバーID一覧）と **`avatar`** を付ける。ノック受信箱（最大5件、`to_moon` 付き・**送信者の `from_avatar` 付き**）＋未見結果も返す。**他人のセッション行に source は含めない**（自分の行のみ `/app/me` で返す） |
 | POST | `/app/sessions` | ヒマ宣言 `{mood, activity, note, minutes, source}`（source は manual/suggested/auto）。Bot 側と**同一のサービス関数**を使うためマッチングも同じに発火（お知らせは廃止） |
