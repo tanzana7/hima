@@ -33,7 +33,11 @@ abstract interface class ApiClient {
   Future<void> logout();
 
   Future<MeSnapshot> getMe();
-  Future<UserSettings> updateSettings({bool? autoMode, Mood? autoMood});
+  Future<UserSettings> updateSettings({
+    bool? autoMode,
+    Mood? autoMood,
+    bool? suggestDm,
+  });
   /// Returns the visibility the server stored.
   Future<bool> updateGuildVisibility(String guildId, bool visible);
 

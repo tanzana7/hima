@@ -190,7 +190,7 @@ internal class HimaSuggestNotifier(private val context: Context) {
 
     companion object {
         const val TITLE = "いまひまじゃない？"
-        const val USUAL_BODY = "いつものひまな時間だよ。ひまなら友達に知らせよう"
+        const val USUAL_BODY = "いつものひまな時間だよ。友達に知らせよう"
 
         /** Serializes posting and cancelling so a disable cannot be followed by a late post. */
         private val LOCK = Any()
@@ -211,7 +211,7 @@ internal class HimaSuggestNotifier(private val context: Context) {
         private const val DEMO_SUB_TEXT = "デモ"
         private const val DEMO_DEFAULT_LABEL = "YouTube"
 
-        fun appBody(label: String): String = "$label 見てる？ ひまなら友達に知らせよう"
+        fun appBody(label: String): String = "$label 見てる？ 友達に知らせよう"
 
         /**
          * Body of a demo notification, or null for a kind this build does not know. The kinds
