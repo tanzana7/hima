@@ -377,10 +377,16 @@ class AtsumaroPanelView(ErrorFollowupView):
     @ui.button(label="掲示板を見る", style=discord.ButtonStyle.primary, custom_id="atsumaro:board", emoji="📜", row=0)
     async def board_btn(self, interaction: discord.Interaction, _: ui.Button) -> None:
         await interaction.response.defer(ephemeral=True, thinking=True)
-        embeds, view, _ = await _build_board(self.bot, interaction)
+        embeds, view, has_results = await _build_board(self.bot, interaction)
         if embeds is None:
             return
         await interaction.followup.send(embeds=embeds, view=view, ephemeral=True)
+        if has_results:
+            # 結果を表示できたら確認済みにする。失敗時は掲示板表示を壊さず、次回もう一度表示される
+            try:
+                await self.bot.api.results_seen(interaction.user.id)
+            except Exception:  # noqa: BLE001
+                log.warning("results_seen failed (results will be shown again)", exc_info=True)
 
     @ui.button(label="今ヒマ！", style=discord.ButtonStyle.success, custom_id="atsumaro:join", emoji="🙋", row=0)
     async def join_btn(self, interaction: discord.Interaction, _: ui.Button) -> None:
