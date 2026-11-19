@@ -31,6 +31,7 @@ internal class SuggestChannelHandler(private val activity: Activity) : MethodCha
                 "getState" -> result.success(state())
                 "setEnabled" -> result.success(setEnabled(call.arguments as? Boolean ?: false))
                 "setTargets" -> result.success(setTargets(packagesArgument(call.arguments)))
+                "setAppTriggerMinutes" -> setAppTriggerMinutes(call.arguments, result)
                 "listLaunchableApps" -> result.success(launchableApps())
                 "openUsageAccessSettings" -> {
                     openUsageAccessSettings()
@@ -82,6 +83,7 @@ internal class SuggestChannelHandler(private val activity: Activity) : MethodCha
         },
         "usageAccess" to UsageAccess.isGranted(activity),
         "notificationsAllowed" to NotificationManagerCompat.from(activity).areNotificationsEnabled(),
+        "appTriggerMinutes" to store.appTriggerMinutes,
     )
 
     private fun setEnabled(enabled: Boolean): Map<String, Any?> {
@@ -99,6 +101,39 @@ internal class SuggestChannelHandler(private val activity: Activity) : MethodCha
         // Order is the user's; duplicates would only make the list ambiguous.
         store.targets = packages.distinct()
         return state()
+    }
+
+    /**
+     * Stores how long the target apps must be used before a suggestion.
+     *
+     * Only the choices the settings screen offers are accepted: a threshold the user cannot see
+     * or change is worse than a failed call, which the screen reports as a failed save.
+     */
+    private fun setAppTriggerMinutes(arguments: Any?, result: MethodChannel.Result) {
+        val minutes = exactMinutes((arguments as? Map<*, *>)?.get("minutes"))
+        if (minutes == null || minutes !in HimaSuggest.APP_TRIGGER_MINUTE_CHOICES) {
+            result.error(
+                "bad_args",
+                "minutes must be one of ${HimaSuggest.APP_TRIGGER_MINUTE_CHOICES}",
+                null,
+            )
+            return
+        }
+        store.appTriggerMinutes = minutes
+        result.success(state())
+    }
+
+    /**
+     * [value] as a whole number of minutes, or null when it is not one.
+     *
+     * A fractional value is rejected rather than truncated: `5.9` would otherwise be stored as
+     * 5, a length the caller never asked for, and the screen would then show a choice it did not
+     * send.
+     */
+    private fun exactMinutes(value: Any?): Int? {
+        val amount = (value as? Number)?.toDouble() ?: return null
+        val minutes = amount.toInt()
+        return if (minutes.toDouble() == amount) minutes else null
     }
 
     private fun packagesArgument(arguments: Any?): List<String> =

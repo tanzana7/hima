@@ -41,6 +41,15 @@ const List<HimaSuggestApp> himaSuggestTemplates = [
   HimaSuggestApp(package: 'com.google.android.youtube', label: 'YouTube'),
 ];
 
+/// Lengths of target use the app suggestion may wait for, in minutes.
+///
+/// The worker offers no other value: the channel rejects anything else, so a
+/// picker built from this list can only store what the device can honour.
+const List<int> himaSuggestTriggerMinuteChoices = [5, 15, 30, 60];
+
+/// What the worker assumes until the user picks another length.
+const int himaSuggestDefaultTriggerMinutes = 5;
+
 /// The device state of 「自動ひま提案」.
 ///
 /// The values are read from the device, not from `/app/me`: the feature only
@@ -52,6 +61,7 @@ class HimaSuggestState {
     this.targets = const [],
     this.usageAccess = false,
     this.notificationsAllowed = false,
+    this.appTriggerMinutes = himaSuggestDefaultTriggerMinutes,
   });
 
   /// The empty state: nothing enabled and no permission granted.
@@ -62,20 +72,25 @@ class HimaSuggestState {
   final bool usageAccess;
   final bool notificationsAllowed;
 
+  /// How long the target apps must have been used in total before the
+  /// suggestion fires. One of [himaSuggestTriggerMinuteChoices].
+  final int appTriggerMinutes;
+
   HimaSuggestState copyWith({bool? notificationsAllowed}) => HimaSuggestState(
     enabled: enabled,
     targets: targets,
     usageAccess: usageAccess,
     notificationsAllowed: notificationsAllowed ?? this.notificationsAllowed,
+    appTriggerMinutes: appTriggerMinutes,
   );
 }
 
 /// The Dart half of the native 「自動ひま提案」 worker.
 ///
-/// The worker itself (Android only) posts a local notification when the user is
-/// in a target app or near a time they are usually free. It never declares on
-/// its own: this side only mirrors the state the settings screen shows and the
-/// facts the worker needs to decide when to suggest.
+/// The worker itself (Android only) posts a local notification once the user
+/// has used a target app long enough, or near a time they are usually free. It
+/// never declares on its own: this side only mirrors the state the settings
+/// screen shows and the facts the worker needs to decide when to suggest.
 abstract interface class HimaSuggestBridge {
   /// True only where the worker exists. The settings section is hidden where it
   /// is false, so no other call has to be attempted there.
@@ -93,6 +108,10 @@ abstract interface class HimaSuggestBridge {
 
   /// Packages in display order. Answers with the state after the write.
   Future<HimaSuggestState> setTargets(List<String> packages);
+
+  /// Minutes of target use the suggestion waits for, one of
+  /// [himaSuggestTriggerMinuteChoices]. Answers with the state after the write.
+  Future<HimaSuggestState> setAppTriggerMinutes(int minutes);
 
   /// Launchable apps on the device, by label, without this app.
   Future<List<HimaSuggestApp>> listLaunchableApps();
@@ -162,6 +181,7 @@ class MethodChannelHimaSuggestBridge implements HimaSuggestBridge {
   static const _methodGetState = 'getState';
   static const _methodSetEnabled = 'setEnabled';
   static const _methodSetTargets = 'setTargets';
+  static const _methodSetAppTriggerMinutes = 'setAppTriggerMinutes';
   static const _methodListLaunchableApps = 'listLaunchableApps';
   static const _methodOpenUsageAccessSettings = 'openUsageAccessSettings';
   static const _methodRequestNotificationPermission =
@@ -219,6 +239,13 @@ class MethodChannelHimaSuggestBridge implements HimaSuggestBridge {
       _readState(
         await _channel.invokeMethod<Object?>(_methodSetTargets, packages),
       );
+
+  @override
+  Future<HimaSuggestState> setAppTriggerMinutes(int minutes) async => _readState(
+    await _channel.invokeMethod<Object?>(_methodSetAppTriggerMinutes, {
+      'minutes': minutes,
+    }),
+  );
 
   @override
   Future<List<HimaSuggestApp>> listLaunchableApps() async {
@@ -340,8 +367,16 @@ class MethodChannelHimaSuggestBridge implements HimaSuggestBridge {
       targets: List.unmodifiable(targets),
       usageAccess: value['usageAccess'] == true,
       notificationsAllowed: value['notificationsAllowed'] == true,
+      appTriggerMinutes: _triggerMinutesOf(value['appTriggerMinutes']),
     );
   }
+
+  /// A length the channel does not offer falls back to the default, like the
+  /// other malformed fields here: the picker must always have a value.
+  static int _triggerMinutesOf(Object? value) =>
+      value is int && himaSuggestTriggerMinuteChoices.contains(value)
+      ? value
+      : himaSuggestDefaultTriggerMinutes;
 }
 
 /// The stand-in for every platform without the worker, and for widget-only
@@ -371,6 +406,10 @@ class NoopHimaSuggestBridge implements HimaSuggestBridge {
 
   @override
   Future<HimaSuggestState> setTargets(List<String> packages) async =>
+      HimaSuggestState.disabled;
+
+  @override
+  Future<HimaSuggestState> setAppTriggerMinutes(int minutes) async =>
       HimaSuggestState.disabled;
 
   @override

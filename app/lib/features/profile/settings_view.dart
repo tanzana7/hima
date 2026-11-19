@@ -318,6 +318,37 @@ class _SettingsViewState extends State<SettingsView> with WidgetsBindingObserver
                       child: const Text('許可'),
                     ),
                   ),
+                _SavingControl<int>(
+                  value: suggest.appTriggerMinutes,
+                  onSave: (minutes) =>
+                      _setSuggestTriggerMinutes(context, minutes),
+                  builder: (context, minutes, onChanged) => ListTile(
+                    // Body size rather than the tile's 16sp default: the label
+                    // is long, and the smaller size is what keeps it on one
+                    // line at 200% text on a 360dp phone.
+                    title: const Text(
+                      '通知までの利用時間',
+                      style: AppTextStyles.body,
+                    ),
+                    subtitle: Padding(
+                      padding: const EdgeInsets.only(top: AppSpacing.s8),
+                      child: Wrap(
+                        // Wraps rather than shrinks: four pills do not fit one
+                        // line at 360dp and 200% text, and a Row would overflow.
+                        spacing: AppSpacing.s8,
+                        runSpacing: AppSpacing.s8,
+                        children: [
+                          for (final option in himaSuggestTriggerMinuteChoices)
+                            _TriggerMinutesChoice(
+                              label: durationLabel(option),
+                              selected: option == minutes,
+                              onTap: () => onChanged(option),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
                 for (final target in suggest.targets)
                   ListTile(
                     // Rich text so 「未インストール」 wraps under the label at a
@@ -384,6 +415,22 @@ class _SettingsViewState extends State<SettingsView> with WidgetsBindingObserver
       }
     }
     return true;
+  }
+
+  /// Stores how long the target apps must be used before a suggestion.
+  Future<bool> _setSuggestTriggerMinutes(
+    BuildContext context,
+    int minutes,
+  ) async {
+    try {
+      await context.read<HimaSuggestController>().setAppTriggerMinutes(minutes);
+      return true;
+    } catch (_) {
+      if (!context.mounted) return false;
+      AppHaptics.error();
+      _showMessage(context, '保存できなかった。もう一度試してね');
+      return false;
+    }
   }
 
   Future<void> _openUsageAccess(BuildContext context) async {
@@ -782,6 +829,64 @@ class _SavingControlState<T> extends State<_SavingControl<T>> {
   Widget build(BuildContext context) => Shake(
     key: _shakeKey,
     child: widget.builder(context, _shown, _handleChanged),
+  );
+}
+
+/// One length offered by 「通知までの利用時間」.
+///
+/// A pill instead of another row: four rows would push the app list far down,
+/// and the surrounding [Wrap] breaks the pills into lines rather than
+/// overflowing. The pill is as tall as the design's minimum tap target, and the
+/// selected one is a filled pill, not only a bolder label, so the choice is
+/// visible without relying on colour alone.
+class _TriggerMinutesChoice extends StatelessWidget {
+  const _TriggerMinutesChoice({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    button: true,
+    selected: selected,
+    label: label,
+    // `excludeSemantics` drops the InkWell below, including its tap action, so
+    // the node has to carry the action itself or the choice is unreachable for
+    // screen reader users.
+    onTap: onTap,
+    excludeSemantics: true,
+    child: InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
+      child: Container(
+        constraints: const BoxConstraints(
+          minHeight: AppSpacing.minTapTarget,
+          minWidth: AppSpacing.minTapTarget,
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s16),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: selected ? AppColors.purpleSoft : AppColors.surface,
+          borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
+          border: Border.all(
+            color: selected ? AppColors.purple : AppColors.purpleSoft,
+            width: AppSpacing.borderWidth,
+          ),
+        ),
+        child: Text(
+          label,
+          style: AppTextStyles.body.copyWith(
+            fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+            color: selected ? AppColors.purple : AppColors.ink,
+          ),
+        ),
+      ),
+    ),
   );
 }
 
