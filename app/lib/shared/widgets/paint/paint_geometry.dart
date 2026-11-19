@@ -1453,7 +1453,7 @@ double paintWipeFront(Size size, double progress) {
 /// The area a wipe has already taken off the paint.
 ///
 /// The front is a seeded, ragged vertical edge with a few long fingers, so the
-/// paint comes off along a dry-brush line instead of along a rule. It is built
+/// paint comes off along an irregular silhouette instead of a straight rule. It is built
 /// per frame on purpose: the shape changes with [progress] on every frame of the
 /// wipe, so caching it would only fill a cache.
 Path paintWipeRegionPath({

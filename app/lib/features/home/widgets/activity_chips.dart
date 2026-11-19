@@ -32,10 +32,12 @@ class ActivityChips extends StatelessWidget {
     super.key,
     required this.selected,
     required this.onSelected,
+    required this.onOpenPicker,
   });
 
   final Activity? selected;
   final ValueChanged<Activity?> onSelected;
+  final ValueChanged<Offset> onOpenPicker;
 
   @override
   Widget build(BuildContext context) => LayoutBuilder(
@@ -56,7 +58,7 @@ class ActivityChips extends StatelessWidget {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _activityLabel(),
+            _activityLabel(context),
             const SizedBox(height: AppSpacing.s8),
             Wrap(
               spacing: AppSpacing.s8,
@@ -71,7 +73,7 @@ class ActivityChips extends StatelessWidget {
 
       return Row(
         children: [
-          _activityLabel(),
+          _activityLabel(context),
           const SizedBox(width: AppSpacing.s8),
           Expanded(
             child: SingleChildScrollView(
@@ -92,21 +94,40 @@ class ActivityChips extends StatelessWidget {
     },
   );
 
-  Widget _activityLabel() => Row(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      const Icon(Icons.bolt_rounded, size: 15, color: AppColors.coral),
-      const SizedBox(width: 2),
-      Text(
-        'なにする？',
-        maxLines: 1,
-        style: AppTextStyles.caption.copyWith(
-          fontWeight: FontWeight.w800,
-          color: AppColors.ink,
+  Widget _activityLabel(BuildContext context) {
+    Offset? origin;
+    void open() => onOpenPicker(origin ?? Offset.zero);
+    return Semantics(
+      button: true,
+      label: 'なにする？',
+      hint: '活動を選ぶ',
+      onTap: open,
+      excludeSemantics: true,
+      child: InkWell(
+        onTapDown: (details) => origin = details.globalPosition,
+        onTap: open,
+        borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: AppSpacing.s8),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.bolt_rounded, size: 18, color: AppColors.coral),
+              const SizedBox(width: AppSpacing.s4),
+              Text(
+                'なにする？',
+                maxLines: 1,
+                style: AppTextStyles.caption.copyWith(
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.ink,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
-    ],
-  );
+    );
+  }
 }
 
 class _ActivityChip extends StatefulWidget {
@@ -138,6 +159,7 @@ class _ActivityChipState extends State<_ActivityChip> {
       button: true,
       selected: widget.selected,
       label: widget.activity.label,
+      onTap: widget.onTap,
       excludeSemantics: true,
       child: GestureDetector(
         onTapDown: (_) => setState(() => _pressed = true),
