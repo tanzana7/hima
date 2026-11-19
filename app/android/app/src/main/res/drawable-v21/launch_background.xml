@@ -1,9 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Launch screen for API 21+: the app background with the hima. mark centered.
-     Kept in sync with drawable/launch_background.xml. -->
+<!-- Launch screen before Android 12: the app background with the app icon
+     artwork centred. Keep drawable/ and drawable-v21/ in sync. The item size
+     (API 23+) keeps the 1152px nodpi artwork at icon size instead of its raw
+     pixel size. -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:drawable="@color/splash_background" />
     <item
-        android:drawable="@drawable/splash_logo"
+        android:width="192dp"
+        android:height="192dp"
+        android:drawable="@drawable/splash_art"
         android:gravity="center" />
 </layer-list>

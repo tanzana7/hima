@@ -4,6 +4,8 @@
          uses this in both light and dark mode (see values-night/styles.xml). -->
     <color name="splash_background">#FFFEFC</color>
 
-    <!-- Design.md 3.1 `coral`: the background layer of the adaptive launcher icon. -->
-    <color name="ic_launcher_background">#FF6389</color>
+    <!-- The paper colour of the app icon artwork (two paint blobs high-fiving),
+         sampled from the source image so the adaptive icon's background layer
+         and the foreground's own paper read as one surface. -->
+    <color name="ic_launcher_background">#FDF6EA</color>
 </resources>

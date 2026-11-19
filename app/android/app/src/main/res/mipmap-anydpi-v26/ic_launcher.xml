@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Adaptive launcher icon (API 26+): flat coral plate + the hima. mark.
-     The foreground PNG is padded into the 66/108 safe zone, so every launcher
-     mask keeps the mark intact. The mipmap-*/ic_launcher.png bitmaps remain as
-     the legacy icon for API 24-25. -->
+<!-- Adaptive launcher icon (API 26+): the paper colour + the two paint blobs.
+     The foreground PNG keeps the artwork's larger side at 57% of the 108dp
+     canvas, so even the circle mask keeps the brushy edges of both blobs
+     (checked against a 72dp circular crop).
+     The mipmap-*/ic_launcher.png bitmaps remain as the legacy icon for API 24-25. -->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@color/ic_launcher_background" />
     <foreground android:drawable="@mipmap/ic_launcher_foreground" />
