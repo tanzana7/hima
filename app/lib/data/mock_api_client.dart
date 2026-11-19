@@ -268,7 +268,13 @@ class MockApiClient implements ApiClient {
   }
 
   static UserSummary _summary(String id, String name) =>
-      UserSummary(id: id, displayName: name);
+      UserSummary(id: id, displayName: name, avatarUrl: _avatarOf(id));
+
+  /// Every mock user has a paint-blob avatar bundled in `assets/avatars/`,
+  /// named by user id, so demo screens and recordings show faces instead of
+  /// initials. The `asset:` scheme is understood only by `AvatarView`; real
+  /// users keep their Discord CDN URLs.
+  static String _avatarOf(String id) => 'asset:assets/avatars/$id.png';
 
   void _addMember(String id, String name, String guildId) {
     // Replaced rather than appended so seeding the same person twice (the
@@ -435,7 +441,12 @@ class MockApiClient implements ApiClient {
   bool _isBlocked(String userId) => _blockedIds.contains(userId);
 
   UserProfile get _profile =>
-      UserProfile(id: _myId, displayName: _myName, settings: _settings);
+      UserProfile(
+        id: _myId,
+        displayName: _myName,
+        avatarUrl: _avatarOf(_myId),
+        settings: _settings,
+      );
 
   /// The gate every call goes through, so the panel's switches exercise the
   /// app's own loading and error paths instead of one chosen screen. It runs

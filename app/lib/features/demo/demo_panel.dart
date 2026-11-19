@@ -127,39 +127,17 @@ class _DemoPanelState extends State<DemoPanel> {
     );
     if (mood == null) return;
     if (await applyMoodPick(viewModel, mood)) return;
-    messenger.showSnackBar(
-      const SnackBar(content: Text('変更できなかった。もう一度試してね')),
-    );
+    messenger.showSnackBar(const SnackBar(content: Text('変更できなかった。もう一度試してね')));
   }
 
-  Future<void> _pickDuration() async {
-    final viewModel = _viewModel;
-    final messenger = ScaffoldMessenger.of(context);
-    final minutes = await _overShell<int>(
-      (shell) => showDurationPicker(
-        shell,
-        current: viewModel.myHima?.durationMin ?? viewModel.selectedDurationMin,
-      ),
-    );
-    if (minutes == null) return;
-    if (await applyDurationPick(viewModel, minutes)) return;
-    messenger.showSnackBar(
-      const SnackBar(content: Text('変更できなかった。もう一度試してね')),
-    );
+  void _openHomePicker(DemoHomePickerKind kind) {
+    widget.demo.homePickerRequest.value = DemoHomePickerRequest(kind);
+    _selectTab(0);
   }
 
-  Future<void> _pickActivity() async {
-    final viewModel = _viewModel;
-    final messenger = ScaffoldMessenger.of(context);
-    final choice = await _overShell<ActivityChoice>(
-      (shell) => showActivityPicker(shell, current: viewModel.selectedActivity),
-    );
-    if (choice == null) return;
-    if (await applyActivityPick(viewModel, choice.activity)) return;
-    messenger.showSnackBar(
-      const SnackBar(content: Text('変更できなかった。もう一度試してね')),
-    );
-  }
+  void _pickDuration() => _openHomePicker(DemoHomePickerKind.duration);
+
+  void _pickActivity() => _openHomePicker(DemoHomePickerKind.activity);
 
   Future<void> _knock() async {
     final viewModel = _viewModel;
@@ -340,20 +318,13 @@ class _DemoPanelState extends State<DemoPanel> {
         ),
         children: [
           _section('撮影', [
-            _switchRow(
-              '撮影モード',
-              widget.demo.captureMode.value,
-              _setCaptureMode,
-            ),
+            _switchRow('撮影モード', widget.demo.captureMode.value, _setCaptureMode),
           ]),
           _section('画面', [
             _row('ホーム', () => _selectTab(0)),
             _row('友達', () => _selectTab(1)),
             _row('プロフィール', () => _selectTab(2)),
-            _row(
-              'お返事（届いた）',
-              () => _push((_) => const KnocksScreen()),
-            ),
+            _row('お返事（届いた）', () => _push((_) => const KnocksScreen())),
             _row(
               'お返事（送った）',
               () => _push((_) => const KnocksScreen(showSentFirst: true)),
@@ -378,18 +349,14 @@ class _DemoPanelState extends State<DemoPanel> {
             ),
             _row(
               'もうすぐ終わる',
-              () => _stage(
-                () => api.setDeclaration(MockDeclaration.endingSoon),
-              ),
+              () =>
+                  _stage(() => api.setDeclaration(MockDeclaration.endingSoon)),
             ),
             _row(
               'ひまな友達なし',
               () => _stage(() => api.setFriends(MockFriends.none)),
             ),
-            _row(
-              '友達が多い',
-              () => _stage(() => api.setFriends(MockFriends.many)),
-            ),
+            _row('友達が多い', () => _stage(() => api.setFriends(MockFriends.many))),
             _row('お返事が届く', () => _stage(api.pushIncomingKnock)),
             _row('友達がひま宣言', () => _stage(api.friendDeclaresHima)),
             _row('マッチ成立', () => _stage(api.triggerMatch)),
@@ -412,10 +379,7 @@ class _DemoPanelState extends State<DemoPanel> {
               _delayedSuggestion,
               (value) => setState(() => _delayedSuggestion = value),
             ),
-            _row(
-              '「アプリ利用中」の通知',
-              () => _postSuggestion(DemoSuggestionKind.app),
-            ),
+            _row('「アプリ利用中」の通知', () => _postSuggestion(DemoSuggestionKind.app)),
             _row(
               '「いつもの時間」の通知',
               () => _postSuggestion(DemoSuggestionKind.usual),

@@ -24,6 +24,8 @@ class AvatarView extends StatelessWidget {
 
   final String name;
   final String? imageUrl;
+
+  static const _assetScheme = 'asset:';
   final double size;
   final Color background;
   final Color foreground;
@@ -74,6 +76,15 @@ class AvatarView extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       child: url == null
           ? _initials()
+          // `asset:` marks a bundled image (the mock users' avatars); anything
+          // else is a remote URL such as Discord's CDN. Both fall back to the
+          // initials, so a missing file never leaves an empty circle.
+          : url.startsWith(_assetScheme)
+          ? Image.asset(
+              url.substring(_assetScheme.length),
+              fit: BoxFit.cover,
+              errorBuilder: (_, _, _) => _initials(),
+            )
           : Image.network(
               url,
               fit: BoxFit.cover,

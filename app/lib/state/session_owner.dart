@@ -21,6 +21,14 @@ class AppSession {
   final HimaSuggestController suggest;
 }
 
+enum DemoHomePickerKind { activity, duration }
+
+class DemoHomePickerRequest {
+  const DemoHomePickerRequest(this.kind);
+
+  final DemoHomePickerKind kind;
+}
+
 /// The demo session: the mock behind an [AppSession], plus what only the demo
 /// panel needs.
 class DemoSession extends AppSession {
@@ -41,6 +49,11 @@ class DemoSession extends AppSession {
   /// The tab the shell should show. Shared so the panel can move the shell
   /// without reaching into its state, and so its own selection stays in sync.
   final ValueNotifier<int> tabs = ValueNotifier<int>(0);
+
+  /// One-shot requests from the demo panel to open a picker inside the home
+  /// hero. The real session never owns or observes this hook.
+  final ValueNotifier<DemoHomePickerRequest?> homePickerRequest =
+      ValueNotifier<DemoHomePickerRequest?>(null);
 
   /// True while the panel covers the app, so the panel's floating entry point
   /// does not sit on top of the panel itself.

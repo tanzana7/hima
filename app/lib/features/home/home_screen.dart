@@ -10,6 +10,7 @@ import '../../shared/widgets/app_bottom_navigation.dart';
 import '../../shared/widgets/paint/paint_thick.dart';
 import '../../shared/widgets/shake.dart';
 import '../../state/app_view_model.dart';
+import '../../state/session_owner.dart';
 import '../knocks/knocks_screen.dart';
 import '../knocks/widgets/knock_sheet.dart';
 import '../profile/settings_screen.dart';
@@ -39,6 +40,8 @@ class _HomeScreenState extends State<HomeScreen> {
   final GlobalKey<ShakeState> _moodShakeKey = GlobalKey<ShakeState>();
   final GlobalKey<ShakeState> _durationShakeKey = GlobalKey<ShakeState>();
   final GlobalKey<ShakeState> _activityShakeKey = GlobalKey<ShakeState>();
+  final GlobalKey<MyStatusHeroState> _heroKey = GlobalKey<MyStatusHeroState>();
+  DemoSession? _demoSession;
 
   bool _justExpired = false;
   Timer? _expiredTimer;
@@ -68,15 +71,41 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    final demo = context.read<DemoSession?>();
+    if (!identical(demo, _demoSession)) {
+      _demoSession?.homePickerRequest.removeListener(_handleDemoPickerRequest);
+      _demoSession = demo;
+      _demoSession?.homePickerRequest.addListener(_handleDemoPickerRequest);
+      if (demo != null) {
+        // A demo panel can queue the request before switching tabs, while this
+        // screen is unmounted. Read it after the hero has joined the tree.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _handleDemoPickerRequest();
+        });
+      }
+    }
     _watchMatches(context.read<AppViewModel>().matches);
     _primed = true;
   }
 
   @override
   void dispose() {
+    _demoSession?.homePickerRequest.removeListener(_handleDemoPickerRequest);
     _expiredTimer?.cancel();
     _hintTimer?.cancel();
     super.dispose();
+  }
+
+  void _handleDemoPickerRequest() {
+    final demo = _demoSession;
+    final request = demo?.homePickerRequest.value;
+    if (demo == null || request == null) return;
+    final opened = _heroKey.currentState?.openInlinePicker(
+      request.kind == DemoHomePickerKind.activity
+          ? HeroInlinePicker.activity
+          : HeroInlinePicker.duration,
+    );
+    if (opened ?? false) demo.homePickerRequest.value = null;
   }
 
   /// The first frame only records what already exists so opening the app does
@@ -154,19 +183,9 @@ class _HomeScreenState extends State<HomeScreen> {
     _showMessage('変更できなかった。もう一度試してね');
   }
 
-  Future<void> _changeDuration() async {
+  Future<void> _selectDuration(int minutes) async {
     final viewModel = context.read<AppViewModel>();
-    final current = viewModel.myHima;
-    if (current == null) return;
-    final minutes = await showDurationPicker(
-      context,
-      current: current.durationMin,
-    );
-    if (minutes == null || minutes == current.durationMin || !mounted) return;
-    if (await applyDurationPick(viewModel, minutes)) {
-      if (mounted) AppHaptics.select();
-      return;
-    }
+    if (await applyDurationPick(viewModel, minutes)) return;
     if (!mounted) return;
     AppHaptics.error();
     _durationShakeKey.currentState?.shake();
@@ -182,17 +201,6 @@ class _HomeScreenState extends State<HomeScreen> {
     _showMessage('変更できなかった。もう一度試してね');
   }
 
-  /// The declared hero hides the chip row, so the same optional choice is made
-  /// in a sheet from the meta row.
-  Future<void> _changeActivity() async {
-    final viewModel = context.read<AppViewModel>();
-    final current = viewModel.selectedActivity;
-    final choice = await showActivityPicker(context, current: current);
-    if (choice == null || !mounted) return;
-    if (choice.activity == current) return;
-    await _selectActivity(choice.activity);
-  }
-
   void _handleExpired() {
     if (!mounted) return;
     setState(() => _justExpired = true);
@@ -205,22 +213,19 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _openKnocks() {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => const KnocksScreen()),
-    );
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute<void>(builder: (_) => const KnocksScreen()));
   }
 
   void _openSettings() {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => const SettingsScreen()),
-    );
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute<void>(builder: (_) => const SettingsScreen()));
   }
 
-  Future<void> _knock(
-    UserSummary user, {
-    Activity? activity,
-    Mood? mood,
-  }) => showKnockSheet(context, user: user, activity: activity, mood: mood);
+  Future<void> _knock(UserSummary user, {Activity? activity, Mood? mood}) =>
+      showKnockSheet(context, user: user, activity: activity, mood: mood);
 
   /// The match card, when there is a match.
   ///
@@ -252,6 +257,20 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final viewModel = context.watch<AppViewModel>();
+    // A declaration from the notification's 「ひまにする」 skips the hero button,
+    // so its landing effect is requested on the view model. It is taken after
+    // the frame: build must not change state, and the hero needs the declared
+    // session in place before the burst plays over it.
+    if (viewModel.declareBurstPending) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !viewModel.takeDeclareBurst()) return;
+        setState(() {
+          _burstToken++;
+          _justExpired = false;
+        });
+        AppHaptics.declare();
+      });
+    }
     final me = viewModel.me;
     final state = HeroState.fromSession(
       viewModel.myHima,
@@ -285,10 +304,12 @@ class _HomeScreenState extends State<HomeScreen> {
         const SizedBox(height: paintThickBleed),
         if (me != null)
           MyStatusHero(
+            key: _heroKey,
             state: state,
             me: me,
             lastMood: viewModel.lastMood,
             selectedActivity: viewModel.selectedActivity,
+            selectedDurationMin: viewModel.selectedDurationMin,
             busy: _busy,
             burstToken: _burstToken,
             shakeToken: _shakeToken,
@@ -299,9 +320,8 @@ class _HomeScreenState extends State<HomeScreen> {
             onDeclare: _declare,
             onEnd: _end,
             onChangeMood: _changeMood,
-            onChangeDuration: _changeDuration,
+            onSelectDuration: _selectDuration,
             onSelectActivity: _selectActivity,
-            onChangeActivity: _changeActivity,
             onExpired: _handleExpired,
           ),
         if (matchCards.isEmpty)
@@ -326,11 +346,8 @@ class _HomeScreenState extends State<HomeScreen> {
           loading: viewModel.isRefreshingLive,
           hasError: viewModel.hasLiveError,
           onRetry: () => unawaited(viewModel.refreshLiveData()),
-          onKnock: (friend) => _knock(
-            friend.user,
-            activity: friend.activity,
-            mood: friend.mood,
-          ),
+          onKnock: (friend) =>
+              _knock(friend.user, activity: friend.activity, mood: friend.mood),
         ),
       ],
     );
