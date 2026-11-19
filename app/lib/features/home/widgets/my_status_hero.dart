@@ -294,8 +294,8 @@ class _MyStatusHeroState extends State<MyStatusHero>
           ),
         ),
         // The chips sit on the paper below the blob, not on it: inside the paint
-        // the scrolling row was cut by the shape's edge, and a fade over that
-        // edge would have taken the chip labels' contrast with it.
+        // they were cut by the shape's edge, and a fade over that edge would
+        // have taken the chip labels' contrast with it.
         if (!declared) ...[
           const SizedBox(height: AppSpacing.s8),
           Padding(
@@ -359,6 +359,18 @@ class _MyStatusHeroState extends State<MyStatusHero>
     );
   }
 
+  /// The hero headline is decorative, while its supporting copy and controls
+  /// carry information. Cap only this headline so it does not take over the
+  /// blob at large text scales; the content below still follows the full scale.
+  Widget _heroHeading(BuildContext context, HeroState state, TextStyle style) {
+    final requestedSize = MediaQuery.textScalerOf(context).scale(34);
+    final fontSize = requestedSize.clamp(28.0, 42.0).toDouble();
+    return MediaQuery(
+      data: MediaQuery.of(context).copyWith(textScaler: TextScaler.noScaling),
+      child: Text(state.heading, style: style.copyWith(fontSize: fontSize)),
+    );
+  }
+
   /// The undeclared content: who I am, the question, and the one thing to do.
   ///
   /// It carries no padding: the declare surface's paint applies [heroBlobPadding]
@@ -386,12 +398,10 @@ class _MyStatusHeroState extends State<MyStatusHero>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    state.heading,
-                    style: AppTextStyles.heroTitle.copyWith(
-                      fontSize: 34,
-                      color: AppColors.ink,
-                    ),
+                  _heroHeading(
+                    context,
+                    state,
+                    AppTextStyles.heroTitle.copyWith(color: AppColors.ink),
                   ),
                   const SizedBox(height: 2),
                   Text(
@@ -456,10 +466,10 @@ class _MyStatusHeroState extends State<MyStatusHero>
                     // the blob, not set like a form label.
                     angle: -0.03,
                     alignment: Alignment.centerLeft,
-                    child: Text(
-                      state.heading,
-                      style: AppTextStyles.heroTitle.copyWith(
-                        fontSize: 34,
+                    child: _heroHeading(
+                      context,
+                      state,
+                      AppTextStyles.heroTitle.copyWith(
                         color: AppColors.surface,
                         // 34sp bold is WCAG large text, so white needs 3:1
                         // here, not 4.5:1. The coral stops are chosen for that

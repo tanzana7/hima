@@ -199,9 +199,8 @@ class _MatchCardState extends State<MatchCard>
 /// The avatars of one kind.
 ///
 /// They spread across the card when they fit, because a handful of people
-/// bunched against the left edge left the card looking half empty. Past that
-/// they scroll instead of shrinking, since the dab under each avatar has to
-/// stay readable.
+/// bunched against the left edge left the card looking half empty. When they do
+/// not fit, they wrap instead of clipping invitation controls at the card edge.
 class _AvatarRow extends StatelessWidget {
   const _AvatarRow({required this.cellWidth, required this.children});
 
@@ -220,17 +219,11 @@ class _AvatarRow extends StatelessWidget {
           children: children,
         );
       }
-      return SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            for (var index = 0; index < children.length; index++) ...[
-              if (index > 0) const SizedBox(width: AppSpacing.s8),
-              children[index],
-            ],
-          ],
-        ),
+      return Wrap(
+        alignment: WrapAlignment.spaceEvenly,
+        spacing: AppSpacing.s8,
+        runSpacing: AppSpacing.s8,
+        children: children,
       );
     },
   );
