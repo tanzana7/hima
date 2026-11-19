@@ -22,6 +22,7 @@ class DemoHimaSuggestBridge implements HimaSuggestBridge {
 
   bool _enabled = false;
   List<String> _targets;
+  int _appTriggerMinutes = himaSuggestDefaultTriggerMinutes;
   DateTime? _declaredUntil;
   List<HimaTimeSuggestion> _forecast = const [];
   VoidCallback? _onAction;
@@ -93,6 +94,7 @@ class DemoHimaSuggestBridge implements HimaSuggestBridge {
       ]),
       usageAccess: real.usageAccess && !usageAccessMissing,
       notificationsAllowed: real.notificationsAllowed && !notificationsMissing,
+      appTriggerMinutes: _appTriggerMinutes,
     );
   }
 
@@ -124,6 +126,14 @@ class DemoHimaSuggestBridge implements HimaSuggestBridge {
     // Order is the user's, like the native store: duplicates would only make
     // the list ambiguous.
     _targets = List.unmodifiable(packages.toSet());
+    return getState();
+  }
+
+  /// Kept in memory like the targets, so trying the choice in the demo cannot
+  /// change how the phone's real suggestions behave.
+  @override
+  Future<HimaSuggestState> setAppTriggerMinutes(int minutes) async {
+    _appTriggerMinutes = minutes;
     return getState();
   }
 
@@ -161,6 +171,7 @@ class DemoHimaSuggestBridge implements HimaSuggestBridge {
   Future<void> clear() async {
     _enabled = false;
     _targets = [for (final app in himaSuggestTemplates) app.package];
+    _appTriggerMinutes = himaSuggestDefaultTriggerMinutes;
     _declaredUntil = null;
     _forecast = const [];
   }
