@@ -22,6 +22,7 @@ RESULT_LABELS = {"accepted": "いいよ！", "later": "あとで", "passed": "�
 KNOCK_TEMPLATES = ["ゲームしない？", "ちょっと話さない？", "作業通話しない？"]
 DURATIONS = [(15, "15分"), (30, "30分"), (60, "1時間"), (180, "3時間")]  # 既定 30分
 CUSTOM_DURATION_VALUE = "custom"  # 5つ目の選択肢「時間を指定する…」（任意の分数を入力）
+DURATION_PLACEHOLDER = "時間：あとどれくらいヒマ？（既定30分）"
 DEFAULT_MINUTES = 30
 NOTE_MAX = 50
 CANDIDATE_LIMIT = 25
@@ -415,7 +416,7 @@ class JoinView(ErrorFollowupView):
         self.note: str = ""
 
     @ui.select(
-        placeholder="時間：あとどれくらいヒマ？（既定30分）",
+        placeholder=DURATION_PLACEHOLDER,
         options=[
             discord.SelectOption(label=label, value=str(minutes), default=(minutes == DEFAULT_MINUTES))
             for minutes, label in DURATIONS
@@ -428,6 +429,9 @@ class JoinView(ErrorFollowupView):
             await interaction.response.send_modal(JoinMinutesModal(self))
             return
         self.duration_min = int(select.values[0])
+        self.duration.placeholder = DURATION_PLACEHOLDER  # カスタム表示をリセット
+        for opt in select.options:
+            opt.default = opt.value == select.values[0]
         await interaction.response.defer()
 
     @ui.select(
@@ -511,9 +515,11 @@ class JoinMinutesModal(ui.Modal):
             )
             return
         self.join_view.duration_min = minutes
-        await interaction.response.send_message(
-            f"時間を「あと{minutes}分」に設定したよ。「確定」を押してね！", ephemeral=True
-        )
+        # セレクトの表示に選択した分数を出す（例：時間：あと555分）
+        self.join_view.duration.placeholder = f"時間：あと{minutes}分（「時間を指定する…」で変更可）"
+        for opt in self.join_view.duration.options:
+            opt.default = opt.value == str(minutes)
+        await interaction.response.edit_message(view=self.join_view)
 
 
 class JoinNoteModal(ui.Modal):
