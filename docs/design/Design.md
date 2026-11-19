@@ -539,7 +539,7 @@ class HeroState {
   final HeroPhase phase;
   final Mood mood;
   final Activity? activity; // null = 未選択（表示は「ひま」）
-  final int durationMin;    // 30 / 60 / 120
+  final int durationMin;    // himaDurationChoices（15分〜12時間）
   final DateTime? expiresAt;
 }
 ```
