@@ -490,10 +490,16 @@ class _InlineDurationPickerState extends State<InlineDurationPicker> {
               ),
             ),
           ),
+          // Only the two ends are labelled. There are ten stops (15分–12時間),
+          // so a label per stop would not fit a phone's width, and the live
+          // 「あと…」 above already names the value under the finger.
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              for (final minutes in himaDurationChoices)
+              for (final minutes in [
+                himaDurationChoices.first,
+                himaDurationChoices.last,
+              ])
                 Text(
                   durationLabel(minutes),
                   style: AppTextStyles.caption.copyWith(

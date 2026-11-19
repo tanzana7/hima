@@ -257,6 +257,20 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final viewModel = context.watch<AppViewModel>();
+    // A declaration from the notification's 「ひまにする」 skips the hero button,
+    // so its landing effect is requested on the view model. It is taken after
+    // the frame: build must not change state, and the hero needs the declared
+    // session in place before the burst plays over it.
+    if (viewModel.declareBurstPending) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !viewModel.takeDeclareBurst()) return;
+        setState(() {
+          _burstToken++;
+          _justExpired = false;
+        });
+        AppHaptics.declare();
+      });
+    }
     final me = viewModel.me;
     final state = HeroState.fromSession(
       viewModel.myHima,
