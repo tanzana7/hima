@@ -28,6 +28,14 @@ internal object HimaSuggest {
 
     val DEFAULT_TARGETS = listOf("com.twitter.android", "com.google.android.youtube")
 
+    /**
+     * Lengths of target use a suggestion may require, in the order the settings screen shows
+     * them. The worker has no UI of its own, so the channel rejects anything else instead of
+     * rounding it into a neighbour: the user would otherwise see a threshold they never chose.
+     */
+    val APP_TRIGGER_MINUTE_CHOICES = listOf(5, 15, 30, 60)
+    const val DEFAULT_APP_TRIGGER_MINUTES = 5
+
     // A target the user removed and later re-added may not be installed; the spec still
     // wants a readable name, and the package name is the last resort.
     private val displayNames = mapOf(

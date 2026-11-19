@@ -43,7 +43,6 @@ internal object ScreenState {
 
 internal data class UsageSnapshot(
     val intervals: List<ForegroundInterval>,
-    val foregroundPackage: String?,
     val carried: CarriedForeground,
 )
 
@@ -56,16 +55,16 @@ internal object TargetUsageReader {
     private data class RawEvent(val type: Int, val packageName: String?, val timeMs: Long)
 
     /**
-     * Rebuilds foreground intervals for [windowStartMs]..[endMs] starting from [carried], so a
-     * session that began before the window still counts. Events are read from [queryStartMs],
-     * which may be earlier than the window: after a delayed run, the state at the window start
-     * can only be known from what happened in between. Only the window counts as usage.
+     * Rebuilds foreground intervals for [usageStartMs]..[endMs] starting from [carried], so a
+     * session that began before that start still counts. Events are read from [queryStartMs]:
+     * it can reach further back than [usageStartMs], because the state at that start is only
+     * known from what happened before it. Only the time from [usageStartMs] counts as usage.
      * Screen-off ends the open interval, and a resume while the screen is off is ignored.
      */
     fun read(
         context: Context,
         queryStartMs: Long,
-        windowStartMs: Long,
+        usageStartMs: Long,
         endMs: Long,
         carried: CarriedForeground,
     ): UsageSnapshot {
@@ -73,8 +72,7 @@ internal object TargetUsageReader {
         val events = manager?.queryEvents(queryStartMs, endMs)
             ?: return UsageSnapshot(
                 emptyList(),
-                null,
-                CarriedForeground(null, 0L, ScreenState.isInteractive(context)),
+                CarriedForeground(null, 0L),
             )
 
         val raw = ArrayList<RawEvent>()
@@ -87,14 +85,34 @@ internal object TargetUsageReader {
         // insertion order, so a stable sort keeps a screen-off before a resume at the same ms.
         raw.sortBy { it.timeMs }
 
+        // The screen state at [queryStartMs] is rebuilt rather than carried: the flag a previous
+        // run stored is the state at the *end* of that run, and the window now reaches further
+        // back. Reading it as the starting state would count a resume that happened while the
+        // screen was still off, before the screen-on later in the window. Transitions alternate
+        // and the live state is known, so the transitions since the start give it back.
+        val interactiveNow = ScreenState.isInteractive(context)
+        val transitions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            raw.count { rawEvent ->
+                val time = rawEvent.timeMs.coerceIn(queryStartMs, endMs)
+                time > queryStartMs &&
+                    (
+                        rawEvent.type == UsageEvents.Event.SCREEN_INTERACTIVE ||
+                            rawEvent.type == UsageEvents.Event.SCREEN_NON_INTERACTIVE
+                        )
+            }
+        } else {
+            // These events only exist from P on, and the replay below ignores them before that.
+            0
+        }
+
         var currentPackage = carried.packageName
         var currentSince = if (carried.packageName != null) carried.sinceMs else 0L
-        var screenInteractive = carried.screenInteractive
+        var screenInteractive = if (transitions % 2 == 0) interactiveNow else !interactiveNow
         val intervals = ArrayList<ForegroundInterval>()
 
         fun close(atMs: Long) {
             val packageName = currentPackage ?: return
-            val from = maxOf(currentSince, windowStartMs)
+            val from = maxOf(currentSince, usageStartMs)
             val to = minOf(atMs, endMs)
             if (to > from) intervals += ForegroundInterval(packageName, from, to)
             currentPackage = null
@@ -121,16 +139,11 @@ internal object TargetUsageReader {
             }
         }
 
-        // The live power state is what "foreground now" means, so it wins over the event-derived
-        // flag for both this decision and the state handed to the next run.
-        val interactiveNow = ScreenState.isInteractive(context)
-        val foregroundPackage = if (interactiveNow) currentPackage else null
         val carriedAfter = CarriedForeground(
             packageName = currentPackage,
             sinceMs = if (currentPackage != null) currentSince else 0L,
-            screenInteractive = interactiveNow,
         )
         close(endMs)
-        return UsageSnapshot(intervals, foregroundPackage, carriedAfter)
+        return UsageSnapshot(intervals, carriedAfter)
     }
 }

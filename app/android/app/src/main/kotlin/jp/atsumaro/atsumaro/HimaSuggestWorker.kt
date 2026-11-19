@@ -32,33 +32,48 @@ internal class HimaSuggestWorker(
         val store = HimaSuggestStore(context)
         val targets = store.targets
         if (!store.enabled || !UsageAccess.isGranted(context) || targets.isEmpty()) {
-            // No events were read, so the open interval cannot be verified. Drop it, and take
-            // the live screen state: a screen-on during the gap never appears in a later
-            // query, and a stale "off" would make every resume below be ignored.
-            store.carriedForeground = CarriedForeground(
-                packageName = null,
-                sinceMs = 0L,
-                screenInteractive = ScreenState.isInteractive(context),
-            )
+            // No events were read, so the open interval cannot be verified. Drop it; the next
+            // run rebuilds the screen state from its own events.
+            store.carriedForeground = CarriedForeground(packageName = null, sinceMs = 0L)
             store.lastRunAt = now
             return
         }
 
         val previousRunAt = store.lastRunAt
-        // Only the window counts as usage, but a delayed run also has to know what the user was
-        // doing when the window starts: a session that began earlier has no resume event inside
-        // it. Read back to the previous run (bounded, because event history is finite) and give
-        // up on that state when even the bound does not reach it.
-        val windowStart = maxOf(previousRunAt, now - MAX_USAGE_WINDOW_MS).coerceAtMost(now)
-        val queryStart = maxOf(previousRunAt, now - MAX_STATE_HISTORY_MS).coerceAtMost(windowStart)
-        val carried = if (previousRunAt >= queryStart) {
-            store.carriedForeground
+        // The app suggestion counts the whole lookback, so it needs use that ended before the
+        // previous run as well. The extra margin tolerates short interruptions and the worker's
+        // roughly 15-minute cadence, and it is also what stops use that ended long ago from
+        // suggesting anything.
+        val requiredMs = store.appTriggerMinutes * MINUTE_MS
+        val lookbackStart = now - requiredMs - APP_TRIGGER_MARGIN_MS
+        // Learned slots keep their own window: only the time since the previous run belongs to
+        // this run, whatever the trigger reads, or a period would be counted twice.
+        val observedStart = maxOf(previousRunAt, now - MAX_USAGE_WINDOW_MS).coerceAtMost(now)
+        // The read has to reach both starts. A delayed run marks everything from its observation
+        // start as observed, so the intervals have to go back that far even when the trigger's
+        // lookback is shorter or lies further back.
+        val readStart = minOf(lookbackStart, observedStart)
+        // Events are read back to the read start (bounded, because event history is finite) and
+        // further to where the previous run left off, so the state there can be reconstructed.
+        val queryStart = minOf(previousRunAt, readStart)
+            .coerceAtLeast(now - MAX_STATE_HISTORY_MS)
+            .coerceAtMost(now)
+        // The carried state is the state at the previous run, so it describes the query start
+        // only when that run is at or after the query start and its open session began before
+        // it. That is exactly what it is carried for: a session that started before the read
+        // start and may still be running. Otherwise the foreground at the query start is
+        // unknown, and starting from nothing is the safe side: the stretch before the first
+        // resume is left uncounted rather than credited to an app that may not have been in
+        // front.
+        val carried = store.carriedForeground
+        val seed = if (previousRunAt >= queryStart && carried.sinceMs <= queryStart) {
+            carried
         } else {
-            store.carriedForeground.withoutForeground()
+            carried.withoutForeground()
         }
-        val snapshot = TargetUsageReader.read(context, queryStart, windowStart, now, carried)
+        val snapshot = TargetUsageReader.read(context, queryStart, readStart, now, seed)
         store.carriedForeground = snapshot.carried
-        recordObservations(store, windowStart, now, snapshot.intervals, targets.toSet())
+        recordObservations(store, observedStart, now, snapshot.intervals, targets.toSet())
         store.lastRunAt = now
 
         if (store.declaredUntil?.let { it > now } == true) return
@@ -67,7 +82,7 @@ internal class HimaSuggestWorker(
         if (minutesOfDay in QUIET_HOURS_START until QUIET_HOURS_END) return
 
         val notifier = HimaSuggestNotifier(context)
-        val appLabel = appTriggerLabel(context, snapshot, targets, now)
+        val appLabel = appTriggerLabel(context, snapshot, targets, requiredMs, lookbackStart)
         if (appLabel != null) {
             if (notifier.post(HimaSuggestNotifier.appBody(appLabel), store)) {
                 store.lastSuggestAt = now
@@ -83,30 +98,39 @@ internal class HimaSuggestWorker(
         store.lastSuggestAt = now
     }
 
-    /** Label of the target that triggered the app suggestion, or null when it did not fire. */
+    /**
+     * Label of the target that triggered the app suggestion, or null when it did not fire.
+     *
+     * Being in a target app right now is not enough: someone who opened YouTube seconds ago
+     * must not be told "YouTube 見てる？". The suggestion fires only once the targets were in the
+     * foreground for [requiredMs] in total between [lookbackStart] and now. Time across several
+     * targets adds up, so a quick hop between X and YouTube still counts.
+     *
+     * The snapshot reaches further back than [lookbackStart] for the learned slots, so only the
+     * part inside the lookback counts here.
+     */
     private fun appTriggerLabel(
         context: Context,
         snapshot: UsageSnapshot,
         targets: List<String>,
-        now: Long,
+        requiredMs: Long,
+        lookbackStart: Long,
     ): String? {
         val targetPackages = targets.toSet()
-        val foreground = snapshot.foregroundPackage?.takeIf { it in targetPackages }
-        val recentStart = now - APP_TRIGGER_WINDOW_MS
-        val recentMs = snapshot.intervals
-            .filter { it.packageName in targetPackages && it.endMs > recentStart }
-            .sumOf { it.endMs - maxOf(it.startMs, recentStart) }
-        if (foreground == null && recentMs < APP_TRIGGER_MINUTES_MS) return null
+        var usedMs = 0L
+        var mostRecent: ForegroundInterval? = null
+        for (interval in snapshot.intervals) {
+            if (interval.packageName !in targetPackages) continue
+            if (interval.endMs <= lookbackStart) continue
+            usedMs += interval.endMs - maxOf(interval.startMs, lookbackStart)
+            if (mostRecent == null || interval.endMs > mostRecent.endMs) mostRecent = interval
+        }
+        if (usedMs < requiredMs) return null
 
-        // The most recent target names the app in the body; the foreground app is by
-        // definition the most recent one when it is a target.
-        val mostRecent = foreground
-            ?: snapshot.intervals
-                .filter { it.packageName in targetPackages }
-                .maxByOrNull { it.endMs }
-                ?.packageName
-            ?: targets.first()
-        return HimaSuggest.label(context, mostRecent)
+        // The body names the last target the user used, which is the open session when there is
+        // one: its interval ends at now.
+        val packageName = mostRecent?.packageName ?: return null
+        return HimaSuggest.label(context, packageName)
     }
 
     /**
@@ -132,15 +156,22 @@ internal class HimaSuggestWorker(
         return null
     }
 
+    /**
+     * Adds the target time of [observationStart]..[now] to the learned slots.
+     *
+     * The snapshot may reach back further than that, for the trigger, so every interval is cut
+     * to [observationStart] first: a period an earlier run already recorded must not be
+     * recorded again.
+     */
     private fun recordObservations(
         store: HimaSuggestStore,
-        windowStart: Long,
+        observationStart: Long,
         now: Long,
         intervals: List<ForegroundInterval>,
         targets: Set<String>,
     ) {
         val observations = store.observations()
-        forEachSlot(windowStart, now) { date, weekday, slot, _, _ ->
+        forEachSlot(observationStart, now) { date, weekday, slot, _, _ ->
             val day = observations.getOrPut(date) { DayObservation(weekday, unobserved()) }
             day.seconds[slot] = maxOf(day.seconds[slot], 0)
         }
@@ -149,9 +180,12 @@ internal class HimaSuggestWorker(
         val weekdayByDate = HashMap<String, Int>()
         for (interval in intervals) {
             if (interval.packageName !in targets) continue
-            forEachSlot(interval.startMs, interval.endMs) { date, weekday, slot, from, to ->
+            val from = maxOf(interval.startMs, observationStart)
+            val to = minOf(interval.endMs, now)
+            if (to <= from) continue
+            forEachSlot(from, to) { date, weekday, slot, slotFrom, slotTo ->
                 val perSlot = addedMs.getOrPut(date) { LongArray(TokyoTime.SLOTS_PER_DAY) }
-                perSlot[slot] += to - from
+                perSlot[slot] += slotTo - slotFrom
                 weekdayByDate[date] = weekday
             }
         }
@@ -195,8 +229,14 @@ internal class HimaSuggestWorker(
         const val MAX_USAGE_WINDOW_MS = 2 * 60 * MINUTE_MS
         const val MAX_STATE_HISTORY_MS = 24 * 60 * MINUTE_MS
         const val SUGGEST_INTERVAL_MS = 90 * MINUTE_MS
-        const val APP_TRIGGER_WINDOW_MS = 15 * MINUTE_MS
-        const val APP_TRIGGER_MINUTES_MS = 5 * MINUTE_MS
+
+        /**
+         * How much longer than the chosen length the app trigger looks back. The worker runs
+         * about every 15 minutes, so a shorter lookback would miss use that ended just before
+         * the previous run, and a session interrupted for a few minutes would fall under the
+         * threshold.
+         */
+        const val APP_TRIGGER_MARGIN_MS = 15 * MINUTE_MS
         const val OBSERVATION_RETENTION_DAYS = 35
 
         const val QUIET_HOURS_START = 2 * 60
