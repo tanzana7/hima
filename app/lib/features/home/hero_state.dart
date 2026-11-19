@@ -1,4 +1,5 @@
 import '../../../data/models/models.dart';
+import '../../shared/phrase_wrap.dart';
 
 /// The three hero states from Design.md 2.
 enum HeroPhase { idle, declared, justExpired }
@@ -53,7 +54,9 @@ class HeroState {
   String get supporting => switch (phase) {
     HeroPhase.declared => remainingLabel(),
     HeroPhase.justExpired => 'ひま宣言が終了したよ',
-    HeroPhase.idle => 'ひまなら友達に知らせよう',
+    // Phrase by phrase, so a large text scale wraps between 「ひまなら」,
+    // 「友達に」 and 「知らせよう」 instead of inside one of them.
+    HeroPhase.idle => wrapPhrases(['ひまなら', '友達に', '知らせよう']),
   };
 
   String remainingLabel([DateTime? now]) {

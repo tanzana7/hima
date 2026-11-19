@@ -9,6 +9,7 @@ import '../../app/theme/app_text_styles.dart';
 import '../../data/hima_suggest_bridge.dart';
 import '../../data/models/models.dart';
 import '../../shared/haptics.dart';
+import '../../shared/phrase_wrap.dart';
 import '../../shared/widgets/avatar_view.dart';
 import '../../shared/widgets/paint/paint.dart';
 import '../../shared/widgets/paint_button.dart';
@@ -21,6 +22,20 @@ import '../../state/session_owner.dart';
 /// 4.2:1 on the pastel wash, so text on paint takes this darker tone instead
 /// (5.4:1).
 const _washMuted = Color(0xFF635B6F);
+
+/// The 「自動ひま提案」 description: one clause per line, and inside each clause
+/// the line may turn only between its phrases.
+///
+/// Without the phrase boundaries a large text scale broke the second clause as
+/// 「いつもの時間に通知す／るよ」, leaving 「るよ」 alone on its own line.
+final String _suggestDescription = [
+  wrapPhrases(['使い続けた', 'ときと、']),
+  wrapPhrases(['いつもの時間に', '通知するよ']),
+].join('\n');
+
+/// The 「Discordでも受け取る」 switch label: two phrases, so a large text scale
+/// wraps before 「受け取る」 instead of splitting it.
+final String _suggestDmTitle = wrapPhrases(['Discordでも', '受け取る']);
 
 /// Settings content shared by the プロフィール tab and the header gear route.
 class SettingsView extends StatefulWidget {
@@ -282,7 +297,10 @@ class _SettingsViewState extends State<SettingsView> with WidgetsBindingObserver
     if (textScale < 1.4) {
       return SwitchListTile(
         title: const Text('自動ひま提案'),
-        subtitle: const Text('使い続けたときと、\nいつもの時間に通知するよ'),
+        subtitle: Text(
+          _suggestDescription,
+          semanticsLabel: plainPhrases(_suggestDescription),
+        ),
         value: enabled,
         onChanged: onChanged,
       );
@@ -316,7 +334,8 @@ class _SettingsViewState extends State<SettingsView> with WidgetsBindingObserver
               ),
               const SizedBox(height: AppSpacing.s4),
               Text(
-                '使い続けたときと、\nいつもの時間に通知するよ',
+                _suggestDescription,
+                semanticsLabel: plainPhrases(_suggestDescription),
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
@@ -358,7 +377,10 @@ class _SettingsViewState extends State<SettingsView> with WidgetsBindingObserver
                   value: suggestDm,
                   onSave: (value) => _setSuggestDm(context, value),
                   builder: (context, value, onChanged) => SwitchListTile(
-                    title: const Text('Discordでも受け取る'),
+                    title: Text(
+                      _suggestDmTitle,
+                      semanticsLabel: plainPhrases(_suggestDmTitle),
+                    ),
                     value: value,
                     onChanged: onChanged,
                   ),
