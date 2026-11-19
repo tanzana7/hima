@@ -111,9 +111,12 @@ internal class HimaSuggestWorker(
 
     /**
      * Key of the usual range that is due now, or null when none matches or it was already
-     * suggested today. The range starts 15 minutes early so a run that is delayed by Doze still
-     * lands inside the range instead of losing the whole slot. The caller records the key only
-     * after the notification was actually posted.
+     * suggested today. The caller records the key only after the notification was posted.
+     *
+     * The suggestion waits for the range to start: these are the minutes the user is usually
+     * free, and just before them they may still be busy with something else. Because the worker
+     * runs about every 15 minutes, it arrives up to 15 minutes into the range. The last minutes
+     * are skipped so a delayed run does not suggest a free time that is already over.
      */
     private fun usualTimeKey(store: HimaSuggestStore, now: Long, minutesOfDay: Int): String? {
         val todayWeekday = TokyoTime.weekday(now)
@@ -121,8 +124,8 @@ internal class HimaSuggestWorker(
         val notified = store.notifiedSlots()
         for (range in UsualTimeRanges.build(store)) {
             if (range.weekday != todayWeekday) continue
-            if (minutesOfDay < range.startMin - LEAD_MINUTES) continue
-            if (minutesOfDay >= range.endMin - LEAD_MINUTES) continue
+            if (minutesOfDay < range.startMin) continue
+            if (minutesOfDay >= range.endMin - END_MARGIN_MINUTES) continue
             val key = "$dateKey#${range.startMin}"
             if (key !in notified) return key
         }
@@ -198,6 +201,6 @@ internal class HimaSuggestWorker(
 
         const val QUIET_HOURS_START = 2 * 60
         const val QUIET_HOURS_END = 7 * 60
-        const val LEAD_MINUTES = 15
+        const val END_MARGIN_MINUTES = 5
     }
 }
