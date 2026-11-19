@@ -63,16 +63,6 @@ class _DemoPanelState extends State<DemoPanel> {
   /// now, so the app can be left before the notification appears.
   bool _delayedSuggestion = false;
 
-  /// The demo notification the rows made last in this visit.
-  ///
-  /// A notification keeps the 「デモ」 subtext it was posted with, so 撮影モード has
-  /// to replace it from this record. [fireAt] is when a delayed one is due, or
-  /// null when it was posted at once.
-  ({DemoSuggestionKind kind, String? label, DateTime? fireAt})? _lastSuggestion;
-
-  /// The suggestion post that has not answered yet, if any.
-  Future<void>? _suggestionInFlight;
-
   @override
   void initState() {
     super.initState();
@@ -244,31 +234,17 @@ class _DemoPanelState extends State<DemoPanel> {
     // Read after the step above, not before: 撮影モード can be turned on while a
     // declaration is being ended, and the notification has to look real then.
     final marked = !widget.demo.captureMode.value;
-    // Recorded before the post is sent, so a re-mark that capture mode asks for
-    // while this request is on its way knows what to replace.
-    _lastSuggestion = (
-      kind: kind,
-      label: label,
-      fireAt: delayMs == 0 ? null : DateTime.now().add(_suggestionDelay),
-    );
     // The step above takes seconds in slow mode and the demo can be left while
     // it runs: the owner answers null then and posts nothing, so no demo
     // notification can appear after the demo is over.
-    final post = owner.postDemoSuggestion(
+    final posted = await owner.postDemoSuggestion(
       kind: kind,
       label: label,
       marked: marked,
       delayMs: delayMs,
     );
-    // Tracked so a re-mark sent meanwhile lands after this one instead of being
-    // replaced by the marked post that it is waiting for.
-    _suggestionInFlight = post.then<void>((_) {});
-    final posted = await post;
-    _suggestionInFlight = null;
     if (!mounted) return;
     if (posted != true) {
-      // Nothing is waiting or on screen, so there is nothing to re-mark.
-      _lastSuggestion = null;
       if (posted == false) {
         messenger.showSnackBar(
           SnackBar(
@@ -289,56 +265,19 @@ class _DemoPanelState extends State<DemoPanel> {
         duration: Duration(seconds: 2),
       ),
     );
+    // While recording is being set up the next step is leaving for YouTube, and
+    // the ten seconds are already running.
+    if (!marked) _selectTab(0);
   }
 
   /// Turns 撮影モード on or off.
   ///
-  /// The panel closes when it is turned on, because it is not part of the
-  /// recording: nothing developer-looking may be on screen, and the floating
-  /// button that would reopen it is hidden too (`DemoOverlay`). It is left
-  /// through the long press in the top-left corner, which keeps the way out in
-  /// the demo's own files.
+  /// The panel stays open: the notification for the recording is requested from
+  /// here, and the 「デモ」 subtext is decided when it is requested. The floating
+  /// button stops appearing as soon as the panel closes (`DemoOverlay`), and the
+  /// long press in the top-left corner is the way back.
   void _setCaptureMode(bool value) {
-    widget.demo.captureMode.value = value;
-    if (!value) {
-      setState(() {});
-      return;
-    }
-    // Captured before the panel closes. A notification keeps the 「デモ」 subtext it
-    // was posted with, and the recording must not show it.
-    final owner = context.read<SessionOwner>();
-    final last = _lastSuggestion;
-    _lastSuggestion = null;
-    if (last != null) unawaited(_remarkSuggestion(owner, last));
-    _selectTab(0);
-  }
-
-  /// Re-posts the notification the rows last made, without the 「デモ」 subtext.
-  ///
-  /// Neither a scheduled nor a posted notification can be re-marked where it is,
-  /// so it is posted again: the same body and notification ID, and only the wait
-  /// that is left when it has not been delivered yet. Re-posting a delivered one
-  /// replaces it in the shade, which is the only way the recording stops seeing
-  /// the marker.
-  Future<void> _remarkSuggestion(
-    SessionOwner owner,
-    ({DemoSuggestionKind kind, String? label, DateTime? fireAt}) last,
-  ) async {
-    // A post that is still on its way carries the value decided before capture
-    // mode was on, and it lands after anything sent now: waiting for it is what
-    // keeps the 「デモ」 subtext from coming back.
-    final inFlight = _suggestionInFlight;
-    if (inFlight != null) await inFlight;
-    final fireAt = last.fireAt;
-    final remaining = fireAt == null
-        ? Duration.zero
-        : fireAt.difference(DateTime.now());
-    await owner.postDemoSuggestion(
-      kind: last.kind,
-      label: last.label,
-      marked: false,
-      delayMs: remaining.isNegative ? 0 : remaining.inMilliseconds,
-    );
+    setState(() => widget.demo.captureMode.value = value);
   }
 
   /// Shows the app's own error state on the home tab.
