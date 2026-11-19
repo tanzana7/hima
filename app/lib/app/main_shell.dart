@@ -35,6 +35,19 @@ class MainShell extends StatefulWidget {
   State<MainShell> createState() => _MainShellState();
 }
 
+/// How an offered declaration ended, for the caller to decide whether a failure
+/// message still has to be shown.
+///
+/// More than a "declared" flag because the two ways of not declaring are
+/// reported differently: dismissing the picker is an answer the user gave, while
+/// a failed request is what the message is about.
+enum _SuggestDeclareOutcome {
+  /// Declared, or a live session made the offer unnecessary: nothing to report.
+  done,
+  dismissed,
+  failed,
+}
+
 class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   int _selectedIndex = 0;
   AppViewModel? _viewModel;
@@ -195,12 +208,20 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
         _checkQueued = false;
         final action = await suggest.takePendingAction();
         if (!mounted) return;
-        // Anything else is consumed and dropped. The demo notification's action
-        // only reaches this shell through the demo bridge, which hands it over
-        // as a declaration; a stray one taken here belongs to no session the
-        // user is looking at.
-        if (action == himaSuggestDeclareAction) {
-          await _offerSuggestedDeclaration();
+        // Anything else is consumed and dropped. The demo notification's actions
+        // only reach this shell through the demo bridge, which hands them over as
+        // the real ones; a stray one taken here belongs to no session the user is
+        // looking at.
+        switch (action) {
+          case himaSuggestDeclareAction:
+            // Dismissing the picker is an answer, so only a failed request is
+            // reported: the tap path itself is unchanged.
+            final outcome = await _offerSuggestedDeclaration();
+            if (mounted && outcome == _SuggestDeclareOutcome.failed) {
+              showDeclareFailure(context);
+            }
+          case himaSuggestDeclareNowAction:
+            await _declareSuggestedNow();
         }
       } while (_checkQueued && mounted);
     } catch (_) {
@@ -214,25 +235,68 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   ///
   /// The worker never declares by itself: the suggestion only brings the user
   /// here, and the mood is still their choice.
-  Future<void> _offerSuggestedDeclaration() async {
+  ///
+  /// A failed request is not reported here; the answer says what happened so the
+  /// caller can show the message where it will be seen.
+  Future<_SuggestDeclareOutcome> _offerSuggestedDeclaration() async {
     final viewModel = context.read<AppViewModel>();
     // The declaration belongs to the home tab, and a pushed route would cover
     // the picker, so both go first.
     _selectTab(0);
     Navigator.of(context).popUntil((route) => route.isFirst);
     // Extending a live session is not what the suggestion offered.
-    if (viewModel.isDeclared) return;
+    if (viewModel.isDeclared) return _SuggestDeclareOutcome.done;
     final mood = await showMoodPicker(context, current: viewModel.lastMood);
-    if (mood == null || !mounted) return;
+    if (mood == null || !mounted) return _SuggestDeclareOutcome.dismissed;
     try {
       await viewModel.declareHima(
         mood: mood,
         source: DeclarationSource.suggested,
       );
+      if (!mounted) return _SuggestDeclareOutcome.done;
+      unawaited(AppHaptics.declare());
+      return _SuggestDeclareOutcome.done;
+    } catch (_) {
+      return _SuggestDeclareOutcome.failed;
+    }
+  }
+
+  /// Declares the suggestion at once, for the notification's 「ひまにする」.
+  ///
+  /// The picker is the slow path, so the button skips it: the mood and the
+  /// activity are the ones the home button would start with, which is what the
+  /// user already answered the last time. The declaration is still the same
+  /// request, with `source=suggested`, so the screen ends in the same state and
+  /// with the same feedback as a tap that went through the picker.
+  Future<void> _declareSuggestedNow() async {
+    final viewModel = context.read<AppViewModel>();
+    // The declaration belongs to the home tab, and a pushed route would cover
+    // the declared state the button promised to show.
+    _selectTab(0);
+    Navigator.of(context).popUntil((route) => route.isFirst);
+    // Extending a live session is not what the suggestion offered.
+    if (viewModel.isDeclared) return;
+    try {
+      // No mood, activity or duration argument of their own: the view model
+      // supplies the last mood, the selected activity and the default length,
+      // exactly as the home button does, so the two cannot drift apart.
+      await viewModel.declareHima(source: DeclarationSource.suggested);
       if (!mounted) return;
+      // The hero button lands its own declaration; this path leaves the same
+      // landing for the home screen, or a one-tap declaration would arrive
+      // without it. The request waits there until that screen is displayed.
+      viewModel.requestDeclareBurst();
       unawaited(AppHaptics.declare());
     } catch (_) {
       if (!mounted) return;
+      // The picker is a sheet over the bottom of this screen, where the failure
+      // message would appear: shown now, it would be hidden while the picker is
+      // open and could expire before the user ever looked away from the mood
+      // they were choosing. So the picker goes first, and the same message is
+      // reported once it is gone — including when the user only dismissed it,
+      // because nothing has been declared then either.
+      final outcome = await _offerSuggestedDeclaration();
+      if (!mounted || outcome == _SuggestDeclareOutcome.done) return;
       showDeclareFailure(context);
     }
   }

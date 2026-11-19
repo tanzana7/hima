@@ -17,7 +17,23 @@ internal object HimaSuggest {
 
     const val ACTION_EXTRA = "hima_suggest_action"
     const val TOKEN_EXTRA = "hima_suggest_token"
+
+    /**
+     * True on the 「今はいい」 broadcast of the demo notification. It travels as an extra rather
+     * than as a second receiver, because the two differ only in what they are allowed to touch:
+     * the demo one dismisses the demo notification and nothing else.
+     */
+    const val DEMO_EXTRA = "hima_suggest_demo"
+
+    /** Tap of the notification body: open the app and offer the mood picker. */
     const val ACTION_DECLARE = "declare"
+
+    /**
+     * 「ひまにする」: open the app and declare at once, without the picker. A separate action
+     * rather than an extra on [ACTION_DECLARE], so Dart decides what to do from one string and
+     * a build that predates the buttons cannot mistake one for the other.
+     */
+    const val ACTION_DECLARE_NOW = "declare_now"
 
     /**
      * Tap action of the developer demo notification (see `HimaSuggestNotifier.postDemo`). It is
@@ -25,6 +41,9 @@ internal object HimaSuggest {
      * ignores `demo_declare` instead of opening the declaration flow.
      */
     const val ACTION_DEMO_DECLARE = "demo_declare"
+
+    /** 「ひまにする」 of the demo notification; the demo session maps it to [ACTION_DECLARE_NOW]. */
+    const val ACTION_DEMO_DECLARE_NOW = "demo_declare_now"
 
     // A new id, not an edit: Android keeps the importance a channel was created with, so the
     // old channel could never become a heads-up one.

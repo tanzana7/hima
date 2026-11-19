@@ -132,9 +132,11 @@ abstract interface class HimaSuggestBridge {
   Future<void> clear();
 
   /// `"declare"` when the app was opened from a suggestion and the action has
-  /// not been taken yet. Consumed once, so a second call returns null.
+  /// not been taken yet, `"declare_now"` when 「ひまにする」 was pressed. Consumed
+  /// once, so a second call returns null.
   ///
-  /// A tapped demo notification answers [himaSuggestDemoDeclareAction] instead.
+  /// A demo notification's action answers [himaSuggestDemoDeclareAction] or
+  /// [himaSuggestDemoDeclareNowAction] instead.
   Future<String?> takePendingAction();
 
   /// Posts the developer demo variant of a suggestion, outside every condition
@@ -165,10 +167,18 @@ abstract interface class HimaSuggestBridge {
 /// The value [takePendingAction] answers for a tapped notification.
 const String himaSuggestDeclareAction = 'declare';
 
+/// The value [takePendingAction] answers when 「ひまにする」 was pressed on a
+/// suggestion: declare at once with what the user chose last instead of asking
+/// again.
+const String himaSuggestDeclareNowAction = 'declare_now';
+
 /// The value [takePendingAction] answers when the tapped notification was a
 /// demo one. Only the demo session acts on it: the real session consumes and
 /// drops it, so a stray demo notification cannot declare for the user.
 const String himaSuggestDemoDeclareAction = 'demo_declare';
+
+/// The demo counterpart of [himaSuggestDeclareNowAction], for the same reason.
+const String himaSuggestDemoDeclareNowAction = 'demo_declare_now';
 
 /// The bodies the demo notification can be posted with. The native side knows
 /// the same two names, and reuses the real bodies for them.
@@ -224,11 +234,13 @@ class MethodChannelHimaSuggestBridge implements HimaSuggestBridge {
   Future<Object?> _handleCall(MethodCall call) async {
     if (call.method == _methodOnAction) {
       final action = _actionOf(call.arguments);
-      // Both actions mean "a declaration was suggested", and the demo one is a
-      // suggestion too. The listener only reads [takePendingAction], which is
+      // Every action means "a declaration was suggested", and the demo ones are
+      // suggestions too. The listener only reads [takePendingAction], which is
       // what decides whether the action may be acted on at all.
       if (action == himaSuggestDeclareAction ||
-          action == himaSuggestDemoDeclareAction) {
+          action == himaSuggestDeclareNowAction ||
+          action == himaSuggestDemoDeclareAction ||
+          action == himaSuggestDemoDeclareNowAction) {
         _onAction?.call();
       }
     }
