@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 log = logging.getLogger("atsumaro.views")
 
 MOOD_EMOJI = {"fire": "🔥", "ok": "🙂", "moon": "🌙"}
-MOOD_OPTIONS = [("ok", "🙂 誘われ待ち"), ("moon", "🌙 ひっそり（マッチング通知なし）")]  # fire は廃止
+MOOD_OPTIONS = [("ok", "🙂 誘われ待ち"), ("moon", "🌙 ひっそり募集（マッチング通知なし）")]  # fire は廃止
 ACTIVITY_LABELS = {"game": "ゲーム", "chat": "雑談・通話", "work": "作業通話", "out": "外出", "any": "なんでもOK"}
 RESULT_LABELS = {"accepted": "いいよ！", "later": "あとで", "passed": "今回はパス"}
 KNOCK_TEMPLATES = ["ゲームしない？", "ちょっと話さない？", "作業通話しない？"]

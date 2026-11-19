@@ -1,10 +1,10 @@
 """Vocabulary shared with the Discord bot and the app. Contract source: docs/api-contract.md."""
 from __future__ import annotations
 
-# mood keys (fixed 2): ok=🙂 誘われ待ち / moon=🌙 ひっそり（fire は廃止。旧データは ok として扱う）
+# mood keys (fixed 2): ok=🙂 誘われ待ち / moon=🌙 ひっそり募集（fire は廃止。旧データは ok として扱う）
 MOODS = {
     "ok": "🙂 誘われ待ち",
-    "moon": "🌙 ひっそり（掲示板には出るが、マッチング通知は一切受けない）",
+    "moon": "🌙 ひっそり募集（掲示板には出るが、マッチング通知は一切受けない）",
 }
 DEFAULT_MOOD = "ok"
 
