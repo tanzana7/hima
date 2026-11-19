@@ -953,15 +953,22 @@ class _ActivityPill extends StatelessWidget {
                 color: style?.accent ?? AppColors.ink,
               ),
               const SizedBox(width: 4),
+              // One line that shrinks to fit: the pill is half the hero's
+              // width, and 「なにする？」 at 20sp wrapped as 「なにす／る？」 on a
+              // 392dp phone. A short label in a fixed pill reads better a
+              // little smaller than split mid-word.
               Flexible(
-                child: Text(
-                  label,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppTextStyles.body.copyWith(
-                    fontSize: 20,
-                    color: AppColors.ink,
-                    fontWeight: FontWeight.w800,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    softWrap: false,
+                    style: AppTextStyles.body.copyWith(
+                      fontSize: 20,
+                      color: AppColors.ink,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                 ),
               ),
