@@ -535,13 +535,12 @@ class JoinNoteModal(ui.Modal):
         self.join_view = join_view
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        self.join_view.note = str(self.note_input.value or "")
-        if self.join_view.note:
-            await interaction.response.send_message(
-                f"ひとことを設定したよ：「{self.join_view.note}」。あとは「確定」を押してね！", ephemeral=True
-            )
-        else:
-            await interaction.response.send_message("ひとことを空にしたよ。そのまま「確定」できるよ！", ephemeral=True)
+        self.join_view.note = str(self.note_input.value or "").strip()
+        # ボタンの表示に反映（時間指定と同じインライン方式・2つ目のメッセージは出さない）
+        self.join_view.note_button.label = (
+            f"ひとこと：{self.join_view.note}（変更）" if self.join_view.note else "ひとことを追加（任意）"
+        )
+        await interaction.response.edit_message(view=self.join_view)
 
 
 # ------------------------------------------------------------------ knock send view
