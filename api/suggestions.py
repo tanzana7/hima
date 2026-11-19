@@ -47,6 +47,10 @@ def suggestion_pass(db: Session, rest=None, now: datetime | None = None) -> int:
             ).first()
             if exists:
                 continue  # 同じ枠・同じ日は1回だけ
+            user = db.get(User, uid)
+            if user is not None and not user.suggest_dm:
+                continue  # 提案オプトアウト（suggest_dm=false）：DM・プッシュとも送らず、log も書かない。
+                # log を書かないので、同じ枠の途中で true に戻せばその後のパスで送られる
             hhmm = f"{start // 60:02d}:{start % 60:02d}"
             if rest is not None:
                 channel = rest.open_dm_channel(uid)

@@ -31,6 +31,7 @@ class User(Base):
     auto_mode: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     auto_mood: Mapped[str] = mapped_column(String(10), default="ok", server_default="ok")
     notify_on_hima: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    suggest_dm: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)  # 提案 DM の許可（issue #7）
 
 
 class Guild(Base):

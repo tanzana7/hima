@@ -88,6 +88,7 @@ class AppSettingsIn(BaseModel):
     notify_on_hima: bool | None = None
     auto_mode: bool | None = None
     auto_mood: str | None = None
+    suggest_dm: bool | None = None  # 提案 DM（＋プッシュ）の許可。未指定なら変更しない
 
 
 class AppKnockIn(BaseModel):

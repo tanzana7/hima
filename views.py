@@ -16,11 +16,14 @@ if TYPE_CHECKING:
 log = logging.getLogger("atsumaro.views")
 
 MOOD_EMOJI = {"fire": "🔥", "ok": "🙂", "moon": "🌙"}
-MOOD_OPTIONS = [("ok", "🙂 誘われ待ち"), ("moon", "🌙 静か（マッチング通知なし）")]  # fire は廃止
+MOOD_OPTIONS = [("ok", "🙂 誘われ待ち"), ("moon", "🌙 ひっそり（マッチング通知なし）")]  # fire は廃止
 ACTIVITY_LABELS = {"game": "ゲーム", "chat": "雑談・通話", "work": "作業通話", "out": "外出", "any": "なんでもOK"}
 RESULT_LABELS = {"accepted": "いいよ！", "later": "あとで", "passed": "今回はパス"}
 KNOCK_TEMPLATES = ["ゲームしない？", "ちょっと話さない？", "作業通話しない？"]
-DURATIONS = [(5, "5分"), (15, "15分"), (30, "30分"), (60, "1時間"), (180, "3時間")]
+DURATIONS = [
+    (10, "10分"), (15, "15分"), (30, "30分"), (45, "45分"), (60, "1時間"),
+    (90, "1時間30分"), (120, "2時間"), (180, "3時間"), (300, "5時間"), (720, "12時間"),
+]  # 既定 30分（API は 1〜1440 分にクランプ）
 DEFAULT_MINUTES = 30
 NOTE_MAX = 50
 CANDIDATE_LIMIT = 25
@@ -264,12 +267,18 @@ class SuggestDeclareButton(ui.DynamicItem, template=r"atsumaro:suggest:declare")
 
 
 class BoardView(ErrorFollowupView):
-    """個人用掲示板（ephemeral）。ヒマ宣言/お返事/ブロック/やめるのボタン＋受信箱の返答ボタン。"""
+    """個人用掲示板（ephemeral）。ヒマ宣言/ブロックのボタン＋受信箱の返答ボタン。
+
+    掲示板が 0人のときは「お返事する」ボタンを表示しない（宛先候補が作れないため）。
+    宣言の取り消しは /panel 取り消し に一本化（掲示板の「やめる」ボタンは廃止）。
+    """
 
     def __init__(self, bot: "HimaBot", data: dict) -> None:
         super().__init__(timeout=None)
         self.bot = bot
         self.data = data
+        if not data.get("sessions"):
+            self.remove_item(self.knock)  # 0人なら「お返事する」を出さない
         # お知らせ（watch）トグルは廃止
         inbox = data.get("inbox", [])[:INBOX_LIMIT]
         flat = []
@@ -337,23 +346,6 @@ class BoardView(ErrorFollowupView):
             view=BlockManageView(self.bot, interaction.user, blocked),
             ephemeral=True,
         )
-
-    @ui.button(label="やめる", style=discord.ButtonStyle.secondary, custom_id="board:leave", emoji="👋", row=0)
-    async def leave(self, interaction: discord.Interaction, _: ui.Button) -> None:
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        try:
-            data = await self.bot.api.end_session(interaction.user.id)
-        except Exception as exc:  # noqa: BLE001
-            await send_api_error(interaction, exc)
-            return
-        if not data.get("ended"):
-            await interaction.followup.send("今は宣言していないよ。", ephemeral=True)
-            return
-        embeds, view = await _build_board(self.bot, interaction)
-        if embeds is None:
-            return
-        await interaction.edit_original_response(embeds=embeds, view=view)
-
 
 async def _build_board(bot: "HimaBot", interaction: discord.Interaction) -> tuple[list[discord.Embed] | None, ui.View | None]:
     guild_id = interaction.guild_id
@@ -461,10 +453,6 @@ class JoinView(ErrorFollowupView):
     async def note_button(self, interaction: discord.Interaction, _: ui.Button) -> None:
         await interaction.response.send_modal(JoinNoteModal(self))
 
-    @ui.button(label="時間を指定する", style=discord.ButtonStyle.secondary, row=3, emoji="⏱️")
-    async def custom_duration_button(self, interaction: discord.Interaction, _: ui.Button) -> None:
-        await interaction.response.send_modal(JoinMinutesModal(self))
-
     @ui.button(label="確定", style=discord.ButtonStyle.success, row=4)
     async def decide(self, interaction: discord.Interaction, _: ui.Button) -> None:
         if self.guild_id is None:
@@ -489,40 +477,6 @@ class JoinView(ErrorFollowupView):
         suffix = f"（ひとこと：{self.note}）" if self.note else ""
         await interaction.followup.send(
             f"{kind} あと{self.duration_min}分ヒマ宣言中。マッチしたらDMが届くよ🚀{suffix}", ephemeral=True
-        )
-
-
-class JoinMinutesModal(ui.Modal):
-    """ヒマ時間のカスタム指定（5〜720分の整数）。"""
-
-    minutes_input = ui.TextInput(
-        label="ヒマな時間（分・5〜720）",
-        max_length=4,
-        required=True,
-        style=discord.TextStyle.short,
-    )
-
-    def __init__(self, join_view: JoinView) -> None:
-        super().__init__(title="時間を指定する", timeout=300)
-        self.join_view = join_view
-
-    async def on_submit(self, interaction: discord.Interaction) -> None:
-        raw = str(self.minutes_input.value or "").strip()
-        try:
-            minutes = int(raw)
-        except ValueError:
-            await interaction.response.send_message(
-                "時間は半角数字（分）で入れてね。例：45", ephemeral=True
-            )
-            return
-        if not 5 <= minutes <= 720:
-            await interaction.response.send_message(
-                "時間は 5〜720 分の間で指定してね。", ephemeral=True
-            )
-            return
-        self.join_view.duration_min = minutes
-        await interaction.response.send_message(
-            f"時間を「あと{minutes}分」に設定したよ。「確定」を押してね！", ephemeral=True
         )
 
 
